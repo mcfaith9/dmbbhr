@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800" fill="none">
+  <rect width="800" height="800" fill="#f4f4f5"/>
+  <circle cx="400" cy="350" r="80" fill="#e4e4e7"/>
+  <path d="M280 520C280 453.726 333.726 400 400 400C466.274 400 520 453.726 520 520H280Z" fill="#e4e4e7"/>
+  <text x="400" y="580" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#71717a">DMBBHR</text>
+</svg>

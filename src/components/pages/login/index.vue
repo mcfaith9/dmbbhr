@@ -3,7 +3,7 @@ export const description = "A two column login page with a cover image."
 </script>
 
 <script setup lang="ts">
-import { GalleryVerticalEnd } from "@lucide/vue"
+import { Fingerprint } from "@lucide/vue"
 import LoginForm from "@/components/LoginForm.vue"
 </script>
 
@@ -13,9 +13,9 @@ import LoginForm from "@/components/LoginForm.vue"
       <div class="flex justify-center gap-2 md:justify-start">
         <a href="#" class="flex items-center gap-2 font-medium">
           <div class="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-            <GalleryVerticalEnd class="size-4" />
+            <Fingerprint class="size-4" />
           </div>
-          Acme Inc.
+          DMBBHR Management
         </a>
       </div>
       <div class="flex flex-1 items-center justify-center">

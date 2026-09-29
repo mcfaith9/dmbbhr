@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { ArchiveX, Command, File, Inbox, Send, Trash2 } from "@lucide/vue"
-import { h, ref } from "vue"
+import {
+  LayoutDashboard,
+  Clock,
+  Users,
+  Fingerprint,
+  CalendarDays,
+  WalletCards,
+  FileSpreadsheet,
+  Settings,
+} from "@lucide/vue"
+import { h, ref, computed } from "vue"
+import { useRoute, useRouter } from 'vue-router'
 import NavUser from '@/components/NavUser.vue'
-import { Label } from '@/components/ui/label'
 import {
   Sidebar,
   SidebarContent,
@@ -15,140 +24,145 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from '@/components/ui/sidebar'
-import { Switch } from '@/components/ui/switch'
+import { authService } from '@/services/auth'
 
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: "icon",
 })
 
-// This is sample data
-const data = {
-  user: {
-    name: "shadcn",
-    email: "m@example.com",
-    avatar: "/avatars/shadcn.jpg",
-  },
-  navMain: [
-    {
-      title: "Inbox",
-      url: "#",
-      icon: Inbox,
-      isActive: true,
-    },
-    {
-      title: "Drafts",
-      url: "#",
-      icon: File,
-      isActive: false,
-    },
-    {
-      title: "Sent",
-      url: "#",
-      icon: Send,
-      isActive: false,
-    },
-    {
-      title: "Junk",
-      url: "#",
-      icon: ArchiveX,
-      isActive: false,
-    },
-    {
-      title: "Trash",
-      url: "#",
-      icon: Trash2,
-      isActive: false,
-    },
-  ],
-  mails: [
-    {
-      name: "William Smith",
-      email: "williamsmith@example.com",
-      subject: "Meeting Tomorrow",
-      date: "09:34 AM",
-      teaser:
-        "Hi team, just a reminder about our meeting tomorrow at 10 AM.\nPlease come prepared with your project updates.",
-    },
-    {
-      name: "Alice Smith",
-      email: "alicesmith@example.com",
-      subject: "Re: Project Update",
-      date: "Yesterday",
-      teaser:
-        "Thanks for the update. The progress looks great so far.\nLet's schedule a call to discuss the next steps.",
-    },
-    {
-      name: "Bob Johnson",
-      email: "bobjohnson@example.com",
-      subject: "Weekend Plans",
-      date: "2 days ago",
-      teaser:
-        "Hey everyone! I'm thinking of organizing a team outing this weekend.\nWould you be interested in a hiking trip or a beach day?",
-    },
-    {
-      name: "Emily Davis",
-      email: "emilydavis@example.com",
-      subject: "Re: Question about Budget",
-      date: "2 days ago",
-      teaser:
-        "I've reviewed the budget numbers you sent over.\nCan we set up a quick call to discuss some potential adjustments?",
-    },
-    {
-      name: "Michael Wilson",
-      email: "michaelwilson@example.com",
-      subject: "Important Announcement",
-      date: "1 week ago",
-      teaser:
-        "Please join us for an all-hands meeting this Friday at 3 PM.\nWe have some exciting news to share about the company's future.",
-    },
-    {
-      name: "Sarah Brown",
-      email: "sarahbrown@example.com",
-      subject: "Re: Feedback on Proposal",
-      date: "1 week ago",
-      teaser:
-        "Thank you for sending over the proposal. I've reviewed it and have some thoughts.\nCould we schedule a meeting to discuss my feedback in detail?",
-    },
-    {
-      name: "David Lee",
-      email: "davidlee@example.com",
-      subject: "New Project Idea",
-      date: "1 week ago",
-      teaser:
-        "I've been brainstorming and came up with an interesting project concept.\nDo you have time this week to discuss its potential impact and feasibility?",
-    },
-    {
-      name: "Olivia Wilson",
-      email: "oliviawilson@example.com",
-      subject: "Vacation Plans",
-      date: "1 week ago",
-      teaser:
-        "Just a heads up that I'll be taking a two-week vacation next month.\nI'll make sure all my projects are up to date before I leave.",
-    },
-    {
-      name: "James Martin",
-      email: "jamesmartin@example.com",
-      subject: "Re: Conference Registration",
-      date: "1 week ago",
-      teaser:
-        "I've completed the registration for the upcoming tech conference.\nLet me know if you need any additional information from my end.",
-    },
-    {
-      name: "Sophia White",
-      email: "sophiawhite@example.com",
-      subject: "Team Dinner",
-      date: "1 week ago",
-      teaser:
-        "To celebrate our recent project success, I'd like to organize a team dinner.\nAre you available next Friday evening? Please let me know your preferences.",
-    },
-  ],
+const route = useRoute()
+const router = useRouter()
+const currentUser = authService.getCurrentUser()
+
+const userData = {
+  name: currentUser?.name || "dmbbhr",
+  email: currentUser?.email || "hr@dmbb.com",
+  avatar: currentUser?.avatar || "",
+  role: currentUser?.role || "admin",
 }
 
-const activeItem = ref(data.navMain[0]!)
-const mails = ref(data.mails)
-const { setOpen } = useSidebar()
+interface NavItem {
+  id: string
+  title: string
+  icon: any
+  url?: string
+  badge?: string
+  children?: {
+    title: string
+    url: string
+    description?: string
+  }[]
+}
+
+const navSections: NavItem[] = [
+  {
+    id: "dashboard",
+    title: "Dashboard",
+    url: "/dashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    id: "attendance",
+    title: "Attendance",
+    icon: Clock,
+    children: [
+      { title: "Attendance Logs", url: "/attendance/logs", description: "Raw biometric scans & auditable logs" },
+      { title: "Daily Attendance", url: "/attendance/daily", description: "Aggregated daily in/out entries" },
+    ],
+  },
+  {
+    id: "employees",
+    title: "Employees",
+    url: "/employees",
+    icon: Users,
+  },
+  {
+    id: "devices",
+    title: "Biometric Devices",
+    url: "/devices",
+    icon: Fingerprint,
+    badge: "1 Online",
+  },
+  {
+    id: "time_management",
+    title: "Time Management",
+    icon: CalendarDays,
+    children: [
+      { title: "Schedules", url: "/schedules", description: "Shift assignments & grace periods" },
+      { title: "Leave", url: "/leave", description: "Leave requests and approval" },
+      { title: "Overtime", url: "/overtime", description: "OT pre-approvals and calculations" },
+      { title: "Holidays", url: "/holidays", description: "Regular and special non-working" },
+    ],
+  },
+  {
+    id: "payroll",
+    title: "Payroll",
+    icon: WalletCards,
+    children: [
+      { title: "Payroll Periods", url: "/payroll/periods", description: "Cut-offs and batch generation" },
+      { title: "Payroll Records", url: "/payroll/records", description: "Audited payroll sheets" },
+    ],
+  },
+  {
+    id: "reports",
+    title: "Reports",
+    url: "/reports",
+    icon: FileSpreadsheet,
+  },
+  {
+    id: "administration",
+    title: "Administration",
+    icon: Settings,
+    children: [
+      { title: "Users", url: "/users", description: "Admin and HR user accounts" },
+      { title: "Settings", url: "/settings", description: "System & branch preferences" },
+    ],
+  },
+]
+
+const activeSectionId = ref<string>('attendance')
+
+const activeItem = computed(() => {
+  const currentPath = route.path
+  if (currentPath.startsWith('/attendance')) return navSections.find(s => s.id === 'attendance')!
+  if (currentPath.startsWith('/employees')) return navSections.find(s => s.id === 'employees')!
+  if (currentPath.startsWith('/devices')) return navSections.find(s => s.id === 'devices')!
+  if (currentPath.startsWith('/schedules') || currentPath.startsWith('/leave') || currentPath.startsWith('/overtime') || currentPath.startsWith('/holidays')) {
+    return navSections.find(s => s.id === 'time_management')!
+  }
+  if (currentPath.startsWith('/payroll')) return navSections.find(s => s.id === 'payroll')!
+  if (currentPath.startsWith('/reports')) return navSections.find(s => s.id === 'reports')!
+  if (currentPath.startsWith('/users') || currentPath.startsWith('/settings')) {
+    return navSections.find(s => s.id === 'administration')!
+  }
+  return navSections.find(s => s.id === 'dashboard')!
+})
+
+const searchQuery = ref('')
+
+const filteredChildren = computed(() => {
+  const current = activeItem.value
+  if (!current.children) return []
+  if (!searchQuery.value.trim()) return current.children
+  const q = searchQuery.value.toLowerCase()
+  return current.children.filter(c =>
+    c.title.toLowerCase().includes(q) || (c.description && c.description.toLowerCase().includes(q))
+  )
+})
+
+function handlePrimaryClick(item: NavItem) {
+  activeSectionId.value = item.id
+  if (item.url) {
+    router.push(item.url)
+  } else if (item.children && item.children.length > 0) {
+    router.push(item.children[0].url)
+  }
+}
+
+function isPathActive(url: string): boolean {
+  return route.path === url
+}
 </script>
 
 <template>
@@ -156,9 +170,6 @@ const { setOpen } = useSidebar()
     class="overflow-hidden *:data-[sidebar=sidebar]:flex-row"
     v-bind="props"
   >
-    <!-- This is the first sidebar -->
-    <!-- We disable collapsible and adjust width to icon. -->
-    <!-- This will make the sidebar appear as icons. -->
     <Sidebar
       collapsible="none"
       class="w-[calc(var(--sidebar-width-icon)+1px)]! border-r"
@@ -167,35 +178,30 @@ const { setOpen } = useSidebar()
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" as-child class="md:h-8 md:p-0">
-              <a href="#">
+              <router-link to="/dashboard" title="DMBBHR">
                 <div class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                  <Command class="size-4" />
+                  <Fingerprint class="size-4" />
                 </div>
                 <div class="grid flex-1 text-left text-sm leading-tight">
-                  <span class="truncate font-medium">Acme Inc</span>
-                  <span class="truncate text-xs">Enterprise</span>
+                  <span class="truncate font-semibold tracking-tight">DMBBHR</span>
+                  <span class="truncate text-xs text-muted-foreground">DBB Cebu</span>
                 </div>
-              </a>
+              </router-link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
+
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent class="px-1.5 md:px-0">
             <SidebarMenu>
-              <SidebarMenuItem v-for="item in data.navMain" :key="item.title">
+              <SidebarMenuItem v-for="item in navSections" :key="item.id">
                 <SidebarMenuButton
                   :tooltip="h('div', { hidden: false }, item.title)"
-                  :is-active="activeItem.title === item.title"
+                  :is-active="activeItem.id === item.id"
                   class="px-2.5 md:px-2"
-                  @click="() => {
-                    activeItem = item
-
-                    const mail = data.mails.sort(() => Math.random() - 0.5)
-                    mails = mail.slice(0, Math.max(5, Math.floor(Math.random() * 10) + 1))
-                    setOpen(true)
-                  }"
+                  @click="handlePrimaryClick(item)"
                 >
                   <component :is="item.icon" />
                   <span>{{ item.title }}</span>
@@ -205,47 +211,105 @@ const { setOpen } = useSidebar()
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
       <SidebarFooter>
-        <NavUser :user="data.user" />
+        <NavUser :user="userData" />
       </SidebarFooter>
     </Sidebar>
 
-    <!--  This is the second sidebar -->
-    <!--  We disable collapsible and let it fill remaining space -->
     <Sidebar collapsible="none" class="hidden flex-1 md:flex">
       <SidebarHeader class="gap-3.5 border-b p-4">
         <div class="flex w-full items-center justify-between">
-          <div class="text-base font-medium text-foreground">
-            {{ activeItem.title }}
+          <div class="text-base font-semibold text-foreground flex items-center gap-2">
+            <span>{{ activeItem.title }}</span>
+            <span
+              v-if="activeItem.badge"
+              class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+            >
+              {{ activeItem.badge }}
+            </span>
           </div>
-          <Label class="flex items-center gap-2 text-sm">
-            <span>Unreads</span>
-            <Switch class="shadow-none" />
-          </Label>
         </div>
-        <SidebarInput placeholder="Type to search..." />
+
+        <div v-if="activeItem.children && activeItem.children.length > 0">
+          <SidebarInput v-model="searchQuery" placeholder="Filter navigation..." />
+        </div>
       </SidebarHeader>
+
       <SidebarContent>
-        <SidebarGroup class="px-0">
+        <SidebarGroup v-if="activeItem.children && activeItem.children.length > 0" class="px-0">
           <SidebarGroupContent>
-            <a
-              v-for="mail in mails"
-              :key="mail.email"
-              href="#"
-              class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex flex-col items-start gap-2 border-b p-4 text-sm leading-tight whitespace-nowrap last:border-b-0"
+            <router-link
+              v-for="sub in filteredChildren"
+              :key="sub.url"
+              :to="sub.url"
+              :class="[
+                'flex flex-col items-start gap-1 border-b p-4 text-sm leading-tight transition-colors last:border-b-0',
+                isPathActive(sub.url)
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium border-l-2 border-l-primary'
+                  : 'hover:bg-sidebar-accent/50 text-muted-foreground hover:text-foreground'
+              ]"
             >
               <div class="flex w-full items-center gap-2">
-                <span>{{ mail.name }}</span>
-                <span class="ml-auto text-xs">{{ mail.date }}</span>
+                <span class="text-sm font-medium text-foreground">{{ sub.title }}</span>
+                <span v-if="isPathActive(sub.url)" class="ml-auto flex size-2 rounded-full bg-primary" />
               </div>
-              <span class="font-medium">{{ mail.subject }}</span>
-              <span class="line-clamp-2 w-[260px] whitespace-break-spaces text-xs">
-                {{ mail.teaser }}
+              <span v-if="sub.description" class="text-xs text-muted-foreground line-clamp-2">
+                {{ sub.description }}
               </span>
-            </a>
+            </router-link>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        <div v-else class="p-4 space-y-4 text-xs">
+          <div class="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <div class="font-medium text-foreground flex items-center justify-between">
+              <span>Branch Context</span>
+              <span class="px-1.5 py-0.5 rounded bg-primary/10 text-primary font-semibold text-[10px]">Active</span>
+            </div>
+            <p class="text-muted-foreground text-[11px] leading-relaxed">
+              Connected to <strong>DBB Cebu</strong>. Biometric device B-29b is communicating over local TCP/IP :4370.
+            </p>
+          </div>
+
+          <div class="space-y-1.5">
+            <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Quick Shortcuts
+            </div>
+            <router-link
+              to="/attendance/logs"
+              class="flex items-center gap-2 rounded-md p-2 hover:bg-muted text-foreground transition-colors"
+            >
+              <Clock class="size-3.5 text-muted-foreground" />
+              <span>Inspect Raw Scans</span>
+            </router-link>
+            <router-link
+              to="/devices"
+              class="flex items-center gap-2 rounded-md p-2 hover:bg-muted text-foreground transition-colors"
+            >
+              <Fingerprint class="size-3.5 text-muted-foreground" />
+              <span>Device Health (B-29b)</span>
+            </router-link>
+            <router-link
+              to="/employees"
+              class="flex items-center gap-2 rounded-md p-2 hover:bg-muted text-foreground transition-colors"
+            >
+              <Users class="size-3.5 text-muted-foreground" />
+              <span>Employee Directory</span>
+            </router-link>
+          </div>
+        </div>
       </SidebarContent>
+
+      <SidebarFooter class="border-t p-3 text-[11px] text-muted-foreground">
+        <div class="flex items-center justify-between">
+          <span>BISBIO B-29b</span>
+          <span class="flex items-center gap-1 text-emerald-600 font-medium">
+            <span class="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            192.168.1.201
+          </span>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   </Sidebar>
 </template>

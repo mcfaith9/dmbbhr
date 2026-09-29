@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import {
   BadgeCheck,
-  Bell,
   ChevronsUpDown,
-  CreditCard,
   LogOut,
-  Sparkles,
+  ShieldCheck,
 } from "@lucide/vue"
+import { useRouter } from 'vue-router'
+import { authService } from '@/services/auth'
 
 import {
   Avatar,
@@ -29,15 +29,22 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 
-const props = defineProps<{
+defineProps<{
   user: {
     name: string
     email: string
     avatar: string
+    role?: string
   }
 }>()
 
+const router = useRouter()
 const { isMobile } = useSidebar()
+
+function handleLogout() {
+  authService.logout()
+  router.push('/login')
+}
 </script>
 
 <template>
@@ -51,8 +58,8 @@ const { isMobile } = useSidebar()
           >
             <Avatar class="h-8 w-8 rounded-lg">
               <AvatarImage :src="user.avatar" :alt="user.name" />
-              <AvatarFallback class="rounded-lg">
-                CN
+              <AvatarFallback class="rounded-lg bg-primary/10 text-primary font-semibold">
+                {{ user.name ? user.name.slice(0, 2).toUpperCase() : 'HR' }}
               </AvatarFallback>
             </Avatar>
             <div class="grid flex-1 text-left text-sm leading-tight">
@@ -72,8 +79,8 @@ const { isMobile } = useSidebar()
             <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
               <Avatar class="h-8 w-8 rounded-lg">
                 <AvatarImage :src="user.avatar" :alt="user.name" />
-                <AvatarFallback class="rounded-lg">
-                  CN
+                <AvatarFallback class="rounded-lg bg-primary/10 text-primary font-semibold">
+                  {{ user.name ? user.name.slice(0, 2).toUpperCase() : 'HR' }}
                 </AvatarFallback>
               </Avatar>
               <div class="grid flex-1 text-left text-sm leading-tight">
@@ -84,29 +91,18 @@ const { isMobile } = useSidebar()
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
-            <DropdownMenuItem>
-              <Sparkles />
-              Upgrade to Pro
+            <DropdownMenuItem @click="router.push('/settings')">
+              <BadgeCheck class="mr-2 size-4" />
+              Profile Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="router.push('/devices')">
+              <ShieldCheck class="mr-2 size-4" />
+              Device Status
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem>
-              <BadgeCheck />
-              Account
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <CreditCard />
-              Billing
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Bell />
-              Notifications
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem>
-            <LogOut />
+          <DropdownMenuItem @click="handleLogout" class="text-destructive focus:text-destructive">
+            <LogOut class="mr-2 size-4" />
             Log out
           </DropdownMenuItem>
         </DropdownMenuContent>

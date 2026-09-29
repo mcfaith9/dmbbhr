@@ -1,0 +1,8 @@
+{
+  "name": "DMBBHR",
+  "description": "HR Management and Dashboard System",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

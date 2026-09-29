@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { ref } from "vue"
+import { useRouter } from 'vue-router'
+import { authService } from '@/services/auth'
 import type { HTMLAttributes } from "vue"
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -14,25 +17,66 @@ import { Input } from '@/components/ui/input'
 const props = defineProps<{
   class?: HTMLAttributes["class"]
 }>()
+
+const router = useRouter()
+const username = ref('dmbbhr')
+const password = ref('password')
+const errorMessage = ref('')
+const isLoading = ref(false)
+
+async function handleSubmit(e: Event) {
+  e.preventDefault()
+  errorMessage.value = ''
+  isLoading.value = true
+
+  try {
+    await authService.login({
+      username: username.value,
+      password: password.value
+    })
+    router.push('/dashboard')
+  } catch (err: any) {
+    errorMessage.value = err?.message || 'Login failed'
+  } finally {
+    isLoading.value = false
+  }
+}
+
+function fillDemo(user: 'dmbbhr' | 'admin') {
+  username.value = user
+  password.value = 'password'
+}
 </script>
 
 <template>
-  <form :class="cn('flex flex-col gap-6', props.class)">
+  <form :class="cn('flex flex-col gap-6', props.class)" @submit="handleSubmit">
     <FieldGroup>
       <div class="flex flex-col items-center gap-1 text-center">
         <h1 class="text-2xl font-bold">
           Login to your account
         </h1>
         <p class="text-muted-foreground text-sm text-balance">
-          Enter your email below to login to your account
+          Enter your username or email to access DMBBHR
         </p>
       </div>
+
+      <div v-if="errorMessage" class="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+        {{ errorMessage }}
+      </div>
+
       <Field>
-        <FieldLabel for="email">
-          Email
+        <FieldLabel for="username">
+          Username / Email
         </FieldLabel>
-        <Input id="email" type="email" placeholder="m@example.com" required />
+        <Input
+          id="username"
+          v-model="username"
+          type="text"
+          placeholder="dmbbhr or admin"
+          required
+        />
       </Field>
+
       <Field>
         <div class="flex items-center">
           <FieldLabel for="password">
@@ -41,33 +85,51 @@ const props = defineProps<{
           <a
             href="#"
             class="ml-auto text-sm underline-offset-4 hover:underline"
+            @click.prevent
           >
             Forgot your password?
           </a>
         </div>
-        <Input id="password" type="password" required />
+        <Input
+          id="password"
+          v-model="password"
+          type="password"
+          placeholder="••••••••"
+          required
+        />
       </Field>
+
       <Field>
-        <Button type="submit">
-          Login
+        <Button type="submit" class="w-full" :disabled="isLoading">
+          <span v-if="isLoading">Signing in...</span>
+          <span v-else>Login</span>
         </Button>
       </Field>
-      <FieldSeparator>Or continue with</FieldSeparator>
-      <Field>
-        <Button variant="outline" type="button">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path
-              d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
-              fill="currentColor"
-            />
-          </svg>
-          Login with GitHub
-        </Button>
-        <FieldDescription class="text-center">
-          Don't have an account?
-          <a href="#">Sign up</a>
-        </FieldDescription>
-      </Field>
+
+      <FieldSeparator>Default Admin Accounts</FieldSeparator>
+
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <button
+          type="button"
+          class="rounded border bg-muted/40 p-2 text-left hover:bg-muted transition-colors"
+          @click="fillDemo('dmbbhr')"
+        >
+          <div class="font-semibold text-foreground">dmbbhr</div>
+          <div class="text-[11px] text-muted-foreground">Admin Account</div>
+        </button>
+        <button
+          type="button"
+          class="rounded border bg-muted/40 p-2 text-left hover:bg-muted transition-colors"
+          @click="fillDemo('admin')"
+        >
+          <div class="font-semibold text-foreground">admin</div>
+          <div class="text-[11px] text-muted-foreground">System Admin</div>
+        </button>
+      </div>
+
+      <FieldDescription class="text-center text-xs text-muted-foreground">
+        Local Network Biometric Attendance & HR System
+      </FieldDescription>
     </FieldGroup>
   </form>
 </template>
