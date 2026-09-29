@@ -138,16 +138,18 @@ export const router = createRouter({
   ]
 })
 
-// Authentication Route Guard
-router.beforeEach((to, _from, next) => {
+// Authentication Route Guard (Return-based pattern per Vue Router modern API)
+router.beforeEach((to) => {
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false)
   const isAuth = authService.isAuthenticated()
 
   if (requiresAuth && !isAuth) {
-    next({ name: 'login', query: { redirect: to.fullPath } })
-  } else if (to.name === 'login' && isAuth) {
-    next({ name: 'dashboard' })
-  } else {
-    next()
+    return { name: 'login', query: { redirect: to.fullPath } }
   }
+  
+  if (to.name === 'login' && isAuth) {
+    return { name: 'dashboard' }
+  }
+
+  return
 })

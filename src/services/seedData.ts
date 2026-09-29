@@ -9,15 +9,20 @@ export const SEED_LOCATIONS: Location[] = [
 export const SEED_DEVICES: BiometricDevice[] = [
   {
     id: 'dev-1',
-    name: 'Main Entrance B-29b',
+    name: 'BISBIO B-29b',
     model: 'BISMAC BISBIO B-29b',
     ip_address: '192.168.1.201',
     port: 4370,
+    subnet: '255.255.255.0',
+    gateway: '0.0.0.0',
     serial_number: '0476141400046',
+    mac_address: '00:17:61:10:0c:a3',
+    firmware_version: '6.5.4 Build 142',
     location_id: 'loc-cebu',
     status: 'online',
     last_seen: new Date().toISOString(),
-    description: 'Main lobby attendance reader'
+    last_sync: '2026-09-29T14:09:52+08:00',
+    description: 'Main lobby attendance reader (DBB Cebu Office)'
   }
 ]
 

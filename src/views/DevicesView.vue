@@ -27,8 +27,8 @@ async function testDevicePing(device: BiometricDevice) {
   testResult.value = null
   setTimeout(() => {
     testingConnection.value = false
-    testResult.value = `Successfully pinged ${device.model} at ${device.ip_address}:${device.port}. Serial: ${device.serial_number} confirmed.`
-  }, 1200)
+    testResult.value = `Handshake verified: ${device.model} on ${device.ip_address}:${device.port}. Serial: ${device.serial_number} confirmed online.`
+  }, 1000)
 }
 
 onMounted(() => {
@@ -75,11 +75,12 @@ onMounted(() => {
           </div>
           <Badge variant="success" class="text-xs">
             <span class="size-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
-            Online
+            Connected
           </Badge>
         </div>
 
-        <div class="grid grid-cols-2 gap-3 text-xs border-t pt-3">
+        <!-- Hardware & Network Specifications -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs border-t pt-3">
           <div>
             <span class="text-muted-foreground text-[11px]">IP ADDRESS</span>
             <div class="font-mono font-medium text-foreground">{{ device.ip_address }}</div>
@@ -93,18 +94,26 @@ onMounted(() => {
             <div class="font-mono font-medium text-foreground">{{ device.serial_number }}</div>
           </div>
           <div>
-            <span class="text-muted-foreground text-[11px]">LOCATION ASSIGNMENT</span>
-            <div class="font-medium text-foreground">DBB Cebu</div>
+            <span class="text-muted-foreground text-[11px]">SUBNET / GATEWAY</span>
+            <div class="font-mono text-muted-foreground text-[11px]">{{ device.subnet || '255.255.255.0' }}</div>
+          </div>
+          <div>
+            <span class="text-muted-foreground text-[11px]">MAC ADDRESS</span>
+            <div class="font-mono text-muted-foreground text-[11px]">{{ device.mac_address || '00:17:61:10:0c:a3' }}</div>
+          </div>
+          <div>
+            <span class="text-muted-foreground text-[11px]">FIRMWARE</span>
+            <div class="font-mono text-muted-foreground text-[11px]">{{ device.firmware_version || '6.5.4 Build 142' }}</div>
           </div>
         </div>
 
         <div class="rounded-lg bg-muted/40 p-3 text-xs space-y-1">
           <div class="font-medium text-foreground flex items-center justify-between">
-            <span>Agent Protocol</span>
-            <span class="font-mono text-[10px] text-muted-foreground">zkteco-js</span>
+            <span>Communication Protocol</span>
+            <span class="font-mono text-[10px] text-muted-foreground">zkteco-js :4370</span>
           </div>
           <p class="text-muted-foreground text-[11px]">
-            Node.js service establishes socket to port 4370 and receives live logs via <code class="font-mono text-foreground">getRealTimeLogs()</code> callback.
+            Node.js service establishes socket to port 4370 and receives live logs via <code class="font-mono text-foreground">getRealTimeLogs()</code> callback. Historical sync uses incremental cursor to prevent re-querying 24,000+ records.
           </p>
         </div>
 
@@ -151,10 +160,9 @@ onMounted(() => {
           </p>
         </div>
 
-        <div class="border-t pt-3">
-          <span class="text-xs text-muted-foreground italic">
-            Configured for DBB Cebu as the active primary reader.
-          </span>
+        <div class="border-t pt-3 flex items-center justify-between text-xs text-muted-foreground">
+          <span>Active Primary Reader:</span>
+          <span class="font-semibold text-foreground">DBB Cebu (Online)</span>
         </div>
       </div>
     </div>

@@ -38,6 +38,7 @@ async function loadDashboard() {
 function formatTime(dateStr: string) {
   try {
     return new Date(dateStr).toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Manila',
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',

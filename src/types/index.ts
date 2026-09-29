@@ -12,11 +12,16 @@ export interface BiometricDevice {
   model: string
   ip_address: string
   port: number
+  subnet?: string
+  gateway?: string
   serial_number: string
+  mac_address?: string
+  firmware_version?: string
   location_id: string
   location?: Location
   status: 'online' | 'offline' | 'connecting' | 'error'
   last_seen: string | null
+  last_sync?: string | null
   description?: string
 }
 

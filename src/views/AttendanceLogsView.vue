@@ -132,6 +132,7 @@ function formatDate(dateStr: string) {
   try {
     const d = new Date(dateStr)
     return d.toLocaleDateString('en-US', {
+      timeZone: 'Asia/Manila',
       year: 'numeric',
       month: 'short',
       day: 'numeric'
@@ -145,6 +146,7 @@ function formatTime(dateStr: string) {
   try {
     const d = new Date(dateStr)
     return d.toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Manila',
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
