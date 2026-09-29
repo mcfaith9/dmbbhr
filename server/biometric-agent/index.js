@@ -2,13 +2,17 @@
  * DMBBHR Biometric Attendance Listener & Synchronization Agent
  * Target: BISMAC BISBIO B-29b (192.168.1.201:4370)
  * Location: DBB Cebu
+ *
+ * PRE-LARAVEL TEST ARCHITECTURE:
+ * B-29b (192.168.1.201:4370) -> Node.js + zkteco-js -> DevSocketBridge (ws://0.0.0.0:5174) -> Vue Web App (Attendance Logs)
  */
 const { createDeviceInstance } = require('./src/device/deviceClient');
 const { startAttendanceListener } = require('./src/device/attendanceListener');
-const { syncHistoricalAttendance } = require('./src/device/attendanceSync');
-const { LaravelClient } = require('./src/api/laravelClient');
+const { DevSocketBridge } = require('./src/bridge/devSocketBridge');
 
-const laravelClient = new LaravelClient();
+const WS_PORT = parseInt(process.env.WS_PORT || '5174', 10);
+const bridge = new DevSocketBridge(WS_PORT);
+
 let currentDevice = null;
 let isShuttingDown = false;
 
@@ -16,7 +20,11 @@ async function run() {
   console.log('====================================================');
   console.log(' DMBBHR BIOMETRIC AGENT - BISMAC BISBIO B-29b');
   console.log(' Location: DBB Cebu (IP: 192.168.1.201 : 4370)');
+  console.log(' Pre-Laravel Test Mode (Direct Node -> Vue Bridge)');
   console.log('====================================================\n');
+
+  // Start local WebSocket bridge first so Vue can connect immediately
+  bridge.start();
 
   const { device, config } = createDeviceInstance();
   currentDevice = device;
@@ -28,54 +36,35 @@ async function run() {
     connected = true;
     console.log('[DMBBHR Agent] Connected to B-29b via TCP/IP socket successfully!');
 
-    // Hardware verification
+    // Read device user list for immediate name matching
+    console.log('[DMBBHR Agent] Loading device users for immediate name mapping...');
+    let deviceUserMap = new Map();
     try {
-      const info = await device.getInfo();
-      console.log('[DMBBHR Agent] Hardware info confirmed:', info);
-    } catch (e) {
-      console.log(`[DMBBHR Agent] Hardware Serial verified: ${config.serial}`);
-    }
-
-    // Heartbeat to backend
-    await laravelClient.sendHeartbeat({
-      serial_number: config.serial,
-      ip: config.ip,
-      port: config.port,
-      location_id: config.location_id,
-      status: 'online',
-      firmware: config.firmware
-    });
-
-    // 1. Check & perform initial/incremental sync
-    try {
-      console.log('\n[DMBBHR Agent] Checking incremental attendance sync...');
-      const syncResult = await syncHistoricalAttendance(device, config, { exportFiles: true });
-      if (syncResult.newRecordsCount > 0) {
-        console.log(`[DMBBHR Agent] Syncing ${syncResult.newRecordsCount} new records to Laravel API...`);
-        try {
-          await laravelClient.sendBatchSync(syncResult.newRecords);
-          console.log('[DMBBHR Agent] Batch sync successful.');
-        } catch (apiErr) {
-          console.warn('[DMBBHR Agent] Laravel API unavailable during batch sync; records queued locally.');
-        }
-      } else {
-        console.log('[DMBBHR Agent] No new historical records to sync. Cursor is up to date.');
+      const usersResult = await device.getUsers();
+      const users = Array.isArray(usersResult)
+        ? usersResult
+        : (usersResult && Array.isArray(usersResult.data) ? usersResult.data : []);
+      for (const u of users) {
+        deviceUserMap.set(String(u.userId), u.name || '');
       }
-    } catch (syncErr) {
-      console.warn('[DMBBHR Agent] Historical sync check notice:', syncErr.message);
+      console.log(`[DMBBHR Agent] Loaded ${deviceUserMap.size} users from biometric device.`);
+    } catch (uErr) {
+      console.warn('[DMBBHR Agent] Notice: Could not read user list directly:', uErr.message);
     }
 
-    // 2. Start real-time attendance listener
+    // Start real-time attendance listener
     console.log('\n[DMBBHR Agent] Listening for real-time fingerprint/biometric scans...');
-    console.log('Ready. Scan fingerprint on the B-29b.\n');
+    console.log('Ready. Scan fingerprint on the B-29b.');
+    console.log('Scans will be broadcasted instantly to the Vue Attendance Logs view.\n');
 
     await startAttendanceListener(device, config, async (eventRecord) => {
-      try {
-        await laravelClient.sendDeviceEvent(eventRecord);
-        console.log(`[DMBBHR Agent] Dispatched event to Laravel POST /api/attendance/device-event (User: ${eventRecord.user_id})`);
-      } catch (postErr) {
-        console.warn(`[DMBBHR Agent] Could not forward to Laravel API (${postErr.message}). Scan logged in agent console.`);
+      // Attach mapped employee name if present on device
+      if (deviceUserMap.has(eventRecord.user_id)) {
+        eventRecord.employee_name = deviceUserMap.get(eventRecord.user_id);
       }
+
+      // Broadcast immediately to all connected Vue browser instances over LAN
+      bridge.broadcastScan(eventRecord);
     });
 
   } catch (error) {
@@ -90,7 +79,7 @@ async function run() {
     }
 
     if (!isShuttingDown) {
-      console.log('[DMBBHR Agent] Will retry connection in 10 seconds...');
+      console.log('[DMBBHR Agent] Will retry B-29b connection in 10 seconds...');
       setTimeout(run, 10000);
     }
   }
@@ -101,6 +90,7 @@ async function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log('\n[DMBBHR Agent] Gracefully shutting down...');
+  bridge.stop();
   if (currentDevice) {
     try {
       await currentDevice.disconnect();

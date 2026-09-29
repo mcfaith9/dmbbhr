@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import {
   Download,
   Upload,
@@ -8,10 +8,13 @@ import {
   Calendar as CalendarIcon,
   X,
   CheckCircle2,
+  Radio,
+  Fingerprint,
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import { attendanceService } from '@/services/attendance'
 import { deviceService } from '@/services/devices'
+import { liveAttendanceService } from '@/services/liveAttendance'
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta, Location, BiometricDevice } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
@@ -301,9 +304,39 @@ async function confirmImport() {
   reader.readAsArrayBuffer(importFile.value)
 }
 
+const isLiveConnected = liveAttendanceService.isConnected
+const latestLiveScan = ref<AttendanceLog | null>(null)
+let unsubscribeLive: (() => void) | null = null
+
+function handleNewBiometricScan(newLog: AttendanceLog) {
+  // Prepend to visible table list immediately so user doesn't need to refresh
+  logs.value.unshift(newLog)
+  meta.value.totalItems += 1
+
+  // Highlight banner
+  latestLiveScan.value = newLog
+  setTimeout(() => {
+    if (latestLiveScan.value?.id === newLog.id) {
+      latestLiveScan.value = null
+    }
+  }, 8000)
+}
+
 onMounted(() => {
   loadLookups()
   loadData()
+
+  // Connect to local Node.js biometric WebSocket bridge
+  liveAttendanceService.connect()
+  unsubscribeLive = liveAttendanceService.onScan((scan) => {
+    handleNewBiometricScan(scan)
+  })
+})
+
+onUnmounted(() => {
+  if (unsubscribeLive) {
+    unsubscribeLive()
+  }
 })
 </script>
 
@@ -317,6 +350,15 @@ onMounted(() => {
           <span class="text-xs px-2 py-0.5 rounded-full bg-muted font-normal text-muted-foreground">
             Auditable Raw Scans
           </span>
+          <Badge
+            :variant="isLiveConnected ? 'success' : 'outline'"
+            class="text-[11px] gap-1 cursor-pointer"
+            :title="isLiveConnected ? 'Connected to local Node.js biometric agent. Live scans will appear automatically.' : 'Agent bridge offline. Run: node server/biometric-agent/index.js'"
+            @click="liveAttendanceService.connect()"
+          >
+            <Radio class="size-3" :class="[isLiveConnected ? 'animate-pulse text-emerald-600' : 'text-muted-foreground']" />
+            <span>{{ isLiveConnected ? 'Live Biometric Connected' : 'Biometric Bridge Offline' }}</span>
+          </Badge>
         </h1>
         <p class="text-xs text-muted-foreground">
           Historical and live biometric attendance records. Preserves original raw Type, State, and Serial.
@@ -343,6 +385,33 @@ onMounted(() => {
           </Button>
         </div>
       </div>
+    </div>
+
+    <!-- Live Scan Flash Notification (Appears automatically without refresh) -->
+    <div
+      v-if="latestLiveScan"
+      class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-foreground shadow-xs flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300"
+    >
+      <div class="flex items-center gap-3">
+        <div class="size-8 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold">
+          <Fingerprint class="size-4 animate-bounce" />
+        </div>
+        <div>
+          <div class="font-semibold text-sm flex items-center gap-2">
+            <span>Real-Time Biometric Scan Detected!</span>
+            <Badge variant="success" class="text-[10px] uppercase font-mono">Live</Badge>
+          </div>
+          <div class="text-xs text-muted-foreground mt-0.5">
+            User ID: <strong class="text-foreground font-mono">{{ latestLiveScan.user_id }}</strong>
+            <span v-if="latestLiveScan.employee_name"> • {{ latestLiveScan.employee_name }}</span>
+            • Device: <span class="font-mono">{{ latestLiveScan.device_name }}</span>
+            • Time: {{ formatTime(latestLiveScan.attendance_time) }}
+          </div>
+        </div>
+      </div>
+      <Button variant="ghost" size="sm" class="h-7 text-xs" @click="latestLiveScan = null">
+        <X class="size-3.5" />
+      </Button>
     </div>
 
     <!-- Filter Toolbar -->
