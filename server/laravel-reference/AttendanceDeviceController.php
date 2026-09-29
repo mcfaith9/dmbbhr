@@ -10,9 +10,12 @@ use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 
 /**
- * Controller handling attendance events from B-29b Node.js Agent
- * Endpoint: POST /api/attendance/device-event
- * Endpoint: POST /api/attendance/batch-sync
+ * Controller handling attendance events from B-29b Node.js Agent & Authenticated Vue UI imports
+ * Endpoints:
+ * - POST /api/attendance/device-event   (Node Agent with X-Agent-Key)
+ * - POST /api/attendance/batch-sync     (Node Agent incremental sync)
+ * - POST /api/attendance/import         (Authenticated HR user chunked import)
+ * - GET  /api/attendance/logs           (Query filtered paginated logs)
  */
 class AttendanceDeviceController extends Controller
 {
@@ -77,12 +80,9 @@ class AttendanceDeviceController extends Controller
             'device_ip' => $data['device_ip'] ?? '192.168.1.201',
             'location_id' => $data['location_id'] ?? 'loc-cebu',
             'is_duplicate' => (bool)($data['is_duplicate'] ?? false),
-            'raw_payload' => is_string($data['raw_data']) ? $data['raw_data'] : json_encode($data['raw_data'] ?? []),
+            'raw_payload' => is_string($data['raw_data'] ?? '') ? $data['raw_data'] : json_encode($data['raw_data'] ?? []),
             'created_at' => Carbon::now('Asia/Manila')->toDateTimeString(),
         ]);
-
-        // 6. Optional: Trigger real-time WebSocket broadcast (e.g. AttendanceLogged event)
-        // event(new \App\Events\NewAttendanceScan($logId, $data['user_id'], $attTime));
 
         Log::info("Biometric scan saved for user {$data['user_id']} at {$attTime->toDateTimeString()}");
 
@@ -93,6 +93,85 @@ class AttendanceDeviceController extends Controller
             'employee_name' => $employee ? "{$employee->last_name}, {$employee->first_name}" : 'Unassigned',
             'timestamp_ph' => $attTime->toDateTimeString()
         ], 201);
+    }
+
+    /**
+     * Chunked attendance import endpoint for authenticated HR / Admin users.
+     * Enforces role verification, transaction safety, and duplicate preservation.
+     */
+    public function handleChunkedImport(Request $request)
+    {
+        // Must be authenticated user with admin or hr role
+        $user = $request->user();
+        if ($user && !in_array($user->role, ['admin', 'hr'])) {
+            return response()->json(['error' => 'Forbidden: Insufficient privileges for attendance import.'], 403);
+        }
+
+        $records = $request->input('records', []);
+        if (!is_array($records) || empty($records)) {
+            return response()->json(['error' => 'No records provided in chunk.'], 422);
+        }
+
+        $inserted = 0;
+        $flaggedDuplicates = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($records as $r) {
+                if (empty($r['user_id']) || empty($r['attendance_time'])) continue;
+
+                $attTime = Carbon::parse($r['attendance_time'])->setTimezone('Asia/Manila');
+
+                // Check duplicate within 5 seconds for same user
+                $isDup = (bool)($r['is_duplicate'] ?? false);
+                if (!$isDup) {
+                    $existing = DB::table('attendance_logs')
+                        ->where('user_id', (string)$r['user_id'])
+                        ->whereBetween('attendance_time', [
+                            $attTime->copy()->subSeconds(5)->toDateTimeString(),
+                            $attTime->copy()->addSeconds(5)->toDateTimeString()
+                        ])
+                        ->exists();
+
+                    if ($existing) {
+                        $isDup = true;
+                        $flaggedDuplicates++;
+                    }
+                }
+
+                $employee = DB::table('employees')->where('biometric_user_id', (string)$r['user_id'])->first();
+
+                DB::table('attendance_logs')->insert([
+                    'id' => (string) \Illuminate\Support\Str::uuid(),
+                    'user_id' => (string)$r['user_id'],
+                    'employee_id' => $employee ? $employee->id : null,
+                    'attendance_time' => $attTime->toDateTimeString(),
+                    'type' => (int)($r['type'] ?? 1),
+                    'state' => (int)($r['state'] ?? 1),
+                    'serial_number' => (int)($r['serial_number'] ?? 0),
+                    'device_id' => $r['device_id'] ?? 'dev-1',
+                    'device_ip' => $r['device_ip'] ?? '192.168.1.201',
+                    'location_id' => $r['location_id'] ?? 'loc-cebu',
+                    'is_duplicate' => $isDup,
+                    'raw_payload' => json_encode($r),
+                    'created_at' => Carbon::now('Asia/Manila')->toDateTimeString(),
+                ]);
+
+                $inserted++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'status' => 'success',
+                'inserted' => $inserted,
+                'duplicates_flagged' => $flaggedDuplicates
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Import chunk error: " . $e->getMessage());
+            return response()->json(['error' => 'Database error inserting chunk: ' . $e->getMessage()], 500);
+        }
     }
 
     /**

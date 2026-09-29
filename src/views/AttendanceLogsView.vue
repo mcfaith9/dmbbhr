@@ -56,7 +56,9 @@ const importValidation = ref({
   errors: [] as string[]
 })
 const isImporting = ref(false)
+const importProgress = ref({ processed: 0, total: 0, percentage: 0 })
 const importSuccessMsg = ref('')
+const importErrorMsg = ref('')
 
 async function loadData() {
   loading.value = true
@@ -244,6 +246,9 @@ function validateImportData(rows: any[]) {
 async function confirmImport() {
   if (!importFile.value) return
   isImporting.value = true
+  importErrorMsg.value = ''
+  importSuccessMsg.value = ''
+  importProgress.value = { processed: 0, total: importValidation.value.validCount, percentage: 0 }
 
   const reader = new FileReader()
   reader.onload = async (e: any) => {
@@ -263,20 +268,36 @@ async function confirmImport() {
         device_ip: r['IP'] || '192.168.1.201'
       }))
 
-      const result = await attendanceService.importLogs(normalizedRecords)
-      importSuccessMsg.value = `Successfully imported ${result.importedCount} records (${result.duplicateCount} detected duplicates flagged for audit).`
+      const result = await attendanceService.importLogsChunked(normalizedRecords, (processed, total) => {
+        importProgress.value = {
+          processed,
+          total,
+          percentage: total > 0 ? Math.round((processed / total) * 100) : 100
+        }
+      })
+
+      importSuccessMsg.value = `Successfully imported ${result.importedCount.toLocaleString()} records across ${result.chunkCount} safe batches (${result.duplicateCount.toLocaleString()} duplicate scans flagged for audit).`
       
       setTimeout(() => {
         showImportModal.value = false
         importFile.value = null
         importPreviewData.value = []
         importSuccessMsg.value = ''
+        importProgress.value = { processed: 0, total: 0, percentage: 0 }
         loadData()
-      }, 1500)
+      }, 1800)
+    } catch (err: any) {
+      importErrorMsg.value = 'Import failed: ' + (err?.message || 'Server error while persisting attendance records.')
     } finally {
       isImporting.value = false
     }
   }
+
+  reader.onerror = () => {
+    importErrorMsg.value = 'Failed to read file from disk.'
+    isImporting.value = false
+  }
+
   reader.readAsArrayBuffer(importFile.value)
 }
 
@@ -660,6 +681,28 @@ onMounted(() => {
         <div v-if="importSuccessMsg" class="rounded-md bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
           <CheckCircle2 class="size-4 shrink-0" />
           <span>{{ importSuccessMsg }}</span>
+        </div>
+
+        <div v-if="importErrorMsg" class="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-xs text-destructive flex items-center gap-2">
+          <X class="size-4 shrink-0" />
+          <span>{{ importErrorMsg }}</span>
+        </div>
+
+        <!-- Real-time chunked import progress bar -->
+        <div v-if="isImporting" class="rounded-md border bg-muted/40 p-3 space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-foreground">Importing to MySQL backend in chunks...</span>
+            <span class="font-mono text-muted-foreground">{{ importProgress.processed.toLocaleString() }} / {{ importProgress.total.toLocaleString() }} ({{ importProgress.percentage }}%)</span>
+          </div>
+          <div class="w-full bg-secondary h-2 rounded-full overflow-hidden">
+            <div
+              class="bg-primary h-full transition-all duration-200"
+              :style="{ width: `${importProgress.percentage}%` }"
+            />
+          </div>
+          <p class="text-[11px] text-muted-foreground">
+            Processed safely without browser localStorage limitations.
+          </p>
         </div>
 
         <div class="space-y-3 text-xs">

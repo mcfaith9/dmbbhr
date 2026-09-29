@@ -33,14 +33,14 @@ const props = withDefaults(defineProps<SidebarProps>(), {
 
 const route = useRoute()
 const router = useRouter()
-const currentUser = authService.getCurrentUser()
+const currentUser = computed(() => authService.getCurrentUser())
 
-const userData = {
-  name: currentUser?.name || "dmbbhr",
-  email: currentUser?.email || "hr@dmbb.com",
-  avatar: currentUser?.avatar || "",
-  role: currentUser?.role || "admin",
-}
+const userData = computed(() => ({
+  name: currentUser.value?.name || "DMBB HR Admin",
+  email: currentUser.value?.email || "hr@dmbb.com",
+  avatar: currentUser.value?.avatar || "",
+  role: currentUser.value?.role || "admin",
+}))
 
 interface NavItem {
   id: string
