@@ -8,6 +8,7 @@ import {
   Calendar as CalendarIcon,
   X,
   CheckCircle2,
+  AlertCircle,
   Radio,
   Fingerprint,
 } from '@lucide/vue'
@@ -343,6 +344,19 @@ async function confirmImport() {
 }
 
 const deviceStatus = liveAttendanceService.deviceStatus
+const isSyncing = liveAttendanceService.isSyncing
+const syncProgress = liveAttendanceService.syncProgress
+const showSyncReport = ref(false)
+
+async function handleManualSync() {
+  await liveAttendanceService.triggerManualSync()
+  loadData()
+}
+
+function dismissSyncProgress() {
+  liveAttendanceService.clearSyncProgress()
+}
+
 const latestLiveScan = ref<AttendanceLog | null>(null)
 let unsubscribeLive: (() => void) | null = null
 let unsubscribeLogs: (() => void) | null = null
@@ -421,6 +435,16 @@ onUnmounted(() => {
 
       <!-- Action buttons -->
       <div class="flex items-center gap-2 flex-wrap">
+        <Button
+          variant="default"
+          size="sm"
+          class="h-8 gap-1.5 font-medium shadow-xs"
+          :disabled="isSyncing"
+          @click="handleManualSync"
+        >
+          <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
+          <span class="text-xs">{{ isSyncing ? 'Syncing...' : 'Sync Attendance' }}</span>
+        </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadData">
           <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
           <span class="text-xs">Refresh</span>
@@ -438,6 +462,122 @@ onUnmounted(() => {
             CSV
           </Button>
         </div>
+      </div>
+    </div>
+
+    <!-- Biometric Sync Progress & Audit Banner -->
+    <div
+      v-if="syncProgress"
+      class="rounded-xl border p-4 text-xs transition-all shadow-xs animate-in fade-in duration-200"
+      :class="[
+        syncProgress.stage === 'error'
+          ? 'border-destructive/40 bg-destructive/10 text-destructive-foreground'
+          : syncProgress.stage === 'complete'
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-foreground'
+            : 'border-primary/30 bg-primary/5 text-foreground'
+      ]"
+    >
+      <div class="flex items-start justify-between gap-3">
+        <div class="space-y-1.5 flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <Radio
+              v-if="isSyncing"
+              class="size-3.5 text-primary animate-spin"
+            />
+            <CheckCircle2
+              v-else-if="syncProgress.stage === 'complete'"
+              class="size-3.5 text-emerald-600 dark:text-emerald-400"
+            />
+            <AlertCircle
+              v-else-if="syncProgress.stage === 'error'"
+              class="size-3.5 text-destructive"
+            />
+            <span class="font-semibold text-sm">
+              {{
+                syncProgress.stage === 'complete'
+                  ? 'Biometric Synchronization Complete'
+                  : syncProgress.stage === 'error'
+                    ? 'Biometric Synchronization Error'
+                    : 'Syncing Biometric Attendance...'
+              }}
+            </span>
+            <span class="text-[11px] font-mono text-muted-foreground ml-auto pr-2">
+              {{ syncProgress.progress }}%
+            </span>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="h-2 w-full rounded-full bg-muted/60 overflow-hidden">
+            <div
+              class="h-full transition-all duration-300 rounded-full"
+              :class="[
+                syncProgress.stage === 'error'
+                  ? 'bg-destructive'
+                  : syncProgress.stage === 'complete'
+                    ? 'bg-emerald-600 dark:bg-emerald-500'
+                    : 'bg-primary'
+              ]"
+              :style="{ width: `${syncProgress.progress}%` }"
+            />
+          </div>
+
+          <!-- Progress Message -->
+          <div class="flex items-center justify-between text-xs text-muted-foreground pt-0.5">
+            <span class="truncate">{{ syncProgress.message }}</span>
+            <span v-if="syncProgress.summary?.strategyUsed" class="font-medium shrink-0 ml-2">
+              Strategy: {{ syncProgress.summary.strategyUsed }}
+            </span>
+          </div>
+
+          <!-- Detailed Summary if complete -->
+          <div
+            v-if="syncProgress.stage === 'complete' && syncProgress.summary"
+            class="flex items-center gap-3 pt-1 text-[11px] text-muted-foreground flex-wrap"
+          >
+            <span class="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-medium">
+              +{{ syncProgress.summary.newRecords }} new imported
+            </span>
+            <span>•</span>
+            <span>{{ syncProgress.summary.alreadySynced }} already in store</span>
+            <span>•</span>
+            <span :class="syncProgress.summary.invalidSkipped > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : ''">
+              {{ syncProgress.summary.invalidSkipped }} corrupt/invalid skipped
+            </span>
+            <Button
+              v-if="syncProgress.summary.invalidSkipped > 0 && syncProgress.summary.invalidSamples?.length"
+              variant="link"
+              size="sm"
+              class="h-auto p-0 text-[11px] text-primary underline ml-auto"
+              @click="showSyncReport = !showSyncReport"
+            >
+              {{ showSyncReport ? 'Hide Corrupt Samples' : 'Inspect Skipped Samples' }}
+            </Button>
+          </div>
+
+          <!-- Corrupt Samples Inspector -->
+          <div
+            v-if="showSyncReport && syncProgress.summary?.invalidSamples?.length"
+            class="mt-2 p-2.5 rounded-md bg-background border font-mono text-[11px] space-y-1"
+          >
+            <div class="font-sans font-semibold text-muted-foreground">Rejected Raw Records (Protected from store):</div>
+            <div
+              v-for="(sample, idx) in syncProgress.summary.invalidSamples"
+              :key="idx"
+              class="text-muted-foreground"
+            >
+              • Raw User ID: <code class="text-destructive font-bold">{{ sample.rawUserId }}</code> | Raw Date: <code>{{ sample.rawDate }}</code> ({{ sample.reason }})
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          class="text-muted-foreground hover:text-foreground p-1 rounded-md transition-colors"
+          title="Dismiss"
+          @click="dismissSyncProgress"
+        >
+          <X class="size-3.5" />
+        </button>
       </div>
     </div>
 

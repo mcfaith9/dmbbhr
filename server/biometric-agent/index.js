@@ -8,12 +8,14 @@
  */
 const { createDeviceInstance } = require('./src/device/deviceClient');
 const { startAttendanceListener, stopAttendanceListener } = require('./src/device/attendanceListener');
+const { syncBiometricAttendance, loadLocalStore } = require('./src/device/attendanceSync');
 const { DevSocketBridge } = require('./src/bridge/devSocketBridge');
 
 const WS_PORT = parseInt(process.env.WS_PORT || '5174', 10);
 const bridge = new DevSocketBridge(WS_PORT);
 
 let currentDevice = null;
+let currentConfig = null;
 let isShuttingDown = false;
 let heartbeatTimer = null;
 
@@ -42,6 +44,7 @@ function parseErrorMessage(err) {
 async function connectAndListen() {
   const { device, config } = createDeviceInstance();
   currentDevice = device;
+  currentConfig = config;
 
   log(`Agent starting...`);
   log(`Device: ${config.name}`);
@@ -53,7 +56,7 @@ async function connectAndListen() {
   let connected = false;
 
   try {
-    // Attempt socket connection with timeout
+    // Attempt socket connection with timeout (preserve existing working connection)
     await device.createSocket();
     connected = true;
 
@@ -77,64 +80,23 @@ async function connectAndListen() {
       log(`Notice: Could not load user registry (${uErr.message})`);
     }
 
-    // 2. Pull real existing attendance records from the hardware device (Section 2)
-    let normalizedLogs = [];
-    try {
-      log(`Retrieving real attendance logs from ${config.name}...`);
-      const attendanceResult = await device.getAttendances();
-      const rawAttendance = Array.isArray(attendanceResult)
-        ? attendanceResult
-        : (attendanceResult && Array.isArray(attendanceResult.data) ? attendanceResult.data : []);
+    // 2. Load locally persisted valid records into bridge (NO automatic device download)
+    const localStore = loadLocalStore();
+    log(`Loaded ${localStore.length} locally persisted record(s). Ready for manual sync.`);
+    bridge.setDeviceLogs(localStore);
 
-      log(`Total real device records retrieved: ${rawAttendance.length}`);
-
-      for (const record of rawAttendance) {
-        const uid = String(record.user_id ?? record.userId ?? '').trim();
-        if (!uid) continue;
-
-        const recTime = record.record_time || record.dateTime || record.timestamp;
-        const parsedDate = recTime ? new Date(recTime) : new Date();
-        const sn = Number(record.sn ?? record.serial ?? 0);
-        const name = deviceUserMap.get(uid) || record.name || '';
-
-        normalizedLogs.push({
-          id: `dev-${config.serial || config.ip}-${sn || `${uid}-${parsedDate.getTime()}`}`,
-          user_id: uid,
-          employee_id: undefined,
-          employee_name: name || 'Biometric User',
-          attendance_time: parsedDate.toISOString(),
-          type: Number(record.type ?? 1),
-          state: Number(record.state ?? 1),
-          serial_number: sn,
-          device_id: 'dev-1',
-          device_name: config.name,
-          device_ip: config.ip,
-          location_id: config.location_id,
-          location_name: config.location,
-          is_duplicate: false,
-
-          // Normalized format required by specification:
-          userId: uid,
-          timestamp: parsedDate.toISOString(),
-          deviceId: config.serial,
-          deviceName: config.name,
-          verificationMethod: Number(record.type ?? 1),
-          status: Number(record.state ?? 1),
-          source: 'device_sync',
-          created_at: new Date().toISOString()
-        });
+    // 3. Register manual sync handler (Section 1 & 2)
+    bridge.setSyncHandler(async (onProgress) => {
+      if (!currentDevice || !connected) {
+        throw new Error('Device is not currently connected');
       }
+      log(`User initiated manual attendance sync...`);
+      return await syncBiometricAttendance(currentDevice, config, onProgress);
+    });
 
-      // Store in dev bridge and deliver to connected Vue web clients
-      bridge.setDeviceLogs(normalizedLogs);
-      log(`Delivered ${normalizedLogs.length} real attendance logs to web app bridge`);
-    } catch (attErr) {
-      log(`Notice on attendance log retrieval: ${attErr.message}`);
-    }
-
-    // 3. Start real-time attendance listener with push and polling fallback (Sections 3, 4, 5)
-    log(`Starting real-time attendance listener & event monitor...`);
-    await startAttendanceListener(device, config, deviceUserMap, normalizedLogs, async (eventRecord) => {
+    // 4. Start real-time push attendance listener (waits for real fingerprint scans)
+    log(`Real-time hardware event socket active and waiting for fingerprint scans...`);
+    await startAttendanceListener(device, config, deviceUserMap, localStore, async (eventRecord) => {
       // Attach mapped employee name if present
       if (!eventRecord.employee_name && deviceUserMap.has(eventRecord.user_id)) {
         eventRecord.employee_name = deviceUserMap.get(eventRecord.user_id);
@@ -146,12 +108,11 @@ async function connectAndListen() {
       bridge.broadcastScan(eventRecord);
     });
 
-    // 4. Start periodic heartbeat to verify socket is actually alive
+    // 5. Start periodic heartbeat to verify socket is actually alive (read-only getTime)
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = setInterval(async () => {
       try {
         if (!connected || !currentDevice) return;
-        // Ping device with getTime() to confirm alive
         await currentDevice.getTime();
         bridge.setDeviceStatus('online', 'Active heartbeat confirmed');
       } catch (hbErr) {

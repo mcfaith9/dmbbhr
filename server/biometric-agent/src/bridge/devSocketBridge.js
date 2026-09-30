@@ -6,6 +6,7 @@
  */
 
 const http = require('http');
+const { loadLocalStore } = require('../device/attendanceSync');
 
 class DevSocketBridge {
   constructor(port = 5174) {
@@ -15,6 +16,23 @@ class DevSocketBridge {
     this.recentEvents = [];
     this.deviceLogs = [];
     this.seenEventKeys = new Set();
+    this.syncHandler = null;
+    this.isSyncing = false;
+
+    // Load any existing valid records from local JSON store on startup (Section 9)
+    const initialLocalStore = loadLocalStore();
+    if (initialLocalStore && initialLocalStore.length > 0) {
+      this.deviceLogs = initialLocalStore;
+      for (const log of this.deviceLogs) {
+        const uid = String(log.user_id || log.userId || '').trim();
+        const timeMs = new Date(log.attendance_time || log.timestamp).getTime();
+        const timeSec = Math.floor(timeMs / 1000);
+        const ip = log.device_ip || '192.168.1.201';
+        this.seenEventKeys.add(`${ip}:${uid}:${timeSec}`);
+        const sn = Number(log.serial_number || 0);
+        if (sn > 0) this.seenEventKeys.add(`${ip}:sn:${sn}`);
+      }
+    }
 
     // Hardware status representation
     this.deviceState = {
@@ -30,6 +48,17 @@ class DevSocketBridge {
       lastEvent: null,
       uptimeSeconds: 0
     };
+  }
+
+  setSyncHandler(fn) {
+    this.syncHandler = fn;
+  }
+
+  broadcastProgress(progress) {
+    this.broadcastMessage({
+      type: 'SYNC_PROGRESS',
+      payload: progress
+    });
   }
 
   setDeviceStatus(status, reason = '') {
@@ -110,6 +139,42 @@ class DevSocketBridge {
       if (req.url === '/api/events') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', events: this.recentEvents }));
+        return;
+      }
+
+      // POST /api/sync: Trigger manual biometric attendance sync with live progress
+      if (req.url === '/api/sync' && req.method === 'POST') {
+        if (!this.syncHandler) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'error', message: 'Sync handler not initialized or device not connected' }));
+          return;
+        }
+
+        if (this.isSyncing) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'busy', message: 'Synchronization is already in progress' }));
+          return;
+        }
+
+        this.isSyncing = true;
+        this.broadcastProgress({ stage: 'connecting', message: 'Starting manual synchronization...', progress: 10 });
+
+        this.syncHandler((progress) => {
+          this.broadcastProgress(progress);
+        }).then((result) => {
+          this.isSyncing = false;
+          if (result && Array.isArray(result.allRecords)) {
+            this.setDeviceLogs(result.allRecords);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'ok', ...result }));
+        }).catch((err) => {
+          this.isSyncing = false;
+          this.broadcastProgress({ stage: 'error', message: `Sync failed: ${err.message}`, progress: 0 });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'error', message: err.message }));
+        });
+
         return;
       }
 

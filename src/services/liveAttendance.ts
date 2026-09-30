@@ -20,20 +20,42 @@ export interface RealDeviceStatus {
   lastEvent: string | null
 }
 
+export interface SyncProgressState {
+  stage: 'connecting' | 'downloading' | 'validating' | 'saving' | 'complete' | 'error' | string
+  message: string
+  progress: number
+  summary?: {
+    success: boolean
+    newRecords: number
+    alreadySynced: number
+    invalidSkipped: number
+    totalValid: number
+    strategyUsed?: string
+    invalidSamples?: Array<{ rawUserId: string; rawDate: string; reason: string }>
+    allRecords?: AttendanceLog[]
+  }
+}
+
 type ScanCallback = (log: AttendanceLog) => void
 type StatusCallback = (status: RealDeviceStatus) => void
 type LogsCallback = () => void
+type SyncCallback = (progress: SyncProgressState) => void
 
 class LiveAttendanceService {
   private socket: WebSocket | null = null
   private scanListeners: Set<ScanCallback> = new Set()
   private statusListeners: Set<StatusCallback> = new Set()
   private logsListeners: Set<LogsCallback> = new Set()
+  private syncListeners: Set<SyncCallback> = new Set()
   private reconnectTimer: any = null
   
   // Agent connection state
   public isAgentConnected = ref(false)
   public lastReceivedScan = ref<AttendanceLog | null>(null)
+
+  // Controlled manual sync state
+  public isSyncing = ref(false)
+  public syncProgress = ref<SyncProgressState | null>(null)
   
   // Real hardware device status (reported by Node.js agent)
   public deviceStatus = ref<RealDeviceStatus>({
@@ -62,6 +84,14 @@ class LiveAttendanceService {
   }
 
   private getHttpBaseUrl(): string {
+    if (import.meta.env.VITE_AGENT_WS_URL) {
+      try {
+        const u = new URL(import.meta.env.VITE_AGENT_WS_URL)
+        return `http://${u.hostname}:${u.port || '5174'}`
+      } catch {
+        // fallback
+      }
+    }
     const host = window.location.hostname || 'localhost'
     return `http://${host}:5174`
   }
@@ -133,6 +163,24 @@ class LiveAttendanceService {
           if (data.type === 'DEVICE_STATUS' && data.payload) {
             this.deviceStatus.value = data.payload
             this.notifyStatusListeners()
+          }
+
+          // 2.1 Sync Progress Update
+          if (data.type === 'SYNC_PROGRESS' && data.payload) {
+            const prog = data.payload as SyncProgressState
+            this.syncProgress.value = prog
+            if (prog.stage === 'complete') {
+              this.isSyncing.value = false
+              if (prog.summary?.allRecords && Array.isArray(prog.summary.allRecords)) {
+                attendanceService.setDeviceLogs(prog.summary.allRecords)
+                this.notifyLogsListeners()
+              }
+            } else if (prog.stage === 'error') {
+              this.isSyncing.value = false
+            } else {
+              this.isSyncing.value = true
+            }
+            this.notifySyncListeners(prog)
           }
 
           // 3. Real Biometric Scan Received
@@ -215,6 +263,16 @@ class LiveAttendanceService {
     }
   }
 
+  private notifySyncListeners(prog: SyncProgressState) {
+    for (const listener of this.syncListeners) {
+      try {
+        listener(prog)
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   private scheduleReconnect() {
     if (this.reconnectTimer) return
     this.reconnectTimer = setTimeout(() => {
@@ -237,6 +295,89 @@ class LiveAttendanceService {
   public onLogs(callback: LogsCallback) {
     this.logsListeners.add(callback)
     return () => this.logsListeners.delete(callback)
+  }
+
+  public onSyncProgress(callback: SyncCallback) {
+    this.syncListeners.add(callback)
+    if (this.syncProgress.value) {
+      callback(this.syncProgress.value)
+    }
+    return () => this.syncListeners.delete(callback)
+  }
+
+  public clearSyncProgress() {
+    this.syncProgress.value = null
+  }
+
+  /**
+   * Initiates on-demand attendance synchronization from the BISMAC BISBIO B-29b device.
+   * Disables repeated polling; runs only when explicitly triggered by the user.
+   */
+  public async triggerManualSync(): Promise<{ success: boolean; message: string; summary?: any }> {
+    if (this.isSyncing.value) {
+      return { success: false, message: 'Synchronization is already in progress' }
+    }
+
+    this.isSyncing.value = true
+    this.syncProgress.value = {
+      stage: 'connecting',
+      message: 'Connecting to biometric device (192.168.1.201:4370)...',
+      progress: 10
+    }
+
+    try {
+      const httpBase = this.getHttpBaseUrl()
+      const res = await fetch(`${httpBase}/api/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(60000) // allow up to 60s for full device download
+      })
+
+      const data = await res.json()
+      if (!res.ok || data.status === 'error') {
+        const errorMsg = data.message || `Sync request failed with status ${res.status}`
+        this.syncProgress.value = {
+          stage: 'error',
+          message: errorMsg,
+          progress: 0
+        }
+        this.isSyncing.value = false
+        return { success: false, message: errorMsg }
+      }
+
+      // Success payload received
+      this.isSyncing.value = false
+      if (data.allRecords && Array.isArray(data.allRecords)) {
+        attendanceService.setDeviceLogs(data.allRecords)
+        this.notifyLogsListeners()
+      }
+
+      this.syncProgress.value = {
+        stage: 'complete',
+        message: `Sync complete. ${data.newRecords ?? 0} new record(s) imported, ${data.alreadySynced ?? 0} already synced, ${data.invalidSkipped ?? 0} corrupt/invalid record(s) skipped.`,
+        progress: 100,
+        summary: data
+      }
+
+      return {
+        success: true,
+        message: 'Biometric attendance synchronization completed successfully',
+        summary: data
+      }
+    } catch (err: any) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.message?.toLowerCase().includes('timeout')
+      const errorMsg = isTimeout
+        ? 'Sync timed out. Verify network connection to 192.168.1.201:4370.'
+        : `Biometric agent is unreachable (${err?.message || 'Connection failed'}). Ensure the Node.js agent is running.`
+
+      this.syncProgress.value = {
+        stage: 'error',
+        message: errorMsg,
+        progress: 0
+      }
+      this.isSyncing.value = false
+      return { success: false, message: errorMsg }
+    }
   }
 
   public disconnect() {
