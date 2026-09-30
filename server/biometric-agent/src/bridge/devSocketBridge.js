@@ -29,8 +29,6 @@ class DevSocketBridge {
         const timeSec = Math.floor(timeMs / 1000);
         const ip = log.device_ip || '192.168.1.201';
         this.seenEventKeys.add(`${ip}:${uid}:${timeSec}`);
-        const sn = Number(log.serial_number || 0);
-        if (sn > 0) this.seenEventKeys.add(`${ip}:sn:${sn}`);
       }
     }
 
@@ -89,10 +87,6 @@ class DevSocketBridge {
       const timeSec = Math.floor(timeMs / 1000);
       const ip = log.device_ip || '192.168.1.201';
       this.seenEventKeys.add(`${ip}:${uid}:${timeSec}`);
-      const sn = Number(log.serial_number || 0);
-      if (sn > 0) {
-        this.seenEventKeys.add(`${ip}:sn:${sn}`);
-      }
     }
 
     // Broadcast updated device logs to connected Vue browser instances
@@ -293,13 +287,9 @@ class DevSocketBridge {
     const timeSec = Math.floor(timeMs / 1000);
     const ip = scanRecord.device_ip || '192.168.1.201';
     const key = `${ip}:${uid}:${timeSec}`;
-    const sn = Number(scanRecord.serial_number || 0);
 
     // Track in seen keys
     this.seenEventKeys.add(key);
-    if (sn > 0) {
-      this.seenEventKeys.add(`${ip}:sn:${sn}`);
-    }
 
     // Prepend to deviceLogs if not already present
     if (!this.deviceLogs.some(l => l.id === scanRecord.id)) {

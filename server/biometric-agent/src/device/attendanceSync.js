@@ -1,17 +1,19 @@
 /**
- * Controlled Manual Attendance Synchronization & Local Persistence for BISMAC BISBIO B-29b
+ * Biometric Attendance Synchronization & Local Persistence for BISMAC BISBIO B-29b
+ * Reference: Standalone ZKLib implementation tested on 192.168.1.201:4370
  *
  * Implements:
- * - Read-only operation (NEVER deletes or clears device records)
- * - Stage-by-stage real progress reporting
- * - Multi-strategy parsing and strict validation (eliminates corrupt records like \}2)
- * - Safe local JSON persistence (data/attendance_store.json)
- * - Incremental synchronization & deduplication
+ * - Read-only device operation (NEVER deletes or clears device records)
+ * - Uses standard device.getUsers() and device.getAttendances()
+ * - Full 24K+ record processing without arbitrary record discards
+ * - Wall-clock preservation in Philippine Standard Time (PST, UTC+08:00)
+ * - Safe deduplication by (device_ip + user_id + timestamp + type + state)
+ * - Detailed diagnostic logging at every stage
+ * - Local JSON persistence (data/attendance_store.json)
  */
 
 const fs = require('fs');
 const path = require('path');
-const { parseAndValidateAttendance } = require('./attendanceParser');
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const STORE_FILE = path.join(DATA_DIR, 'attendance_store.json');
@@ -27,7 +29,35 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 /**
- * Loads locally stored attendance records
+ * Normalizes device raw timestamp into a standardized Philippine Time ISO string (+08:00).
+ * Preserves the exact wall-clock year, month, day, hour, minute, second recorded by the hardware.
+ */
+function normalizeDeviceDate(rawDate) {
+  if (!rawDate) return null;
+  const parsed = rawDate instanceof Date ? rawDate : new Date(rawDate);
+  if (isNaN(parsed.getTime())) return null;
+
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  const hh = String(parsed.getHours()).padStart(2, '0');
+  const mm = String(parsed.getMinutes()).padStart(2, '0');
+  const ss = String(parsed.getSeconds()).padStart(2, '0');
+
+  // Exact wall-clock timestamp in Asia/Manila (+08:00)
+  const isoPHT = `${y}-${m}-${d}T${hh}:${mm}:${ss}+08:00`;
+  const dateObj = new Date(isoPHT);
+
+  return {
+    iso: dateObj.toISOString(),
+    isoPHT,
+    localDate: `${y}-${m}-${d}`,
+    localTime: `${hh}:${mm}:${ss}`
+  };
+}
+
+/**
+ * Loads locally stored attendance records from JSON store
  */
 function loadLocalStore() {
   try {
@@ -62,7 +92,7 @@ function loadSyncCursor() {
   } catch {
     // fallback
   }
-  return { lastSerialNumber: 0, lastSyncTime: null, totalSynced: 0 };
+  return { lastSyncTime: null, totalSynced: 0 };
 }
 
 function saveSyncCursor(cursor) {
@@ -74,65 +104,68 @@ function saveSyncCursor(cursor) {
 }
 
 /**
- * Performs manual, read-only synchronization from B-29b
+ * Performs manual, read-only synchronization from BISMAC BISBIO B-29b
+ * Follows the proven working reference:
+ *   const usersResult = await device.getUsers();
+ *   const attendanceResult = await device.getAttendances();
  */
 async function syncBiometricAttendance(device, config, onProgress = () => {}) {
   console.log('\n========================================================');
   console.log(`[DMBBHR Sync] Initiating manual sync with ${config.name} (${config.ip}:${config.port})`);
   console.log('========================================================');
 
-  // Stage 1: Device connectivity check
+  // Stage 1: Device connectivity verification
   onProgress({
     stage: 'connecting',
-    message: 'Verifying socket connection to BISMAC BISBIO B-29b...',
-    progress: 15
+    message: `Connecting to biometric device (${config.ip}:${config.port})...`,
+    progress: 10
   });
 
-  // Verify connection is alive
   try {
     await device.getTime();
   } catch (connErr) {
     throw new Error(`Device is unreachable at ${config.ip}:${config.port} (${connErr.message})`);
   }
 
-  // Stage 2: Download user list for name mapping
+  // Stage 2: Download user registry for employee mapping
   onProgress({
     stage: 'downloading',
-    message: 'Downloading user registry for employee mapping...',
-    progress: 30
+    message: 'Connected. Retrieving users from device registry...',
+    progress: 25
   });
 
   const userMap = new Map();
+  let usersCount = 0;
   try {
     const usersResult = await device.getUsers();
-    const users = Array.isArray(usersResult)
-      ? usersResult
-      : (usersResult && Array.isArray(usersResult.data) ? usersResult.data : []);
+    const users = Array.isArray(usersResult?.data) ? usersResult.data : (Array.isArray(usersResult) ? usersResult : []);
+    usersCount = users.length;
     for (const u of users) {
-      userMap.set(String(u.userId), u.name || '');
+      const uid = String(u.userId ?? u.user_id ?? u.uid ?? '').trim();
+      if (uid) {
+        userMap.set(uid, u.name || '');
+      }
     }
-    console.log(`[DMBBHR Sync] Loaded ${userMap.size} user names from device.`);
+    console.log(`[DMBBHR Sync] Users retrieved: ${usersCount} profiles (${userMap.size} unique IDs)`);
   } catch (uErr) {
-    console.warn(`[DMBBHR Sync] Notice: User list could not be fetched (${uErr.message}). Continuing...`);
+    console.warn(`[DMBBHR Sync] Notice: User registry fetch notice: ${uErr.message}. Continuing...`);
   }
 
-  // Stage 3: Download raw attendance records (strictly read-only)
+  // Stage 3: Retrieve complete attendance records using working getAttendances()
   onProgress({
     stage: 'downloading',
-    message: 'Downloading attendance records from device memory...',
-    progress: 50
+    message: 'Retrieving attendance records from biometric device...',
+    progress: 45
   });
 
   let rawRecords = [];
-  let rawBuffer = null;
-
   try {
     const attendanceResult = await device.getAttendances((received, total) => {
       if (total > 0) {
-        const pct = Math.min(Math.round(50 + (received / total) * 20), 70);
+        const pct = Math.min(Math.round(45 + (received / total) * 30), 75);
         onProgress({
           stage: 'downloading',
-          message: `Downloading records: ${received} / ${total} bytes received...`,
+          message: `Downloading attendance records: ${received.toLocaleString()} / ${total.toLocaleString()} bytes received...`,
           progress: pct
         });
       }
@@ -143,98 +176,151 @@ async function syncBiometricAttendance(device, config, onProgress = () => {}) {
     } else if (Array.isArray(attendanceResult)) {
       rawRecords = attendanceResult;
     }
-
-    if (attendanceResult && attendanceResult.rawBuffer) {
-      rawBuffer = attendanceResult.rawBuffer;
-    }
   } catch (dlErr) {
-    throw new Error(`Failed to download attendance records from device: ${dlErr.message}`);
+    throw new Error(`Failed to retrieve attendance records from device: ${dlErr.message}`);
   }
 
-  console.log(`[DMBBHR Sync] Download complete. Raw records reported: ${rawRecords.length}`);
+  console.log(`[DMBBHR Sync] Raw records retrieved from device: ${rawRecords.length}`);
 
-  // Stage 4: Validate and decode records
+  // Stage 4: Parse & validate records
   onProgress({
     stage: 'validating',
-    message: `Validating ${rawRecords.length} records and checking timestamps...`,
-    progress: 75
-  });
-
-  const parsed = parseAndValidateAttendance(rawBuffer, rawRecords, config, userMap);
-  console.log(`[DMBBHR Sync] Valid parsed records: ${parsed.validRecords.length}`);
-  console.log(`[DMBBHR Sync] Corrupt/invalid records skipped: ${parsed.invalidCount}`);
-
-  // Stage 5: Deduplicate and save to local store (Section 9 & 10)
-  onProgress({
-    stage: 'saving',
-    message: 'Saving valid records to local storage and checking for duplicates...',
-    progress: 90
+    message: `Processing and validating ${rawRecords.length.toLocaleString()} attendance records...`,
+    progress: 80
   });
 
   const existingLocalStore = loadLocalStore();
   const existingKeys = new Set(
-    existingLocalStore.map(l => `${l.device_ip || config.ip}:${l.user_id}:${Math.floor(new Date(l.attendance_time).getTime() / 1000)}`)
+    existingLocalStore.map(l => {
+      const timeSec = Math.floor(new Date(l.attendance_time).getTime() / 1000);
+      const ip = l.device_ip || config.ip || '192.168.1.201';
+      const uid = String(l.user_id || l.userId || '').trim();
+      const type = Number(l.type ?? 1);
+      const state = Number(l.state ?? 1);
+      return `${ip}:${uid}:${timeSec}:${type}:${state}`;
+    })
   );
   const existingIds = new Set(existingLocalStore.map(l => l.id));
-  const existingSerials = new Set(
-    existingLocalStore
-      .filter(l => Number(l.serial_number) > 0)
-      .map(l => `${l.device_ip || config.ip}:sn:${l.serial_number}`)
-  );
 
+  let parsedCount = 0;
+  let rejectedCount = 0;
+  let duplicatesCount = 0;
   let newCount = 0;
-  let alreadySyncedCount = 0;
   const newRecordsToAdd = [];
 
-  for (const record of parsed.validRecords) {
-    const timeSec = Math.floor(new Date(record.attendance_time).getTime() / 1000);
-    const key = `${record.device_ip || config.ip}:${record.user_id}:${timeSec}`;
-    const snKey = Number(record.serial_number) > 0 ? `${record.device_ip || config.ip}:sn:${record.serial_number}` : null;
+  for (let i = 0; i < rawRecords.length; i++) {
+    const r = rawRecords[i];
+    const uid = String(r.user_id ?? r.userId ?? r.uid ?? '').trim();
+    const rawTime = r.record_time ?? r.timestamp ?? r.attendance_time;
+    const normalizedDate = normalizeDeviceDate(rawTime);
 
-    if (existingIds.has(record.id) || existingKeys.has(key) || (snKey && existingSerials.has(snKey))) {
-      alreadySyncedCount++;
+    if (!uid || !normalizedDate) {
+      rejectedCount++;
+      continue;
+    }
+
+    parsedCount++;
+
+    const timeSec = Math.floor(new Date(normalizedDate.iso).getTime() / 1000);
+    const type = Number(r.type ?? 1);
+    const state = Number(r.state ?? 1);
+    const sn = Number(r.sn ?? r.serial ?? 0);
+    const ip = r.ip || config.ip || '192.168.1.201';
+
+    // Stable unique record key based on device, user, timestamp, type, and state
+    const key = `${ip}:${uid}:${timeSec}:${type}:${state}`;
+    const id = `dev-${config.serial || '0476141400046'}-${uid}-${timeSec}-${type}-${state}`;
+
+    if (existingKeys.has(key) || existingIds.has(id)) {
+      duplicatesCount++;
     } else {
       newCount++;
-      newRecordsToAdd.push(record);
       existingKeys.add(key);
-      existingIds.add(record.id);
-      if (snKey) existingSerials.add(snKey);
+      existingIds.add(id);
+
+      const empName = userMap.get(uid) || (uid ? `User ${uid}` : 'Biometric User');
+
+      const record = {
+        id,
+        user_id: uid,
+        employee_id: undefined,
+        employee_name: empName,
+        attendance_time: normalizedDate.isoPHT, // Preserves exact wall-clock in PST (+08:00)
+        philippines_time: `${normalizedDate.localDate} ${normalizedDate.localTime}`,
+        type,
+        state,
+        serial_number: sn,
+        device_id: 'dev-1',
+        device_name: config.name || 'BISMAC BISBIO B-29b',
+        device_ip: ip,
+        location_id: config.location_id || 'loc-cebu',
+        location_name: config.location || 'DBB Cebu',
+        is_duplicate: false,
+
+        // Normalized specification fields
+        userId: uid,
+        timestamp: normalizedDate.isoPHT,
+        deviceId: config.serial || '0476141400046',
+        deviceName: config.name || 'BISMAC BISBIO B-29b',
+        verificationMethod: type,
+        status: state,
+        source: 'manual_sync',
+        created_at: new Date().toISOString()
+      };
+
+      newRecordsToAdd.push(record);
     }
   }
 
-  // Merge and sort
+  // Stage 5: Save to local store
+  onProgress({
+    stage: 'saving',
+    message: `Storing ${newCount.toLocaleString()} new records (${duplicatesCount.toLocaleString()} already synced)...`,
+    progress: 92
+  });
+
   const updatedStore = [...newRecordsToAdd, ...existingLocalStore];
+  // Sort descending by attendance_time (newest first)
   updatedStore.sort((a, b) => new Date(b.attendance_time).getTime() - new Date(a.attendance_time).getTime());
 
   saveLocalStore(updatedStore);
 
-  // Update cursor
+  // Update sync cursor
   const cursor = loadSyncCursor();
   cursor.lastSyncTime = new Date().toISOString();
   cursor.totalSynced = updatedStore.length;
   saveSyncCursor(cursor);
 
+  // Diagnostic logging (Section 5)
+  console.log('\n========================================================');
+  console.log('[DMBBHR Sync Diagnostic Report]');
+  console.log(`Device returned:     ${rawRecords.length}`);
+  console.log(`Successfully parsed: ${parsedCount}`);
+  console.log(`Rejected:            ${rejectedCount}`);
+  console.log(`Duplicates skipped:  ${duplicatesCount}`);
+  console.log(`New records stored:  ${newCount}`);
+  console.log(`Total Stored:        ${updatedStore.length}`);
+  console.log('========================================================\n');
+
   // Stage 6: Complete
   const summary = {
     success: true,
+    deviceReturned: rawRecords.length,
+    parsedCount,
+    rejectedCount,
+    duplicatesCount,
     newRecords: newCount,
-    alreadySynced: alreadySyncedCount,
-    invalidSkipped: parsed.invalidCount,
+    alreadySynced: duplicatesCount,
     totalValid: updatedStore.length,
-    strategyUsed: parsed.strategyUsed,
-    allRecords: updatedStore,
-    invalidSamples: parsed.invalidSamples
+    allRecords: updatedStore
   };
 
   onProgress({
     stage: 'complete',
-    message: `Sync complete. ${newCount} new record(s) imported, ${alreadySyncedCount} already synced, ${parsed.invalidCount} corrupt record(s) skipped.`,
+    message: `Sync completed. ${rawRecords.length.toLocaleString()} records retrieved from device (${newCount.toLocaleString()} new, ${duplicatesCount.toLocaleString()} already present).`,
     progress: 100,
     summary
   });
-
-  console.log(`[DMBBHR Sync] Summary: New: ${newCount}, Already Synced: ${alreadySyncedCount}, Invalid Skipped: ${parsed.invalidCount}`);
-  console.log('========================================================\n');
 
   return summary;
 }
@@ -244,5 +330,6 @@ module.exports = {
   loadLocalStore,
   saveLocalStore,
   loadSyncCursor,
-  saveSyncCursor
+  saveSyncCursor,
+  normalizeDeviceDate
 };

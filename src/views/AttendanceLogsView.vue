@@ -532,26 +532,27 @@ onUnmounted(() => {
           <!-- Detailed Summary if complete -->
           <div
             v-if="syncProgress.stage === 'complete' && syncProgress.summary"
-            class="flex items-center gap-3 pt-1 text-[11px] text-muted-foreground flex-wrap"
+            class="flex items-center gap-3 pt-1 text-[11px] text-muted-foreground flex-wrap font-mono"
           >
-            <span class="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-medium">
-              +{{ syncProgress.summary.newRecords }} new imported
+            <span class="inline-flex items-center gap-1 text-foreground font-semibold font-sans">
+              Device Returned: <strong class="text-primary">{{ syncProgress.summary.deviceReturned?.toLocaleString() || syncProgress.summary.totalValid?.toLocaleString() }}</strong>
             </span>
             <span>•</span>
-            <span>{{ syncProgress.summary.alreadySynced }} already in store</span>
-            <span>•</span>
-            <span :class="syncProgress.summary.invalidSkipped > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : ''">
-              {{ syncProgress.summary.invalidSkipped }} corrupt/invalid skipped
+            <span class="text-emerald-700 dark:text-emerald-300 font-medium font-sans">
+              Parsed: {{ syncProgress.summary.parsedCount?.toLocaleString() || syncProgress.summary.totalValid?.toLocaleString() }}
             </span>
-            <Button
-              v-if="syncProgress.summary.invalidSkipped > 0 && syncProgress.summary.invalidSamples?.length"
-              variant="link"
-              size="sm"
-              class="h-auto p-0 text-[11px] text-primary underline ml-auto"
-              @click="showSyncReport = !showSyncReport"
-            >
-              {{ showSyncReport ? 'Hide Corrupt Samples' : 'Inspect Skipped Samples' }}
-            </Button>
+            <span>•</span>
+            <span class="font-sans">
+              +{{ syncProgress.summary.newRecords?.toLocaleString() }} new stored
+            </span>
+            <span>•</span>
+            <span class="font-sans">
+              {{ syncProgress.summary.alreadySynced?.toLocaleString() }} duplicates skipped
+            </span>
+            <span>•</span>
+            <span class="font-semibold text-foreground font-sans">
+              Total Stored: {{ syncProgress.summary.totalValid?.toLocaleString() }}
+            </span>
           </div>
 
           <!-- Corrupt Samples Inspector -->
@@ -817,15 +818,29 @@ onUnmounted(() => {
 
           <template v-else-if="logs.length === 0">
             <TableRow>
-              <TableCell colspan="10" class="h-32 text-center text-muted-foreground">
-                <div class="flex flex-col items-center justify-center gap-1.5">
-                  <Fingerprint class="size-6 text-muted-foreground/50" />
-                  <span class="font-medium text-foreground text-sm">
-                    {{ filters.quickRange === 'today' ? 'No attendance records today.' : 'No attendance logs found matching the selected filters.' }}
-                  </span>
-                  <p class="text-xs text-muted-foreground">
-                    {{ filters.quickRange === 'today' ? 'Scan a registered fingerprint on the BISMAC BISBIO B-29b to record attendance.' : 'Try adjusting the search or date range filters.' }}
-                  </p>
+              <TableCell colspan="10" class="h-40 text-center text-muted-foreground">
+                <div class="flex flex-col items-center justify-center gap-2 max-w-md mx-auto py-6">
+                  <div class="size-10 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
+                    <Fingerprint class="size-5 text-muted-foreground/60" />
+                  </div>
+                  <div class="space-y-1">
+                    <span class="font-medium text-foreground text-sm block">
+                      No attendance records available. Click Sync Attendance to retrieve records from the biometric device.
+                    </span>
+                    <p class="text-xs text-muted-foreground">
+                      {{ filters.quickRange === 'today' ? 'No attendance records recorded for Today yet.' : 'No records match the active search/date filter.' }}
+                    </p>
+                  </div>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    class="h-8 gap-1.5 font-medium shadow-xs mt-1"
+                    :disabled="isSyncing"
+                    @click="handleManualSync"
+                  >
+                    <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
+                    <span>{{ isSyncing ? 'Syncing...' : 'Sync Attendance' }}</span>
+                  </Button>
                 </div>
               </TableCell>
             </TableRow>

@@ -26,9 +26,13 @@ export interface SyncProgressState {
   progress: number
   summary?: {
     success: boolean
+    deviceReturned?: number
+    parsedCount?: number
+    rejectedCount?: number
+    duplicatesCount?: number
     newRecords: number
     alreadySynced: number
-    invalidSkipped: number
+    invalidSkipped?: number
     totalValid: number
     strategyUsed?: string
     invalidSamples?: Array<{ rawUserId: string; rawDate: string; reason: string }>

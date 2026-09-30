@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import {
   Users,
   Clock,
@@ -19,36 +19,20 @@ const loading = ref(false)
 // Real hardware status from Node agent
 const deviceStatus = liveAttendanceService.deviceStatus
 
-// Computed statistics derived dynamically from real attendance logs today
-const todayLogs = computed(() => {
-  const todayStr = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Manila',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date())
-
-  return recentLogs.value.filter(l => {
-    const d = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Manila',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(new Date(l.attendance_time))
-    return d === todayStr
-  })
-})
-
-const uniqueUsersToday = computed(() => {
-  const set = new Set(todayLogs.value.map(l => l.user_id))
-  return set.size
-})
+const totalLogsToday = ref(0)
+const uniqueUsersToday = ref(0)
 
 async function loadDashboard() {
   loading.value = true
   try {
-    const res = await attendanceService.getLogs({ page: 1, pageSize: 6 })
-    recentLogs.value = res.logs
+    const [recentRes, todayRes] = await Promise.all([
+      attendanceService.getLogs({ page: 1, pageSize: 6 }),
+      attendanceService.getLogs({ quickRange: 'today', pageSize: 999999 })
+    ])
+    recentLogs.value = recentRes.logs
+    totalLogsToday.value = todayRes.meta.totalItems
+    const set = new Set(todayRes.logs.map(l => l.user_id))
+    uniqueUsersToday.value = set.size
   } finally {
     loading.value = false
   }
@@ -164,10 +148,10 @@ onUnmounted(() => {
         </div>
         <div class="mt-3">
           <div class="text-2xl font-bold tracking-tight text-foreground">
-            {{ todayLogs.length }}
+            {{ totalLogsToday }}
           </div>
           <p class="text-[11px] text-muted-foreground mt-0.5">
-            {{ todayLogs.length === 0 ? 'No attendance records today' : `${todayLogs.length} real scan event(s) recorded` }}
+            {{ totalLogsToday === 0 ? 'No attendance records today' : `${totalLogsToday} real scan event(s) recorded` }}
           </p>
         </div>
       </div>

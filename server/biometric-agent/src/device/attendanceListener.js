@@ -4,7 +4,7 @@
  * Continuous full log polling has been removed in favor of user-initiated manual sync.
  */
 
-const { isValidUserId, isValidTimestamp, formatPhilippineDate } = require('./attendanceParser');
+const { normalizeDeviceDate } = require('./attendanceSync');
 
 // Global in-memory set for deduplication of push events
 const seenRecords = new Set();
@@ -16,17 +16,10 @@ function getRecordKey(ip, userId, timestamp) {
   return `${ip}:${uid}:${timeSec}`;
 }
 
-function getSerialKey(ip, serial) {
-  const sn = Number(serial || 0);
-  return sn > 0 ? `${ip}:sn:${sn}` : null;
-}
-
 function primeSeenRecords(ip, initialLogs = []) {
   for (const log of initialLogs) {
     const key = getRecordKey(ip, log.user_id || log.userId, log.attendance_time || log.timestamp);
     seenRecords.add(key);
-    const snKey = getSerialKey(ip, log.serial_number || log.sn || log.serial);
-    if (snKey) seenRecords.add(snKey);
   }
 }
 
@@ -50,37 +43,35 @@ async function startAttendanceListener(device, config, userMap = new Map(), init
        * }
        */
       const userId = String(data.userId || data.user_id || '').trim();
-      const attTime = data.attTime instanceof Date ? data.attTime : new Date(data.attTime);
+      const rawDate = data.attTime || data.record_time || new Date();
+      const normalizedDate = normalizeDeviceDate(rawDate);
 
       // Validate real-time push data before accepting
-      if (!isValidUserId(userId) || !isValidTimestamp(attTime)) {
-        console.warn(`[DMBBHR Listener] Rejected invalid real-time scan event: User ID="${userId}", Time="${attTime}"`);
+      if (!userId || !normalizedDate) {
+        console.warn(`[DMBBHR Listener] Rejected unparseable real-time scan event: User ID="${userId}", Time="${rawDate}"`);
         return;
       }
 
-      const timeKey = getRecordKey(config.ip, userId, attTime);
+      const timeKey = getRecordKey(config.ip, userId, normalizedDate.iso);
       const sn = Number(data.serial ?? data.sn ?? 0);
-      const snKey = getSerialKey(config.ip, sn);
 
       // Deduplicate against seen records
-      if (seenRecords.has(timeKey) || (snKey && seenRecords.has(snKey))) {
-        console.log(`[DMBBHR Listener] [REAL-TIME DEVICE EVENT] Duplicate scan ignored: User ${userId} at ${attTime.toISOString()}`);
+      if (seenRecords.has(timeKey)) {
+        console.log(`[DMBBHR Listener] [REAL-TIME DEVICE EVENT] Duplicate scan ignored: User ${userId} at ${normalizedDate.isoPHT}`);
         return;
       }
 
       seenRecords.add(timeKey);
-      if (snKey) seenRecords.add(snKey);
 
-      const phFormatted = formatPhilippineDate(attTime);
-      const employeeName = userMap.get(userId) || data.name || 'Biometric User';
+      const employeeName = userMap.get(userId) || data.name || (userId ? `User ${userId}` : 'Biometric User');
 
       const normalizedRecord = {
         id: `real-${config.serial || config.ip}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         user_id: userId,
         employee_id: undefined,
         employee_name: employeeName,
-        attendance_time: attTime.toISOString(),
-        philippines_time: phFormatted,
+        attendance_time: normalizedDate.isoPHT,
+        philippines_time: `${normalizedDate.localDate} ${normalizedDate.localTime}`,
         type: Number(data.type ?? 1),
         state: Number(data.state ?? 1),
         serial_number: sn,
@@ -93,7 +84,7 @@ async function startAttendanceListener(device, config, userMap = new Map(), init
 
         // Normalized internal fields:
         userId: userId,
-        timestamp: attTime.toISOString(),
+        timestamp: normalizedDate.isoPHT,
         deviceId: config.serial,
         deviceName: config.name,
         verificationMethod: Number(data.type ?? 1),
@@ -105,7 +96,7 @@ async function startAttendanceListener(device, config, userMap = new Map(), init
       console.log(`\n========================================`);
       console.log(`[REAL-TIME DEVICE EVENT] NEW SCAN DETECTED!`);
       console.log(`User ID:           ${normalizedRecord.user_id} (${employeeName})`);
-      console.log(`Time:              ${phFormatted}`);
+      console.log(`Time:              ${normalizedDate.localDate} ${normalizedDate.localTime}`);
       console.log(`Device:            ${config.name} (${config.ip})`);
       console.log(`========================================\n`);
 
