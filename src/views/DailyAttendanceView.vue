@@ -10,9 +10,11 @@ import {
   Users,
   Search,
   X,
+  MapPin,
 } from '@lucide/vue'
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { employeeService, VALID_LOCATIONS } from '@/services/employees'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,6 +28,7 @@ const syncProgress = liveAttendanceService.syncProgress
 // Default to Today in Philippine Standard Time
 const todayDateStr = getManilaDateString(new Date())
 const selectedDate = ref<string>(todayDateStr)
+const selectedLocation = ref<string>('all')
 const searchQuery = ref<string>('')
 const loading = ref<boolean>(false)
 const dailyRecords = ref<DailyAttendanceRecord[]>([])
@@ -33,7 +36,7 @@ const dailyRecords = ref<DailyAttendanceRecord[]>([])
 async function loadDailyAttendance() {
   loading.value = true
   try {
-    const records = await attendanceService.getDailyAttendance(selectedDate.value)
+    const records = await attendanceService.getDailyAttendance(selectedDate.value, selectedLocation.value)
     dailyRecords.value = records
   } finally {
     loading.value = false
@@ -57,19 +60,23 @@ function setDateQuick(range: 'today' | 'yesterday') {
 }
 
 const filteredRecords = computed(() => {
-  if (!searchQuery.value.trim()) return dailyRecords.value
+  let list = dailyRecords.value
+  if (selectedLocation.value && selectedLocation.value !== 'all') {
+    list = list.filter(r => r.location === selectedLocation.value)
+  }
+  if (!searchQuery.value.trim()) return list
   const q = searchQuery.value.trim().toLowerCase()
-  return dailyRecords.value.filter(r =>
+  return list.filter(r =>
     r.biometric_user_id.toLowerCase().includes(q) ||
     r.employee_name.toLowerCase().includes(q)
   )
 })
 
 const stats = computed(() => {
-  const total = dailyRecords.value.length
-  const late = dailyRecords.value.filter(r => r.late_minutes > 0).length
-  const regular = dailyRecords.value.filter(r => r.late_minutes === 0 && r.total_punches >= 2).length
-  const singlePunch = dailyRecords.value.filter(r => r.total_punches === 1).length
+  const total = filteredRecords.value.length
+  const late = filteredRecords.value.filter(r => r.late_minutes > 0).length
+  const regular = filteredRecords.value.filter(r => r.late_minutes === 0 && r.total_punches >= 2).length
+  const singlePunch = filteredRecords.value.filter(r => r.total_punches === 1).length
   return { total, late, regular, singlePunch }
 })
 
@@ -87,6 +94,7 @@ const displayDateTitle = computed(() => {
 
 let unSubLogs: (() => void) | null = null
 let unSubScan: (() => void) | null = null
+let unSubEmployees: (() => void) | null = null
 
 onMounted(() => {
   loadDailyAttendance()
@@ -98,11 +106,15 @@ onMounted(() => {
   unSubScan = liveAttendanceService.onScan(() => {
     loadDailyAttendance()
   })
+  unSubEmployees = employeeService.onEmployeesChanged(() => {
+    loadDailyAttendance()
+  })
 })
 
 onUnmounted(() => {
   if (unSubLogs) unSubLogs()
   if (unSubScan) unSubScan()
+  if (unSubEmployees) unSubEmployees()
 })
 </script>
 
@@ -262,15 +274,44 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Search filter -->
-    <div class="flex items-center justify-between gap-2">
-      <div class="relative flex-1 max-w-sm">
-        <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-        <Input
-          v-model="searchQuery"
-          placeholder="Filter by User ID or Employee Name..."
-          class="pl-8 text-xs h-8"
-        />
+    <!-- Search and Location Filters -->
+    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+      <div class="flex items-center gap-2 flex-1 max-w-lg">
+        <div class="relative w-full max-w-xs">
+          <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+          <Input
+            v-model="searchQuery"
+            placeholder="Filter by User ID or Employee Name..."
+            class="pl-8 text-xs h-8"
+          />
+        </div>
+
+        <!-- Location Filter Dropdown -->
+        <select
+          v-model="selectedLocation"
+          class="h-8 text-xs px-2.5 rounded-md border bg-card text-foreground"
+          @change="loadDailyAttendance"
+        >
+          <option value="all">All Locations</option>
+          <option v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
+            {{ loc }}
+          </option>
+        </select>
+      </div>
+
+      <!-- Quick Location Badge summary buttons -->
+      <div class="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+        <span class="text-[11px] font-medium mr-1">Location:</span>
+        <button
+          v-for="loc in VALID_LOCATIONS"
+          :key="loc"
+          type="button"
+          class="px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+          :class="selectedLocation === loc ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80 text-muted-foreground'"
+          @click="selectedLocation = selectedLocation === loc ? 'all' : loc; loadDailyAttendance()"
+        >
+          {{ loc }}
+        </button>
       </div>
     </div>
 
@@ -314,6 +355,7 @@ onUnmounted(() => {
           <TableRow class="bg-muted/40">
             <TableHead class="font-semibold">User ID</TableHead>
             <TableHead class="font-semibold">Employee Name</TableHead>
+            <TableHead class="font-semibold">Location</TableHead>
             <TableHead class="font-semibold">Date</TableHead>
             <TableHead class="font-semibold">First IN</TableHead>
             <TableHead class="font-semibold">Break OUT</TableHead>
@@ -329,6 +371,12 @@ onUnmounted(() => {
           <TableRow v-for="row in filteredRecords" :key="row.id">
             <TableCell class="font-mono font-medium text-xs">{{ row.biometric_user_id }}</TableCell>
             <TableCell class="font-medium text-foreground text-xs">{{ row.employee_name }}</TableCell>
+            <TableCell class="text-xs">
+              <span class="inline-flex items-center gap-1 font-medium text-foreground">
+                <MapPin class="size-3 text-emerald-600 dark:text-emerald-400" />
+                {{ row.location }}
+              </span>
+            </TableCell>
             <TableCell class="text-xs text-muted-foreground">{{ row.date }}</TableCell>
             <TableCell class="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">
               {{ row.time_in }}

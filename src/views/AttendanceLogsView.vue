@@ -701,10 +701,9 @@ onUnmounted(() => {
             <option
               v-for="loc in locations"
               :key="loc.id"
-              :value="loc.id"
-              :disabled="!loc.is_active"
+              :value="loc.name"
             >
-              {{ loc.name }} {{ !loc.is_active ? '(Future)' : '' }}
+              {{ loc.name }}
             </option>
           </select>
         </div>

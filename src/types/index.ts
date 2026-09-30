@@ -25,20 +25,24 @@ export interface BiometricDevice {
   description?: string
 }
 
+export type EmployeeLocation = 'DMBB CEBU' | 'DBB CEBU' | 'DBB NEGROS' | 'DBB ILOILO'
+
 export interface Employee {
   id: string
   employee_number: string
   biometric_user_id: string
-  first_name: string
-  last_name: string
-  middle_name?: string
   full_name: string
-  department: string
-  position: string
-  location_id: string
-  location?: Location
+  location: EmployeeLocation
+  first_name?: string
+  last_name?: string
+  middle_name?: string
+  department?: string
+  position?: string
+  location_id?: string
   hire_date?: string
   status: 'active' | 'inactive' | 'on_leave'
+  created_at?: string
+  updated_at?: string
 }
 
 export interface AttendanceLog {

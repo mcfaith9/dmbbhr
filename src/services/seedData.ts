@@ -4,7 +4,10 @@ import type { Location, BiometricDevice, Employee, AttendanceLog, User } from '@
  * Minimum static organizational configuration
  */
 export const SEED_LOCATIONS: Location[] = [
-  { id: 'loc-cebu', code: 'CEB', name: 'DBB Cebu', is_active: true }
+  { id: 'loc-dmbb-cebu', code: 'DMBB-CEB', name: 'DMBB CEBU', is_active: true },
+  { id: 'loc-dbb-cebu', code: 'DBB-CEB', name: 'DBB CEBU', is_active: true },
+  { id: 'loc-dbb-negros', code: 'DBB-NEG', name: 'DBB NEGROS', is_active: true },
+  { id: 'loc-dbb-iloilo', code: 'DBB-ILO', name: 'DBB ILOILO', is_active: true }
 ]
 
 /**
@@ -22,7 +25,7 @@ export const SEED_DEVICES: BiometricDevice[] = [
     serial_number: '0476141400046',
     mac_address: '00:17:61:10:0c:a3',
     firmware_version: '6.5.4 Build 142',
-    location_id: 'loc-cebu',
+    location_id: 'loc-dbb-cebu',
     status: 'offline', // Default to offline until live agent establishes socket connection
     last_seen: '',
     last_sync: '',
@@ -41,7 +44,7 @@ export const SEED_USERS: User[] = [
     email: 'hr@dmbb.com',
     role: 'admin',
     avatar: '',
-    accessible_location_ids: ['loc-cebu']
+    accessible_location_ids: ['loc-dmbb-cebu', 'loc-dbb-cebu', 'loc-dbb-negros', 'loc-dbb-iloilo']
   },
   {
     id: 'u-2',
@@ -50,7 +53,7 @@ export const SEED_USERS: User[] = [
     email: 'admin@dmbb.com',
     role: 'admin',
     avatar: '',
-    accessible_location_ids: ['loc-cebu']
+    accessible_location_ids: ['loc-dmbb-cebu', 'loc-dbb-cebu', 'loc-dbb-negros', 'loc-dbb-iloilo']
   }
 ]
 
