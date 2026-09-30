@@ -13,6 +13,8 @@ class DevSocketBridge {
     this.clients = new Set();
     this.server = null;
     this.recentEvents = [];
+    this.deviceLogs = [];
+    this.seenEventKeys = new Set();
 
     // Hardware status representation
     this.deviceState = {
@@ -49,6 +51,28 @@ class DevSocketBridge {
     });
   }
 
+  setDeviceLogs(logs = []) {
+    this.deviceLogs = Array.isArray(logs) ? logs : [];
+    // Populate deduplication registry
+    for (const log of this.deviceLogs) {
+      const uid = String(log.user_id || log.userId || '').trim();
+      const timeMs = new Date(log.attendance_time || log.timestamp).getTime();
+      const timeSec = Math.floor(timeMs / 1000);
+      const ip = log.device_ip || '192.168.1.201';
+      this.seenEventKeys.add(`${ip}:${uid}:${timeSec}`);
+      const sn = Number(log.serial_number || 0);
+      if (sn > 0) {
+        this.seenEventKeys.add(`${ip}:sn:${sn}`);
+      }
+    }
+
+    // Broadcast updated device logs to connected Vue browser instances
+    this.broadcastMessage({
+      type: 'DEVICE_LOGS',
+      payload: this.deviceLogs
+    });
+  }
+
   start() {
     this.server = http.createServer((req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -67,7 +91,18 @@ class DevSocketBridge {
           status: 'ok',
           device: this.deviceState,
           clientsConnected: this.clients.size,
+          logsCount: this.deviceLogs.length,
           recentEventsCount: this.recentEvents.length
+        }));
+        return;
+      }
+
+      if (req.url === '/api/logs') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'ok',
+          count: this.deviceLogs.length,
+          logs: this.deviceLogs
         }));
         return;
       }
@@ -75,6 +110,24 @@ class DevSocketBridge {
       if (req.url === '/api/events') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', events: this.recentEvents }));
+        return;
+      }
+
+      // POST /api/scan endpoint for manual or test dispatches
+      if (req.url === '/api/scan' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            this.broadcastScan(parsed);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok', message: 'Scan dispatched' }));
+          } catch (err) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'error', message: err.message }));
+          }
+        });
         return;
       }
 
@@ -112,11 +165,12 @@ class DevSocketBridge {
 
       this.clients.add(client);
 
-      // Immediately send current live device status and recent events to new client
+      // Immediately send current live device status, all retrieved device logs, and recent events
       this.sendToClient(client, {
         type: 'INITIAL_STATE',
         payload: {
           device: { ...this.deviceState },
+          logs: this.deviceLogs,
           recentEvents: this.recentEvents.slice(0, 10)
         }
       });
@@ -169,6 +223,24 @@ class DevSocketBridge {
   }
 
   broadcastScan(scanRecord) {
+    const uid = String(scanRecord.user_id || scanRecord.userId || '').trim();
+    const timeMs = new Date(scanRecord.attendance_time || scanRecord.timestamp).getTime();
+    const timeSec = Math.floor(timeMs / 1000);
+    const ip = scanRecord.device_ip || '192.168.1.201';
+    const key = `${ip}:${uid}:${timeSec}`;
+    const sn = Number(scanRecord.serial_number || 0);
+
+    // Track in seen keys
+    this.seenEventKeys.add(key);
+    if (sn > 0) {
+      this.seenEventKeys.add(`${ip}:sn:${sn}`);
+    }
+
+    // Prepend to deviceLogs if not already present
+    if (!this.deviceLogs.some(l => l.id === scanRecord.id)) {
+      this.deviceLogs.unshift(scanRecord);
+    }
+
     this.recentEvents.unshift(scanRecord);
     if (this.recentEvents.length > 50) this.recentEvents.pop();
 

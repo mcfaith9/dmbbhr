@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import AppSidebar from '@/components/AppSidebar.vue'
+import { liveAttendanceService } from '@/services/liveAttendance'
 import {
   SidebarProvider,
   SidebarInset,
@@ -18,6 +19,11 @@ import {
 import { Separator } from '@/components/ui/separator'
 
 const route = useRoute()
+const deviceStatus = liveAttendanceService.deviceStatus
+
+onMounted(() => {
+  liveAttendanceService.connect()
+})
 
 const breadcrumbs = computed(() => {
   const metaBreadcrumb = route.meta.breadcrumb as string[] | undefined
@@ -62,14 +68,40 @@ const breadcrumbs = computed(() => {
               <span class="font-medium text-foreground">DBB Cebu</span>
               <span class="text-muted-foreground text-[10px]">(Active Branch)</span>
             </div>
-            <!-- Live Biometric Sync Status -->
-            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-card text-xs shadow-xs">
+            <!-- Live Biometric Hardware Status (Single Source of Truth) -->
+            <router-link
+              to="/devices"
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs shadow-xs transition-colors hover:opacity-90"
+              :class="[
+                deviceStatus.status === 'online'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                  : (deviceStatus.status === 'connecting'
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+                    : 'bg-destructive/10 border-destructive/30 text-destructive')
+              ]"
+              :title="`Biometric Device: ${deviceStatus.model}\nTarget: ${deviceStatus.ip}:${deviceStatus.port}\nStatus: ${deviceStatus.status.toUpperCase()}\nDetails: ${deviceStatus.reason || 'None'}\nLast Connected: ${deviceStatus.lastConnected || 'Never'}\nLast Event: ${deviceStatus.lastEvent || 'None'}`"
+            >
               <span class="relative flex size-2">
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span class="relative inline-flex rounded-full size-2 bg-emerald-500" />
+                <span
+                  v-if="deviceStatus.status === 'online'"
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+                />
+                <span
+                  class="relative inline-flex rounded-full size-2"
+                  :class="[
+                    deviceStatus.status === 'online'
+                      ? 'bg-emerald-500'
+                      : (deviceStatus.status === 'connecting' ? 'bg-amber-500 animate-pulse' : 'bg-destructive')
+                  ]"
+                />
               </span>
-              <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">192.168.1.201:4370</span>
-            </div>
+              <span class="font-medium text-xs">
+                ● {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting' : 'Offline') }}
+              </span>
+              <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">
+                {{ deviceStatus.ip }}:{{ deviceStatus.port }}
+              </span>
+            </router-link>
           </div>
         </header>
 

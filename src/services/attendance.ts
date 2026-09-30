@@ -120,11 +120,68 @@ export const attendanceService = {
   },
 
   /**
+   * Replaces or merges real logs retrieved directly from the biometric device.
+   * Enforces strict deduplication by ID, device+user+timestamp, and serial number.
+   */
+  setDeviceLogs(deviceLogs: AttendanceLog[]) {
+    if (!Array.isArray(deviceLogs)) return
+
+    const existingKeys = new Set(
+      inMemoryLogsStore.map(l => {
+        const tSec = Math.floor(new Date(l.attendance_time).getTime() / 1000)
+        return `${l.device_ip || '192.168.1.201'}_${l.user_id}_${tSec}`
+      })
+    )
+    const existingIds = new Set(inMemoryLogsStore.map(l => l.id))
+    const existingSerials = new Set(
+      inMemoryLogsStore
+        .filter(l => Number(l.serial_number) > 0)
+        .map(l => `${l.device_ip || '192.168.1.201'}_sn_${l.serial_number}`)
+    )
+
+    for (const log of deviceLogs) {
+      const tSec = Math.floor(new Date(log.attendance_time).getTime() / 1000)
+      const ip = log.device_ip || '192.168.1.201'
+      const key = `${ip}_${log.user_id}_${tSec}`
+      const snKey = Number(log.serial_number) > 0 ? `${ip}_sn_${log.serial_number}` : null
+
+      if (!existingIds.has(log.id) && !existingKeys.has(key) && (!snKey || !existingSerials.has(snKey))) {
+        inMemoryLogsStore.push(log)
+        existingIds.add(log.id)
+        existingKeys.add(key)
+        if (snKey) existingSerials.add(snKey)
+      }
+    }
+
+    // Sort descending by attendance_time
+    inMemoryLogsStore.sort((a, b) => new Date(b.attendance_time).getTime() - new Date(a.attendance_time).getTime())
+  },
+
+  /**
    * Adds a newly arrived live biometric scan into the store.
+   * Strictly prevents duplicate records if the same event was retrieved previously.
    */
   addRealScan(newLog: AttendanceLog) {
-    // Avoid exact duplicate IDs
-    if (!inMemoryLogsStore.some(l => l.id === newLog.id)) {
+    const tSec = Math.floor(new Date(newLog.attendance_time).getTime() / 1000)
+    const ip = newLog.device_ip || '192.168.1.201'
+    const sn = Number(newLog.serial_number || 0)
+    const snKey = sn > 0 ? `${ip}_sn_${sn}` : null
+
+    const isDuplicate = inMemoryLogsStore.some(l => {
+      if (l.id === newLog.id) return true
+      const lTSec = Math.floor(new Date(l.attendance_time).getTime() / 1000)
+      const lIp = l.device_ip || '192.168.1.201'
+      // Match within 3-second window for clock skew between event and memory write
+      if (lIp === ip && l.user_id === newLog.user_id && Math.abs(lTSec - tSec) <= 3) {
+        return true
+      }
+      if (snKey && Number(l.serial_number) > 0 && `${lIp}_sn_${l.serial_number}` === snKey) {
+        return true
+      }
+      return false
+    })
+
+    if (!isDuplicate) {
       inMemoryLogsStore.unshift(newLog)
     }
   },

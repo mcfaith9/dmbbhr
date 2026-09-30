@@ -7,7 +7,7 @@
  * B-29b (192.168.1.201:4370) -> Node.js + zkteco-js -> DevSocketBridge (ws://0.0.0.0:5174) -> Vue Web App
  */
 const { createDeviceInstance } = require('./src/device/deviceClient');
-const { startAttendanceListener } = require('./src/device/attendanceListener');
+const { startAttendanceListener, stopAttendanceListener } = require('./src/device/attendanceListener');
 const { DevSocketBridge } = require('./src/bridge/devSocketBridge');
 
 const WS_PORT = parseInt(process.env.WS_PORT || '5174', 10);
@@ -59,11 +59,10 @@ async function connectAndListen() {
 
     log(`Connected to ${config.name}`);
     log(`Device ONLINE`);
-    log(`Real-time attendance listener started`);
 
     bridge.setDeviceStatus('online', 'Connected via TCP/IP socket');
 
-    // Optional: read device user list for immediate name mapping
+    // 1. Read device user list for employee name mapping
     let deviceUserMap = new Map();
     try {
       const usersResult = await device.getUsers();
@@ -75,15 +74,84 @@ async function connectAndListen() {
       }
       log(`Device user registry: ${deviceUserMap.size} biometric profiles loaded`);
     } catch (uErr) {
-      // Ignore user list fetch error if firmware doesn't permit while streaming
+      log(`Notice: Could not load user registry (${uErr.message})`);
     }
 
-    // Start periodic heartbeat to verify socket is actually still alive
+    // 2. Pull real existing attendance records from the hardware device (Section 2)
+    let normalizedLogs = [];
+    try {
+      log(`Retrieving real attendance logs from ${config.name}...`);
+      const attendanceResult = await device.getAttendances();
+      const rawAttendance = Array.isArray(attendanceResult)
+        ? attendanceResult
+        : (attendanceResult && Array.isArray(attendanceResult.data) ? attendanceResult.data : []);
+
+      log(`Total real device records retrieved: ${rawAttendance.length}`);
+
+      for (const record of rawAttendance) {
+        const uid = String(record.user_id ?? record.userId ?? '').trim();
+        if (!uid) continue;
+
+        const recTime = record.record_time || record.dateTime || record.timestamp;
+        const parsedDate = recTime ? new Date(recTime) : new Date();
+        const sn = Number(record.sn ?? record.serial ?? 0);
+        const name = deviceUserMap.get(uid) || record.name || '';
+
+        normalizedLogs.push({
+          id: `dev-${config.serial || config.ip}-${sn || `${uid}-${parsedDate.getTime()}`}`,
+          user_id: uid,
+          employee_id: undefined,
+          employee_name: name || 'Biometric User',
+          attendance_time: parsedDate.toISOString(),
+          type: Number(record.type ?? 1),
+          state: Number(record.state ?? 1),
+          serial_number: sn,
+          device_id: 'dev-1',
+          device_name: config.name,
+          device_ip: config.ip,
+          location_id: config.location_id,
+          location_name: config.location,
+          is_duplicate: false,
+
+          // Normalized format required by specification:
+          userId: uid,
+          timestamp: parsedDate.toISOString(),
+          deviceId: config.serial,
+          deviceName: config.name,
+          verificationMethod: Number(record.type ?? 1),
+          status: Number(record.state ?? 1),
+          source: 'device_sync',
+          created_at: new Date().toISOString()
+        });
+      }
+
+      // Store in dev bridge and deliver to connected Vue web clients
+      bridge.setDeviceLogs(normalizedLogs);
+      log(`Delivered ${normalizedLogs.length} real attendance logs to web app bridge`);
+    } catch (attErr) {
+      log(`Notice on attendance log retrieval: ${attErr.message}`);
+    }
+
+    // 3. Start real-time attendance listener with push and polling fallback (Sections 3, 4, 5)
+    log(`Starting real-time attendance listener & event monitor...`);
+    await startAttendanceListener(device, config, deviceUserMap, normalizedLogs, async (eventRecord) => {
+      // Attach mapped employee name if present
+      if (!eventRecord.employee_name && deviceUserMap.has(eventRecord.user_id)) {
+        eventRecord.employee_name = deviceUserMap.get(eventRecord.user_id);
+      }
+
+      log(`[${eventRecord.source || 'Biometric Event'}] User: ${eventRecord.user_id} (${eventRecord.employee_name}) Time: ${eventRecord.attendance_time}`);
+
+      // Broadcast immediately to all connected Vue browser instances over LAN
+      bridge.broadcastScan(eventRecord);
+    });
+
+    // 4. Start periodic heartbeat to verify socket is actually alive
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = setInterval(async () => {
       try {
         if (!connected || !currentDevice) return;
-        // Ping device with getTime() or getInfo() to confirm alive
+        // Ping device with getTime() to confirm alive
         await currentDevice.getTime();
         bridge.setDeviceStatus('online', 'Active heartbeat confirmed');
       } catch (hbErr) {
@@ -91,25 +159,11 @@ async function connectAndListen() {
         log(`Device OFFLINE`);
         bridge.setDeviceStatus('offline', 'Heartbeat lost: ' + parseErrorMessage(hbErr));
         clearInterval(heartbeatTimer);
+        stopAttendanceListener();
         cleanupSocket(currentDevice);
         if (!isShuttingDown) scheduleReconnect();
       }
     }, 15000); // 15-second heartbeat
-
-    // Start real-time attendance listener
-    await startAttendanceListener(device, config, async (eventRecord) => {
-      // Attach mapped employee name if present on device
-      if (deviceUserMap.has(eventRecord.user_id)) {
-        eventRecord.employee_name = deviceUserMap.get(eventRecord.user_id);
-      }
-
-      log(`Attendance event received`);
-      log(`User ID: ${eventRecord.user_id}`);
-      log(`Timestamp: ${eventRecord.attendance_time}`);
-
-      // Broadcast immediately to all connected Vue browser instances over LAN
-      bridge.broadcastScan(eventRecord);
-    });
 
   } catch (error) {
     const errorReason = parseErrorMessage(error);
@@ -118,6 +172,7 @@ async function connectAndListen() {
 
     bridge.setDeviceStatus('offline', errorReason);
 
+    stopAttendanceListener();
     cleanupSocket(currentDevice);
 
     if (!isShuttingDown) {
@@ -151,6 +206,7 @@ async function shutdown() {
   isShuttingDown = true;
   log(`Gracefully shutting down agent...`);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  stopAttendanceListener();
   bridge.setDeviceStatus('offline', 'Agent terminated');
   bridge.stop();
   if (currentDevice) {

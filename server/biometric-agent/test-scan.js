@@ -10,18 +10,27 @@ const http = require('http');
 
 const userId = process.argv[2] || '50366';
 
+const now = new Date().toISOString();
 const payload = {
+  id: `scan-test-${Date.now()}`,
   user_id: userId,
-  employee_name: userId === '50366' ? 'Santos, Roberto' : (userId === '5009' ? 'K Pasana, Dothy Marie' : 'Test Employee'),
-  attendance_time: new Date().toISOString(),
+  userId: userId,
+  employee_name: userId === '50366' ? 'Santos, Roberto' : (userId === '5009' ? 'K Pasana, Dothy Marie' : 'Biometric User'),
+  attendance_time: now,
+  timestamp: now,
   type: 1,
   state: 1,
+  verificationMethod: 1,
+  status: 1,
   serial_number: Math.floor(Math.random() * 500) + 1,
   device_id: 'dev-1',
+  deviceId: '0476141400046',
   device_name: 'BISMAC BISBIO B-29b',
+  deviceName: 'BISMAC BISBIO B-29b',
   device_ip: '192.168.1.201',
   location_id: 'loc-cebu',
   location: 'DBB Cebu',
+  source: 'REAL-TIME DEVICE EVENT',
   is_duplicate: false
 };
 

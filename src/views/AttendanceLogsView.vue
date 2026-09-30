@@ -345,11 +345,14 @@ async function confirmImport() {
 const deviceStatus = liveAttendanceService.deviceStatus
 const latestLiveScan = ref<AttendanceLog | null>(null)
 let unsubscribeLive: (() => void) | null = null
+let unsubscribeLogs: (() => void) | null = null
 
 function handleNewBiometricScan(newLog: AttendanceLog) {
-  // Prepend to visible table list immediately so user doesn't need to refresh
-  logs.value.unshift(newLog)
-  meta.value.totalItems += 1
+  // Prepend to visible table list immediately if not already present
+  if (!logs.value.some(l => l.id === newLog.id)) {
+    logs.value.unshift(newLog)
+    meta.value.totalItems += 1
+  }
 
   // Highlight banner
   latestLiveScan.value = newLog
@@ -369,11 +372,17 @@ onMounted(() => {
   unsubscribeLive = liveAttendanceService.onScan((scan) => {
     handleNewBiometricScan(scan)
   })
+  unsubscribeLogs = liveAttendanceService.onLogs(() => {
+    loadData()
+  })
 })
 
 onUnmounted(() => {
   if (unsubscribeLive) {
     unsubscribeLive()
+  }
+  if (unsubscribeLogs) {
+    unsubscribeLogs()
   }
 })
 </script>

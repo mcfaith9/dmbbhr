@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import {
   Users,
   Clock,
@@ -81,12 +81,25 @@ function formatDate(dateStr: string) {
   }
 }
 
+let unSubLogs: (() => void) | null = null
+let unSubScan: (() => void) | null = null
+
 onMounted(() => {
   loadDashboard()
   liveAttendanceService.connect()
-  liveAttendanceService.onScan((scan) => {
-    recentLogs.value.unshift(scan)
+  unSubScan = liveAttendanceService.onScan((scan) => {
+    if (!recentLogs.value.some(l => l.id === scan.id)) {
+      recentLogs.value.unshift(scan)
+    }
   })
+  unSubLogs = liveAttendanceService.onLogs(() => {
+    loadDashboard()
+  })
+})
+
+onUnmounted(() => {
+  if (unSubScan) unSubScan()
+  if (unSubLogs) unSubLogs()
 })
 </script>
 
