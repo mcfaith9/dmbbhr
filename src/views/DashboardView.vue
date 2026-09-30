@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import {
   Users,
   Clock,
   Fingerprint,
-  ArrowUpRight,
-  AlertTriangle,
   RefreshCw,
+  Radio,
 } from '@lucide/vue'
 import { attendanceService } from '@/services/attendance'
+import { liveAttendanceService } from '@/services/liveAttendance'
 import type { AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -16,13 +16,32 @@ import { Badge } from '@/components/ui/badge'
 const recentLogs = ref<AttendanceLog[]>([])
 const loading = ref(false)
 
-const stats = ref({
-  totalToday: 6,
-  present: 5,
-  late: 1,
-  currentlyIn: 4,
-  currentlyOut: 1,
-  activeDevices: 1
+// Real hardware status from Node agent
+const deviceStatus = liveAttendanceService.deviceStatus
+
+// Computed statistics derived dynamically from real attendance logs today
+const todayLogs = computed(() => {
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+
+  return recentLogs.value.filter(l => {
+    const d = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(l.attendance_time))
+    return d === todayStr
+  })
+})
+
+const uniqueUsersToday = computed(() => {
+  const set = new Set(todayLogs.value.map(l => l.user_id))
+  return set.size
 })
 
 async function loadDashboard() {
@@ -49,8 +68,25 @@ function formatTime(dateStr: string) {
   }
 }
 
+function formatDate(dateStr: string) {
+  try {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      timeZone: 'Asia/Manila',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  } catch {
+    return ''
+  }
+}
+
 onMounted(() => {
   loadDashboard()
+  liveAttendanceService.connect()
+  liveAttendanceService.onScan((scan) => {
+    recentLogs.value.unshift(scan)
+  })
 })
 </script>
 
@@ -59,7 +95,7 @@ onMounted(() => {
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
         <h1 class="text-2xl font-bold tracking-tight text-foreground">
-          Attendance & Payroll Dashboard
+          Biometric Attendance Overview
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
           Local Biometric Attendance Network • Location: <strong>DBB Cebu</strong>
@@ -78,140 +114,123 @@ onMounted(() => {
       </div>
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <!-- Live Hardware & Real Activity Cards (NO FABRICATED NUMBERS) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <!-- Card 1: Real Biometric Hardware Status -->
       <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
         <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>PRESENT TODAY</span>
-          <Users class="size-4" />
+          <span>HARDWARE DEVICE STATUS</span>
+          <Radio
+            class="size-4"
+            :class="[
+              deviceStatus.status === 'online' ? 'text-emerald-500 animate-pulse' : (deviceStatus.status === 'connecting' ? 'text-amber-500 animate-spin' : 'text-muted-foreground')
+            ]"
+          />
         </div>
         <div class="mt-3">
-          <div class="text-2xl font-bold tracking-tight text-foreground">{{ stats.present }} Employees</div>
-          <p class="text-[11px] text-muted-foreground mt-0.5">Out of 5 scheduled today</p>
+          <div class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            <span
+              :class="[
+                'size-2 rounded-full',
+                deviceStatus.status === 'online' ? 'bg-emerald-500' : (deviceStatus.status === 'connecting' ? 'bg-amber-500' : 'bg-destructive')
+              ]"
+            />
+            <span>{{ deviceStatus.status === 'online' ? 'B-29b Online' : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Device Offline') }}</span>
+          </div>
+          <p class="text-[11px] font-mono text-muted-foreground mt-0.5">
+            {{ deviceStatus.ip }}:{{ deviceStatus.port }} • {{ deviceStatus.reason }}
+          </p>
         </div>
       </div>
 
+      <!-- Card 2: Real Scans Logged Today -->
       <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
         <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>CURRENTLY IN</span>
+          <span>SCANS LOGGED TODAY</span>
           <Clock class="size-4" />
         </div>
         <div class="mt-3">
-          <div class="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
-            {{ stats.currentlyIn }} On-site
+          <div class="text-2xl font-bold tracking-tight text-foreground">
+            {{ todayLogs.length }}
           </div>
-          <p class="text-[11px] text-muted-foreground mt-0.5">DBB Cebu Operations</p>
+          <p class="text-[11px] text-muted-foreground mt-0.5">
+            {{ todayLogs.length === 0 ? 'No attendance records today' : `${todayLogs.length} real scan event(s) recorded` }}
+          </p>
         </div>
       </div>
 
+      <!-- Card 3: Unique Users Detected Today -->
       <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
         <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>LATE ARRIVALS</span>
-          <AlertTriangle class="size-4 text-amber-500" />
+          <span>ACTIVE USERS TODAY</span>
+          <Users class="size-4" />
         </div>
         <div class="mt-3">
-          <div class="text-2xl font-bold tracking-tight text-foreground">{{ stats.late }} Staff</div>
-          <p class="text-[11px] text-muted-foreground mt-0.5">Grace period: 15 minutes</p>
-        </div>
-      </div>
-
-      <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
-        <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>BIOMETRIC READER</span>
-          <Fingerprint class="size-4 text-emerald-500" />
-        </div>
-        <div class="mt-3">
-          <div class="text-2xl font-bold tracking-tight text-foreground flex items-center gap-1.5">
-            <span class="size-2 rounded-full bg-emerald-500" />
-            B-29b Online
+          <div class="text-2xl font-bold tracking-tight text-foreground">
+            {{ uniqueUsersToday }}
           </div>
-          <p class="text-[11px] font-mono text-muted-foreground mt-0.5">192.168.1.201:4370</p>
+          <p class="text-[11px] text-muted-foreground mt-0.5">
+            {{ uniqueUsersToday === 0 ? 'No active users recorded today' : `${uniqueUsersToday} distinct user(s) verified` }}
+          </p>
         </div>
       </div>
     </div>
 
-    <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-3">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
+    <!-- Live Real-Time Activity Feed -->
+    <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
         <div class="flex items-center gap-2">
-          <div class="p-2 rounded-lg bg-primary/10 text-primary">
-            <Fingerprint class="size-5" />
-          </div>
+          <Fingerprint class="size-5 text-primary" />
           <div>
-            <h3 class="font-semibold text-sm text-foreground">BISMAC BISBIO B-29b Local Agent</h3>
-            <p class="text-xs text-muted-foreground">TCP/IP Listener running on node agent • Target IP: 192.168.1.201</p>
+            <h2 class="font-semibold text-sm text-foreground">Recent Biometric Scans</h2>
+            <p class="text-xs text-muted-foreground">Live real-time feed from BISMAC BISBIO B-29b</p>
           </div>
         </div>
-        <router-link to="/devices">
-          <Button variant="outline" size="sm" class="h-7 text-xs">
-            Manage Devices & Logs
+        <router-link to="/attendance/logs">
+          <Button variant="ghost" size="sm" class="h-7 text-xs">
+            Open Attendance Logs
           </Button>
         </router-link>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-        <div class="p-3 rounded-lg border bg-muted/30">
-          <div class="text-muted-foreground text-[11px]">SERIAL NUMBER</div>
-          <div class="font-mono font-medium text-foreground mt-0.5">0476141400046</div>
-        </div>
-        <div class="p-3 rounded-lg border bg-muted/30">
-          <div class="text-muted-foreground text-[11px]">REAL-TIME LISTENER</div>
-          <div class="font-medium text-emerald-600 mt-0.5 flex items-center gap-1">
-            <span class="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            device.getRealTimeLogs() Ready
-          </div>
-        </div>
-        <div class="p-3 rounded-lg border bg-muted/30">
-          <div class="text-muted-foreground text-[11px]">TIMEZONE</div>
-          <div class="font-medium text-foreground mt-0.5">Asia/Manila (Philippine Standard Time)</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="rounded-xl border bg-card shadow-xs">
-      <div class="flex items-center justify-between p-4 border-b">
-        <div>
-          <h3 class="font-semibold text-sm text-foreground">Recent Biometric Scans</h3>
-          <p class="text-xs text-muted-foreground">Live feed from device storage & real-time events</p>
-        </div>
-        <router-link to="/attendance/logs" class="text-xs text-primary font-medium hover:underline flex items-center gap-1">
-          Full Log Table <ArrowUpRight class="size-3" />
-        </router-link>
+      <!-- Empty state when no real scans exist -->
+      <div v-if="recentLogs.length === 0" class="py-12 text-center text-muted-foreground space-y-2">
+        <Fingerprint class="size-8 mx-auto text-muted-foreground/40" />
+        <div class="text-sm font-medium text-foreground">No recent activity</div>
+        <p class="text-xs text-muted-foreground max-w-sm mx-auto">
+          No attendance records found. Place a finger on the B-29b sensor (192.168.1.201) while the Node.js agent is running to see live events.
+        </p>
       </div>
 
-      <div class="divide-y text-xs">
+      <!-- Real Scans List -->
+      <div v-else class="divide-y text-xs">
         <div
-          v-for="log in recentLogs"
+          v-for="log in recentLogs.slice(0, 5)"
           :key="log.id"
-          class="p-3.5 flex items-center justify-between hover:bg-muted/30 transition-colors"
+          class="py-2.5 flex items-center justify-between"
         >
           <div class="flex items-center gap-3">
-            <div class="size-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-mono font-semibold text-xs">
+            <div class="size-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-mono font-bold text-xs">
               {{ log.user_id.slice(-2) }}
             </div>
             <div>
-              <div class="font-medium text-foreground flex items-center gap-2">
-                <span>{{ log.employee_name || 'Biometric User ' + log.user_id }}</span>
-                <span class="text-[10px] font-mono text-muted-foreground">ID: {{ log.user_id }}</span>
+              <div class="font-medium text-foreground font-mono">
+                User ID: {{ log.user_id }}
+                <span v-if="log.employee_name" class="font-sans text-muted-foreground font-normal"> • {{ log.employee_name }}</span>
               </div>
-              <div class="text-[11px] text-muted-foreground flex items-center gap-2">
-                <span>Serial: {{ log.serial_number }}</span>
-                <span>•</span>
-                <span>Type: {{ log.type }}</span>
-                <span>•</span>
-                <span>State: {{ log.state }}</span>
+              <div class="text-[11px] text-muted-foreground">
+                {{ formatDate(log.attendance_time) }} • {{ formatTime(log.attendance_time) }}
               </div>
             </div>
           </div>
 
-          <div class="text-right">
-            <div class="font-mono text-xs font-semibold text-foreground">
-              {{ formatTime(log.attendance_time) }}
-            </div>
-            <Badge v-if="log.is_duplicate" variant="warning" class="text-[9px] mt-0.5">
-              Duplicate Flag
+          <div class="flex items-center gap-2">
+            <Badge variant="outline" class="font-mono text-[10px]">
+              State: {{ log.state }}
             </Badge>
-            <span v-else class="text-[10px] text-emerald-600 font-medium">
-              Verified
-            </span>
+            <Badge :variant="log.is_duplicate ? 'warning' : 'success'" class="text-[10px]">
+              {{ log.is_duplicate ? 'Duplicate' : 'Verified' }}
+            </Badge>
           </div>
         </div>
       </div>

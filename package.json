@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000 --host 0.0.0.0",
+    "dev:all": "node scripts/start-all.js",
+    "biometric-agent": "node server/biometric-agent/index.js",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "lint": "vue-tsc --noEmit"

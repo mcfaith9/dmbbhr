@@ -4,7 +4,7 @@
  * Location: DBB Cebu
  *
  * PRE-LARAVEL TEST ARCHITECTURE:
- * B-29b (192.168.1.201:4370) -> Node.js + zkteco-js -> DevSocketBridge (ws://0.0.0.0:5174) -> Vue Web App (Attendance Logs)
+ * B-29b (192.168.1.201:4370) -> Node.js + zkteco-js -> DevSocketBridge (ws://0.0.0.0:5174) -> Vue Web App
  */
 const { createDeviceInstance } = require('./src/device/deviceClient');
 const { startAttendanceListener } = require('./src/device/attendanceListener');
@@ -15,29 +15,55 @@ const bridge = new DevSocketBridge(WS_PORT);
 
 let currentDevice = null;
 let isShuttingDown = false;
+let heartbeatTimer = null;
 
-async function run() {
-  console.log('====================================================');
-  console.log(' DMBBHR BIOMETRIC AGENT - BISMAC BISBIO B-29b');
-  console.log(' Location: DBB Cebu (IP: 192.168.1.201 : 4370)');
-  console.log(' Pre-Laravel Test Mode (Direct Node -> Vue Bridge)');
-  console.log('====================================================\n');
+function log(msg) {
+  const timeStr = new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(new Date());
+  console.log(`[${timeStr}] ${msg}`);
+}
 
-  // Start local WebSocket bridge first so Vue can connect immediately
-  bridge.start();
+function parseErrorMessage(err) {
+  if (!err) return 'Unknown error';
+  const msg = (err.message || String(err)).toLowerCase();
+  if (msg.includes('etimedout') || msg.includes('timeout')) return 'Connection timeout';
+  if (msg.includes('econnrefused')) return 'Connection refused';
+  if (msg.includes('ehostunreach')) return 'Host unreachable';
+  if (msg.includes('enotfound')) return 'Network host not found';
+  if (msg.includes('enetunreach')) return 'Network unreachable';
+  return err.message || 'Unable to connect to biometric device';
+}
 
+async function connectAndListen() {
   const { device, config } = createDeviceInstance();
   currentDevice = device;
 
+  log(`Agent starting...`);
+  log(`Device: ${config.name}`);
+  log(`Target: ${config.ip}:${config.port}`);
+  log(`Connecting...`);
+
+  bridge.setDeviceStatus('connecting', 'Attempting socket connection...');
+
   let connected = false;
+
   try {
-    console.log(`[DMBBHR Agent] Connecting to BISBIO B-29b at ${config.ip}:${config.port}...`);
+    // Attempt socket connection with timeout
     await device.createSocket();
     connected = true;
-    console.log('[DMBBHR Agent] Connected to B-29b via TCP/IP socket successfully!');
 
-    // Read device user list for immediate name matching
-    console.log('[DMBBHR Agent] Loading device users for immediate name mapping...');
+    log(`Connected to ${config.name}`);
+    log(`Device ONLINE`);
+    log(`Real-time attendance listener started`);
+
+    bridge.setDeviceStatus('online', 'Connected via TCP/IP socket');
+
+    // Optional: read device user list for immediate name mapping
     let deviceUserMap = new Map();
     try {
       const usersResult = await device.getUsers();
@@ -47,57 +73,88 @@ async function run() {
       for (const u of users) {
         deviceUserMap.set(String(u.userId), u.name || '');
       }
-      console.log(`[DMBBHR Agent] Loaded ${deviceUserMap.size} users from biometric device.`);
+      log(`Device user registry: ${deviceUserMap.size} biometric profiles loaded`);
     } catch (uErr) {
-      console.warn('[DMBBHR Agent] Notice: Could not read user list directly:', uErr.message);
+      // Ignore user list fetch error if firmware doesn't permit while streaming
     }
 
-    // Start real-time attendance listener
-    console.log('\n[DMBBHR Agent] Listening for real-time fingerprint/biometric scans...');
-    console.log('Ready. Scan fingerprint on the B-29b.');
-    console.log('Scans will be broadcasted instantly to the Vue Attendance Logs view.\n');
+    // Start periodic heartbeat to verify socket is actually still alive
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(async () => {
+      try {
+        if (!connected || !currentDevice) return;
+        // Ping device with getTime() or getInfo() to confirm alive
+        await currentDevice.getTime();
+        bridge.setDeviceStatus('online', 'Active heartbeat confirmed');
+      } catch (hbErr) {
+        log(`Heartbeat failed: ${hbErr.message}`);
+        log(`Device OFFLINE`);
+        bridge.setDeviceStatus('offline', 'Heartbeat lost: ' + parseErrorMessage(hbErr));
+        clearInterval(heartbeatTimer);
+        cleanupSocket(currentDevice);
+        if (!isShuttingDown) scheduleReconnect();
+      }
+    }, 15000); // 15-second heartbeat
 
+    // Start real-time attendance listener
     await startAttendanceListener(device, config, async (eventRecord) => {
       // Attach mapped employee name if present on device
       if (deviceUserMap.has(eventRecord.user_id)) {
         eventRecord.employee_name = deviceUserMap.get(eventRecord.user_id);
       }
 
+      log(`Attendance event received`);
+      log(`User ID: ${eventRecord.user_id}`);
+      log(`Timestamp: ${eventRecord.attendance_time}`);
+
       // Broadcast immediately to all connected Vue browser instances over LAN
       bridge.broadcastScan(eventRecord);
     });
 
   } catch (error) {
-    console.error('\n[DMBBHR Agent] Connection or runtime error:', error.message);
-    if (connected && currentDevice) {
-      try {
-        await currentDevice.disconnect();
-        console.log('[DMBBHR Agent] Disconnected safely after error.');
-      } catch (disErr) {
-        // ignore
-      }
-    }
+    const errorReason = parseErrorMessage(error);
+    log(`${errorReason}`);
+    log(`Device OFFLINE`);
+
+    bridge.setDeviceStatus('offline', errorReason);
+
+    cleanupSocket(currentDevice);
 
     if (!isShuttingDown) {
-      console.log('[DMBBHR Agent] Will retry B-29b connection in 10 seconds...');
-      setTimeout(run, 10000);
+      scheduleReconnect();
     }
   }
+}
+
+async function cleanupSocket(dev) {
+  if (dev) {
+    try {
+      await dev.disconnect();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function scheduleReconnect() {
+  log(`Retrying connection in 10 seconds...`);
+  setTimeout(() => {
+    if (!isShuttingDown) {
+      connectAndListen();
+    }
+  }, 10000);
 }
 
 // Graceful termination handling
 async function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log('\n[DMBBHR Agent] Gracefully shutting down...');
+  log(`Gracefully shutting down agent...`);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  bridge.setDeviceStatus('offline', 'Agent terminated');
   bridge.stop();
   if (currentDevice) {
-    try {
-      await currentDevice.disconnect();
-      console.log('[DMBBHR Agent] Biometric device socket disconnected safely.');
-    } catch (e) {
-      console.error('[DMBBHR Agent] Error disconnecting socket:', e.message);
-    }
+    await cleanupSocket(currentDevice);
   }
   process.exit(0);
 }
@@ -105,8 +162,8 @@ async function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-if (require.main === module) {
-  run();
-}
+// Entry point
+bridge.start();
+connectAndListen();
 
-module.exports = { run, shutdown };
+module.exports = { connectAndListen, shutdown };

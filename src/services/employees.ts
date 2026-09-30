@@ -30,5 +30,9 @@ export const employeeService = {
       const emp = getStoredEmployees().find(e => e.id === id || e.biometric_user_id === id)
       resolve(emp || null)
     })
+  },
+
+  saveEmployees(employees: Employee[]): void {
+    localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(employees))
   }
 }

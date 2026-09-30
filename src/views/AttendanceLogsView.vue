@@ -27,14 +27,26 @@ const loading = ref(false)
 const locations = ref<Location[]>([])
 const devices = ref<BiometricDevice[]>([])
 
-// Filter state
+// Helper to get local date string YYYY-MM-DD in Asia/Manila (Philippine Standard Time)
+function getTodayManilaDateString(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date())
+}
+
+const todayDateString = getTodayManilaDateString()
+
+// Filter state - DEFAULTS TO TODAY DYNAMICALLY
 const filters = ref<AttendanceFilterParams>({
   search: '',
   locationId: 'all',
   deviceId: 'all',
-  quickRange: 'all',
-  startDate: '',
-  endDate: '',
+  quickRange: 'today',
+  startDate: todayDateString,
+  endDate: todayDateString,
   type: 'all',
   state: 'all',
   page: 1,
@@ -87,18 +99,43 @@ function handleSearch() {
 function setQuickRange(range: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') {
   filters.value.quickRange = range
   filters.value.page = 1
+  const today = getTodayManilaDateString()
   if (range === 'today') {
-    filters.value.startDate = '2026-09-29'
-    filters.value.endDate = '2026-09-29'
+    filters.value.startDate = today
+    filters.value.endDate = today
   } else if (range === 'yesterday') {
-    filters.value.startDate = '2026-09-28'
-    filters.value.endDate = '2026-09-28'
+    const y = new Date()
+    y.setDate(y.getDate() - 1)
+    const yesterday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(y)
+    filters.value.startDate = yesterday
+    filters.value.endDate = yesterday
   } else if (range === 'this_week') {
-    filters.value.startDate = '2026-09-24'
-    filters.value.endDate = '2026-09-29'
+    const w = new Date()
+    w.setDate(w.getDate() - 6)
+    const weekAgo = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(w)
+    filters.value.startDate = weekAgo
+    filters.value.endDate = today
   } else if (range === 'this_month') {
-    filters.value.startDate = '2026-09-01'
-    filters.value.endDate = '2026-09-29'
+    const m = new Date()
+    m.setDate(1)
+    const monthStart = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(m)
+    filters.value.startDate = monthStart
+    filters.value.endDate = today
   } else {
     filters.value.startDate = ''
     filters.value.endDate = ''
@@ -107,13 +144,14 @@ function setQuickRange(range: 'today' | 'yesterday' | 'this_week' | 'this_month'
 }
 
 function resetFilters() {
+  const today = getTodayManilaDateString()
   filters.value = {
     search: '',
     locationId: 'all',
     deviceId: 'all',
-    quickRange: 'all',
-    startDate: '',
-    endDate: '',
+    quickRange: 'today',
+    startDate: today,
+    endDate: today,
     type: 'all',
     state: 'all',
     page: 1,
@@ -304,7 +342,7 @@ async function confirmImport() {
   reader.readAsArrayBuffer(importFile.value)
 }
 
-const isLiveConnected = liveAttendanceService.isConnected
+const deviceStatus = liveAttendanceService.deviceStatus
 const latestLiveScan = ref<AttendanceLog | null>(null)
 let unsubscribeLive: (() => void) | null = null
 
@@ -351,13 +389,20 @@ onUnmounted(() => {
             Auditable Raw Scans
           </span>
           <Badge
-            :variant="isLiveConnected ? 'success' : 'outline'"
-            class="text-[11px] gap-1 cursor-pointer"
-            :title="isLiveConnected ? 'Connected to local Node.js biometric agent. Live scans will appear automatically.' : 'Agent bridge offline. Run: node server/biometric-agent/index.js'"
+            :variant="deviceStatus.status === 'online' ? 'success' : (deviceStatus.status === 'connecting' ? 'warning' : 'outline')"
+            class="text-[11px] gap-1 cursor-pointer transition-colors"
+            :title="`Status: ${deviceStatus.status.toUpperCase()} (${deviceStatus.reason}) - Target: ${deviceStatus.ip}:${deviceStatus.port}`"
             @click="liveAttendanceService.connect()"
           >
-            <Radio class="size-3" :class="[isLiveConnected ? 'animate-pulse text-emerald-600' : 'text-muted-foreground']" />
-            <span>{{ isLiveConnected ? 'Live Biometric Connected' : 'Biometric Bridge Offline' }}</span>
+            <Radio
+              class="size-3"
+              :class="[
+                deviceStatus.status === 'online' ? 'animate-pulse text-emerald-600' : (deviceStatus.status === 'connecting' ? 'animate-spin text-amber-500' : 'text-muted-foreground')
+              ]"
+            />
+            <span class="font-medium">
+              Device: {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Offline') }}
+            </span>
           </Badge>
         </h1>
         <p class="text-xs text-muted-foreground">
@@ -624,7 +669,15 @@ onUnmounted(() => {
           <template v-else-if="logs.length === 0">
             <TableRow>
               <TableCell colspan="10" class="h-32 text-center text-muted-foreground">
-                No attendance logs found matching the selected filters.
+                <div class="flex flex-col items-center justify-center gap-1.5">
+                  <Fingerprint class="size-6 text-muted-foreground/50" />
+                  <span class="font-medium text-foreground text-sm">
+                    {{ filters.quickRange === 'today' ? 'No attendance records today.' : 'No attendance logs found matching the selected filters.' }}
+                  </span>
+                  <p class="text-xs text-muted-foreground">
+                    {{ filters.quickRange === 'today' ? 'Scan a registered fingerprint on the BISMAC BISBIO B-29b to record attendance.' : 'Try adjusting the search or date range filters.' }}
+                  </p>
+                </div>
               </TableCell>
             </TableRow>
           </template>

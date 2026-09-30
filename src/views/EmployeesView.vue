@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Search, Fingerprint } from '@lucide/vue'
+import { Search, Fingerprint, Users } from '@lucide/vue'
 import { employeeService } from '@/services/employees'
 import type { Employee } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -50,7 +50,7 @@ onMounted(async () => {
           Employee Directory
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Manage employee profiles and mapping to biometric reader User IDs (e.g., 5009, 25013, 50366).
+          Employee profiles registered in the system for biometric attendance mapping.
         </p>
       </div>
     </div>
@@ -85,37 +85,53 @@ onMounted(async () => {
         </TableHeader>
 
         <TableBody>
-          <TableRow v-for="emp in filtered" :key="emp.id">
-            <TableCell class="font-mono font-semibold text-primary">
-              <span class="inline-flex items-center gap-1.5">
-                <Fingerprint class="size-3.5 text-muted-foreground" />
-                {{ emp.biometric_user_id }}
-              </span>
-            </TableCell>
-            <TableCell class="font-mono text-xs text-muted-foreground">
-              {{ emp.employee_number }}
-            </TableCell>
-            <TableCell class="font-medium text-foreground">
-              {{ emp.full_name }}
-            </TableCell>
-            <TableCell class="text-xs">
-              {{ emp.department }}
-            </TableCell>
-            <TableCell class="text-xs text-muted-foreground">
-              {{ emp.position }}
-            </TableCell>
-            <TableCell class="text-xs">
-              <span class="inline-flex items-center gap-1">
-                <span class="size-1.5 rounded-full bg-emerald-500" />
-                DBB Cebu
-              </span>
-            </TableCell>
-            <TableCell class="text-right">
-              <Badge variant="success" class="text-[10px] uppercase font-mono">
-                {{ emp.status }}
-              </Badge>
-            </TableCell>
-          </TableRow>
+          <template v-if="filtered.length === 0">
+            <TableRow>
+              <TableCell colspan="7" class="h-32 text-center text-muted-foreground">
+                <div class="flex flex-col items-center justify-center gap-1.5">
+                  <Users class="size-6 text-muted-foreground/40" />
+                  <span class="font-medium text-foreground text-sm">No registered employees</span>
+                  <p class="text-xs text-muted-foreground">
+                    Biometric users synced from B-29b or imported via CSV/Excel will appear here.
+                  </p>
+                </div>
+              </TableCell>
+            </TableRow>
+          </template>
+
+          <template v-else>
+            <TableRow v-for="emp in filtered" :key="emp.id">
+              <TableCell class="font-mono font-semibold text-primary">
+                <span class="inline-flex items-center gap-1.5">
+                  <Fingerprint class="size-3.5 text-muted-foreground" />
+                  {{ emp.biometric_user_id }}
+                </span>
+              </TableCell>
+              <TableCell class="font-mono text-xs text-muted-foreground">
+                {{ emp.employee_number }}
+              </TableCell>
+              <TableCell class="font-medium text-foreground">
+                {{ emp.full_name }}
+              </TableCell>
+              <TableCell class="text-xs">
+                {{ emp.department }}
+              </TableCell>
+              <TableCell class="text-xs text-muted-foreground">
+                {{ emp.position }}
+              </TableCell>
+              <TableCell class="text-xs">
+                <span class="inline-flex items-center gap-1">
+                  <span class="size-1.5 rounded-full bg-emerald-500" />
+                  DBB Cebu
+                </span>
+              </TableCell>
+              <TableCell class="text-right">
+                <Badge variant="success" class="text-[10px] uppercase font-mono">
+                  {{ emp.status }}
+                </Badge>
+              </TableCell>
+            </TableRow>
+          </template>
         </TableBody>
       </Table>
     </div>

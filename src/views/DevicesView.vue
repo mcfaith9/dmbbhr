@@ -3,11 +3,15 @@ import { ref, onMounted } from 'vue'
 import {
   Fingerprint,
   CheckCircle2,
+  XCircle,
   RefreshCw,
-  Server,
   Activity,
+  Radio,
+  Clock,
+  ShieldAlert,
 } from '@lucide/vue'
 import { deviceService } from '@/services/devices'
+import { liveAttendanceService } from '@/services/liveAttendance'
 import type { BiometricDevice, Location } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,24 +19,57 @@ import { Badge } from '@/components/ui/badge'
 const devices = ref<BiometricDevice[]>([])
 const locations = ref<Location[]>([])
 const testingConnection = ref(false)
-const testResult = ref<string | null>(null)
+const testResult = ref<{ success: boolean; message: string } | null>(null)
+
+// Live real device status reported directly by the Node.js biometric agent
+const deviceStatus = liveAttendanceService.deviceStatus
 
 async function loadDevices() {
   devices.value = await deviceService.getDevices()
   locations.value = await deviceService.getLocations()
 }
 
+function formatClockTime(isoStr: string | null) {
+  if (!isoStr) return 'None'
+  try {
+    return new Intl.DateTimeFormat('en-PH', {
+      timeZone: 'Asia/Manila',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }).format(new Date(isoStr))
+  } catch {
+    return isoStr
+  }
+}
+
 async function testDevicePing(device: BiometricDevice) {
   testingConnection.value = true
   testResult.value = null
+
+  // Ensure live service is connected
+  liveAttendanceService.connect()
+
   setTimeout(() => {
     testingConnection.value = false
-    testResult.value = `Handshake verified: ${device.model} on ${device.ip_address}:${device.port}. Serial: ${device.serial_number} confirmed online.`
+    if (deviceStatus.value.status === 'online') {
+      testResult.value = {
+        success: true,
+        message: `Hardware handshake verified: ${device.model} at ${device.ip_address}:${device.port}. Socket alive and listening for scans.`
+      }
+    } else {
+      testResult.value = {
+        success: false,
+        message: `Device unreachable at ${device.ip_address}:${device.port}. Reason: ${deviceStatus.value.reason || 'Connection refused or laptop not connected to biometric LAN.'}`
+      }
+    }
   }, 1000)
 }
 
 onMounted(() => {
   loadDevices()
+  liveAttendanceService.connect()
 })
 </script>
 
@@ -40,23 +77,37 @@ onMounted(() => {
   <div class="space-y-6">
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
-        <h1 class="text-xl font-bold tracking-tight text-foreground">
-          Biometric Device Management
+        <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+          <span>Biometric Device Management</span>
+          <Badge
+            :variant="deviceStatus.status === 'online' ? 'success' : (deviceStatus.status === 'connecting' ? 'warning' : 'destructive')"
+            class="text-[11px] gap-1"
+          >
+            <Radio
+              class="size-3"
+              :class="[
+                deviceStatus.status === 'online' ? 'animate-pulse' : (deviceStatus.status === 'connecting' ? 'animate-spin' : '')
+              ]"
+            />
+            <span>
+              {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Offline') }}
+            </span>
+          </Badge>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Manage hardware biometric readers connected across office locations via Node.js zkteco agent.
+          Real hardware socket state from the local Node.js biometric agent (<code class="font-mono">zkteco-js</code>).
         </p>
       </div>
 
       <div class="flex items-center gap-2">
-        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadDevices">
+        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadDevices(); liveAttendanceService.connect()">
           <RefreshCw class="size-3.5" />
           <span class="text-xs">Refresh Status</span>
         </Button>
       </div>
     </div>
 
-    <!-- Active Device Card -->
+    <!-- Active Hardware Device Card -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div
         v-for="device in devices"
@@ -65,7 +116,12 @@ onMounted(() => {
       >
         <div class="flex items-start justify-between">
           <div class="flex items-center gap-3">
-            <div class="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-600">
+            <div
+              :class="[
+                'p-2.5 rounded-lg transition-colors',
+                deviceStatus.status === 'online' ? 'bg-emerald-500/10 text-emerald-600' : (deviceStatus.status === 'connecting' ? 'bg-amber-500/10 text-amber-600' : 'bg-destructive/10 text-destructive')
+              ]"
+            >
               <Fingerprint class="size-6" />
             </div>
             <div>
@@ -73,10 +129,36 @@ onMounted(() => {
               <p class="text-xs font-mono text-muted-foreground">{{ device.model }}</p>
             </div>
           </div>
-          <Badge variant="success" class="text-xs">
-            <span class="size-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
-            Connected
-          </Badge>
+
+          <!-- Strict Status: Only Online when socket is alive -->
+          <div class="text-right">
+            <Badge
+              v-if="deviceStatus.status === 'online'"
+              variant="success"
+              class="text-xs"
+            >
+              <span class="size-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+              Online
+            </Badge>
+
+            <Badge
+              v-else-if="deviceStatus.status === 'connecting'"
+              variant="warning"
+              class="text-xs"
+            >
+              <span class="size-1.5 rounded-full bg-amber-500 mr-1.5 animate-spin" />
+              Connecting...
+            </Badge>
+
+            <Badge
+              v-else
+              variant="destructive"
+              class="text-xs"
+            >
+              <span class="size-1.5 rounded-full bg-destructive mr-1.5" />
+              Offline
+            </Badge>
+          </div>
         </div>
 
         <!-- Hardware & Network Specifications -->
@@ -94,27 +176,58 @@ onMounted(() => {
             <div class="font-mono font-medium text-foreground">{{ device.serial_number }}</div>
           </div>
           <div>
-            <span class="text-muted-foreground text-[11px]">SUBNET / GATEWAY</span>
+            <span class="text-muted-foreground text-[11px]">LOCATION</span>
+            <div class="font-medium text-foreground">DBB Cebu</div>
+          </div>
+          <div>
+            <span class="text-muted-foreground text-[11px]">SUBNET</span>
             <div class="font-mono text-muted-foreground text-[11px]">{{ device.subnet || '255.255.255.0' }}</div>
           </div>
           <div>
-            <span class="text-muted-foreground text-[11px]">MAC ADDRESS</span>
-            <div class="font-mono text-muted-foreground text-[11px]">{{ device.mac_address || '00:17:61:10:0c:a3' }}</div>
-          </div>
-          <div>
-            <span class="text-muted-foreground text-[11px]">FIRMWARE</span>
-            <div class="font-mono text-muted-foreground text-[11px]">{{ device.firmware_version || '6.5.4 Build 142' }}</div>
+            <span class="text-muted-foreground text-[11px]">PROTOCOL</span>
+            <div class="font-mono text-muted-foreground text-[11px]">zkteco-js :4370</div>
           </div>
         </div>
 
-        <div class="rounded-lg bg-muted/40 p-3 text-xs space-y-1">
-          <div class="font-medium text-foreground flex items-center justify-between">
-            <span>Communication Protocol</span>
-            <span class="font-mono text-[10px] text-muted-foreground">zkteco-js :4370</span>
+        <!-- Real Connection Diagnostic Panel -->
+        <div
+          :class="[
+            'rounded-lg p-3 text-xs space-y-1.5 border',
+            deviceStatus.status === 'online' ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-muted/40 border-border'
+          ]"
+        >
+          <div class="flex items-center justify-between font-medium">
+            <span class="text-foreground">Connection Diagnostics</span>
+            <span
+              :class="[
+                'font-mono text-[11px]',
+                deviceStatus.status === 'online' ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-destructive font-bold'
+              ]"
+            >
+              {{ deviceStatus.status.toUpperCase() }}
+            </span>
           </div>
-          <p class="text-muted-foreground text-[11px]">
-            Node.js service establishes socket to port 4370 and receives live logs via <code class="font-mono text-foreground">getRealTimeLogs()</code> callback. Historical sync uses incremental cursor to prevent re-querying 24,000+ records.
-          </p>
+
+          <div class="grid grid-cols-2 gap-2 text-[11px] pt-1">
+            <div>
+              <span class="text-muted-foreground">Last Connected:</span>
+              <div class="font-mono text-foreground">{{ formatClockTime(deviceStatus.lastConnected) }}</div>
+            </div>
+            <div>
+              <span class="text-muted-foreground">Last Scan Event:</span>
+              <div class="font-mono text-foreground">{{ formatClockTime(deviceStatus.lastEvent) }}</div>
+            </div>
+            <div>
+              <span class="text-muted-foreground">Last Attempt:</span>
+              <div class="font-mono text-foreground">{{ formatClockTime(deviceStatus.lastAttempt) }}</div>
+            </div>
+            <div>
+              <span class="text-muted-foreground">Status Reason:</span>
+              <div class="font-medium text-foreground truncate" :title="deviceStatus.reason">
+                {{ deviceStatus.reason }}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="flex items-center justify-between pt-1">
@@ -126,7 +239,7 @@ onMounted(() => {
             @click="testDevicePing(device)"
           >
             <Activity :class="['size-3.5', testingConnection ? 'animate-spin' : '']" />
-            <span>{{ testingConnection ? 'Testing...' : 'Test Connection' }}</span>
+            <span>{{ testingConnection ? 'Testing Socket...' : 'Test Connection' }}</span>
           </Button>
 
           <router-link to="/attendance/logs">
@@ -136,33 +249,47 @@ onMounted(() => {
           </router-link>
         </div>
 
-        <div v-if="testResult" class="p-2.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
-          <CheckCircle2 class="size-4 shrink-0" />
-          <span>{{ testResult }}</span>
+        <div
+          v-if="testResult"
+          :class="[
+            'p-2.5 rounded-md border text-xs flex items-start gap-2',
+            testResult.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300' : 'bg-destructive/10 border-destructive/20 text-destructive'
+          ]"
+        >
+          <CheckCircle2 v-if="testResult.success" class="size-4 shrink-0 mt-0.5" />
+          <XCircle v-else class="size-4 shrink-0 mt-0.5" />
+          <span>{{ testResult.message }}</span>
         </div>
       </div>
 
-      <!-- Future Multi-Branch Device Card (Placeholder for Negros / Iloilo) -->
-      <div class="rounded-xl border border-dashed bg-card/50 p-5 text-card-foreground shadow-xs flex flex-col justify-between">
+      <!-- Information Card: Starting the Agent -->
+      <div class="rounded-xl border bg-card/50 p-5 text-card-foreground shadow-xs flex flex-col justify-between space-y-3">
         <div class="space-y-3">
           <div class="flex items-center gap-3">
-            <div class="p-2.5 rounded-lg bg-muted text-muted-foreground">
-              <Server class="size-6" />
+            <div class="p-2.5 rounded-lg bg-primary/10 text-primary">
+              <Clock class="size-6" />
             </div>
             <div>
-              <h3 class="font-semibold text-base text-foreground">Future Location Readers</h3>
-              <p class="text-xs text-muted-foreground">DBB Negros & DBB Iloilo</p>
+              <h3 class="font-semibold text-base text-foreground">Biometric Agent Service</h3>
+              <p class="text-xs text-muted-foreground">Local TCP/IP bridge to BISMAC BISBIO B-29b</p>
             </div>
           </div>
 
           <p class="text-xs text-muted-foreground leading-relaxed">
-            The multi-tenant branch architecture is already configured to accommodate future readers. When devices in Negros and Iloilo are provisioned with their IP addresses, they can be registered without database refactoring.
+            The Node.js agent connects directly to <code class="font-mono text-foreground font-semibold">192.168.1.201:4370</code> via TCP/IP socket. It polls heartbeats every 15 seconds and automatically reconnects if network connectivity drops.
           </p>
+
+          <div class="rounded-md bg-muted p-2.5 text-xs font-mono space-y-1">
+            <div class="text-[11px] text-muted-foreground">Single command startup:</div>
+            <div class="text-primary font-bold">npm run dev</div>
+            <div class="text-[11px] text-muted-foreground pt-1">Or run agent standalone in background:</div>
+            <div class="text-foreground">npm run biometric-agent</div>
+          </div>
         </div>
 
-        <div class="border-t pt-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span>Active Primary Reader:</span>
-          <span class="font-semibold text-foreground">DBB Cebu (Online)</span>
+        <div class="text-[11px] text-muted-foreground border-t pt-2 flex items-center gap-1.5">
+          <ShieldAlert class="size-3.5 text-amber-500 shrink-0" />
+          <span>If the laptop is not on the same LAN as 192.168.1.201, status remains Offline.</span>
         </div>
       </div>
     </div>

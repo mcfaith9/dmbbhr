@@ -1,10 +1,8 @@
 /**
- * Simple Lightweight WebSocket Bridge for Direct Node.js -> Vue Communication
+ * Zero-dependency WebSocket & HTTP Bridge for BISMAC BISBIO B-29b
  *
- * Runs on port 5174 (or custom WS_PORT) across 0.0.0.0.
- * Allows Laptop A (with biometric reader) to broadcast real-time scan events
- * directly to connected Vue browsers (on Laptop A or Laptop B over the LAN)
- * without requiring Laravel, MySQL, or complex external brokers.
+ * Runs on port 5174 (0.0.0.0).
+ * Broadcasts real-time events, heartbeat status, and socket state directly to Vue.
  */
 
 const http = require('http');
@@ -14,12 +12,45 @@ class DevSocketBridge {
     this.port = port;
     this.clients = new Set();
     this.server = null;
-    this.recentEvents = []; // Keeps last 20 events in memory for newly connected clients
+    this.recentEvents = [];
+
+    // Hardware status representation
+    this.deviceState = {
+      model: 'BISMAC BISBIO B-29b',
+      ip: '192.168.1.201',
+      port: 4370,
+      serial: '0476141400046',
+      status: 'offline', // 'offline' | 'connecting' | 'online'
+      reason: 'Agent initializing...',
+      lastConnected: null,
+      lastDisconnected: null,
+      lastAttempt: null,
+      lastEvent: null,
+      uptimeSeconds: 0
+    };
+  }
+
+  setDeviceStatus(status, reason = '') {
+    const prevStatus = this.deviceState.status;
+    this.deviceState.status = status;
+    this.deviceState.reason = reason;
+    this.deviceState.lastAttempt = new Date().toISOString();
+
+    if (status === 'online') {
+      this.deviceState.lastConnected = new Date().toISOString();
+    } else if (status === 'offline' && prevStatus === 'online') {
+      this.deviceState.lastDisconnected = new Date().toISOString();
+    }
+
+    // Broadcast updated device state to all connected Vue browser instances
+    this.broadcastMessage({
+      type: 'DEVICE_STATUS',
+      payload: { ...this.deviceState }
+    });
   }
 
   start() {
     this.server = http.createServer((req, res) => {
-      // Simple HTTP health check and scan event query endpoint
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -30,37 +61,20 @@ class DevSocketBridge {
         return;
       }
 
-      if (req.url === '/api/events') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', events: this.recentEvents }));
-        return;
-      }
-
-      if (req.method === 'POST' && req.url === '/api/scan') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => {
-          try {
-            const data = JSON.parse(body);
-            this.broadcastScan(data);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'ok', broadcasted: true }));
-          } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: e.message }));
-          }
-        });
-        return;
-      }
-
-      if (req.url === '/health') {
+      if (req.url === '/health' || req.url === '/api/device/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-          status: 'online',
-          device: 'BISMAC BISBIO B-29b',
+          status: 'ok',
+          device: this.deviceState,
           clientsConnected: this.clients.size,
           recentEventsCount: this.recentEvents.length
         }));
+        return;
+      }
+
+      if (req.url === '/api/events') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', events: this.recentEvents }));
         return;
       }
 
@@ -68,7 +82,7 @@ class DevSocketBridge {
       res.end('Not found');
     });
 
-    // Handle WebSocket upgrade manually using native Node.js HTTP (no extra npm packages required)
+    // Handle WebSocket upgrade manually using native Node.js HTTP
     this.server.on('upgrade', (req, socket, head) => {
       const key = req.headers['sec-websocket-key'];
       if (!key) {
@@ -76,7 +90,6 @@ class DevSocketBridge {
         return;
       }
 
-      // Compute Sec-WebSocket-Accept
       const crypto = require('crypto');
       const acceptValue = crypto
         .createHash('sha1')
@@ -98,29 +111,27 @@ class DevSocketBridge {
       };
 
       this.clients.add(client);
-      console.log(`[Dev Bridge] Web client connected from ${req.socket.remoteAddress}. Total active listeners: ${this.clients.size}`);
 
-      // Send greeting & connection confirmation
+      // Immediately send current live device status and recent events to new client
       this.sendToClient(client, {
-        type: 'CONNECTED',
-        message: 'Connected to B-29b Local Biometric Bridge',
-        activeClients: this.clients.size
+        type: 'INITIAL_STATE',
+        payload: {
+          device: { ...this.deviceState },
+          recentEvents: this.recentEvents.slice(0, 10)
+        }
       });
 
       socket.on('close', () => {
         this.clients.delete(client);
-        console.log(`[Dev Bridge] Web client disconnected. Active listeners: ${this.clients.size}`);
       });
 
-      socket.on('error', (err) => {
-        console.warn(`[Dev Bridge] Socket error (${client.id}):`, err.message);
+      socket.on('error', () => {
         this.clients.delete(client);
       });
     });
 
     this.server.listen(this.port, '0.0.0.0', () => {
-      console.log(`[Dev Bridge] Real-time WebSocket server listening on ws://0.0.0.0:${this.port}`);
-      console.log(`[Dev Bridge] (Allows Vue browsers on this PC or other LAN laptops to receive scans)`);
+      console.log(`[Dev Bridge] Local WebSocket & status bridge listening on port ${this.port}`);
     });
   }
 
@@ -151,20 +162,24 @@ class DevSocketBridge {
     }
   }
 
+  broadcastMessage(message) {
+    for (const client of this.clients) {
+      this.sendToClient(client, message);
+    }
+  }
+
   broadcastScan(scanRecord) {
     this.recentEvents.unshift(scanRecord);
     if (this.recentEvents.length > 50) this.recentEvents.pop();
 
-    console.log(`[Dev Bridge] Broadcasting scan for User ${scanRecord.user_id} to ${this.clients.size} browser clients...`);
+    this.deviceState.lastEvent = scanRecord.attendance_time || new Date().toISOString();
 
     const message = {
       type: 'BIOMETRIC_SCAN',
       payload: scanRecord
     };
 
-    for (const client of this.clients) {
-      this.sendToClient(client, message);
-    }
+    this.broadcastMessage(message);
   }
 
   stop() {

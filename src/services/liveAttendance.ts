@@ -1,66 +1,104 @@
 /**
  * Client service in Vue to connect to the local Node.js biometric agent WebSocket bridge.
- * Supports auto-reconnect and notifies listeners whenever a live fingerprint scan arrives.
+ * Tracks REAL hardware status, heartbeats, and live fingerprint scan events.
  */
 
 import { ref } from 'vue'
 import type { AttendanceLog } from '@/types'
+import { attendanceService } from './attendance'
+
+export interface RealDeviceStatus {
+  model: string
+  ip: string
+  port: number
+  serial: string
+  status: 'online' | 'offline' | 'connecting'
+  reason: string
+  lastConnected: string | null
+  lastDisconnected: string | null
+  lastAttempt: string | null
+  lastEvent: string | null
+}
 
 type ScanCallback = (log: AttendanceLog) => void
+type StatusCallback = (status: RealDeviceStatus) => void
 
 class LiveAttendanceService {
   private socket: WebSocket | null = null
-  private listeners: Set<ScanCallback> = new Set()
+  private scanListeners: Set<ScanCallback> = new Set()
+  private statusListeners: Set<StatusCallback> = new Set()
   private reconnectTimer: any = null
-  public isConnected = ref(false)
+  
+  // Agent connection state
+  public isAgentConnected = ref(false)
   public lastReceivedScan = ref<AttendanceLog | null>(null)
-  public connectionUrl = ref('')
+  
+  // Real hardware device status (reported by Node.js agent)
+  public deviceStatus = ref<RealDeviceStatus>({
+    model: 'BISMAC BISBIO B-29b',
+    ip: '192.168.1.201',
+    port: 4370,
+    serial: '0476141400046',
+    status: 'offline', // Strictly offline by default
+    reason: 'Connecting to local biometric agent...',
+    lastConnected: null,
+    lastDisconnected: null,
+    lastAttempt: null,
+    lastEvent: null
+  })
 
   constructor() {
-    this.connectionUrl.value = this.getWsUrl()
+    this.connect()
   }
 
   private getWsUrl(): string {
-    // If user provided custom VITE_AGENT_WS_URL, use that.
-    // Otherwise connect to the host of current browser window on port 5174.
-    // (This allows Laptop B to automatically connect to Laptop A if opened via http://<LaptopA-IP>:3000)
     if (import.meta.env.VITE_AGENT_WS_URL) {
       return import.meta.env.VITE_AGENT_WS_URL
     }
-
     const host = window.location.hostname || 'localhost'
     return `ws://${host}:5174`
   }
 
-  public connect(customUrl?: string) {
+  public connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       return
     }
 
-    const url = customUrl || this.connectionUrl.value
-    this.connectionUrl.value = url
+    const url = this.getWsUrl()
 
     try {
       this.socket = new WebSocket(url)
 
       this.socket.onopen = () => {
-        this.isConnected.value = true
-        console.log(`[DMBBHR Live] Connected to Biometric Node Agent WebSocket bridge at ${url}`)
+        this.isAgentConnected.value = true
       }
 
       this.socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
+
+          // 1. Initial State Sync
+          if (data.type === 'INITIAL_STATE' && data.payload?.device) {
+            this.deviceStatus.value = data.payload.device
+            this.notifyStatusListeners()
+          }
+
+          // 2. Hardware Status Update (Heartbeat / Connect / Disconnect)
+          if (data.type === 'DEVICE_STATUS' && data.payload) {
+            this.deviceStatus.value = data.payload
+            this.notifyStatusListeners()
+          }
+
+          // 3. Real Biometric Scan Received
           if (data.type === 'BIOMETRIC_SCAN' && data.payload) {
             const raw = data.payload
-            
-            // Map payload into UI AttendanceLog structure
+
             const scanLog: AttendanceLog = {
-              id: `live-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              id: `real-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               user_id: String(raw.user_id),
               employee_id: raw.employee_id,
-              employee_name: raw.employee_name,
-              attendance_time: raw.attendance_time,
+              employee_name: raw.employee_name || 'Biometric User',
+              attendance_time: raw.attendance_time || new Date().toISOString(),
               type: Number(raw.type ?? 1),
               state: Number(raw.state ?? 1),
               serial_number: raw.serial_number ?? 0,
@@ -74,33 +112,50 @@ class LiveAttendanceService {
             }
 
             this.lastReceivedScan.value = scanLog
+            attendanceService.addRealScan(scanLog)
 
-            // Trigger registered callbacks
-            for (const listener of this.listeners) {
+            for (const listener of this.scanListeners) {
               try {
                 listener(scanLog)
               } catch (e) {
-                console.error('[DMBBHR Live] Error in scan callback:', e)
+                console.error('[LiveAttendance] Scan callback error:', e)
               }
             }
           }
-        } catch (e) {
-          // ignore non-json
+        } catch {
+          // ignore
         }
       }
 
       this.socket.onclose = () => {
-        this.isConnected.value = false
+        this.isAgentConnected.value = false
+        // If the agent process was terminated or unreachable, device is definitely offline
+        this.deviceStatus.value.status = 'offline'
+        this.deviceStatus.value.reason = 'Biometric agent process is not running'
+        this.notifyStatusListeners()
         this.scheduleReconnect()
       }
 
       this.socket.onerror = () => {
-        this.isConnected.value = false
-        // Will close and trigger scheduleReconnect
+        this.isAgentConnected.value = false
+        this.deviceStatus.value.status = 'offline'
+        this.deviceStatus.value.reason = 'Unable to communicate with biometric agent bridge'
+        this.notifyStatusListeners()
       }
-    } catch (e) {
-      this.isConnected.value = false
+    } catch {
+      this.isAgentConnected.value = false
+      this.deviceStatus.value.status = 'offline'
       this.scheduleReconnect()
+    }
+  }
+
+  private notifyStatusListeners() {
+    for (const listener of this.statusListeners) {
+      try {
+        listener(this.deviceStatus.value)
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -113,8 +168,14 @@ class LiveAttendanceService {
   }
 
   public onScan(callback: ScanCallback) {
-    this.listeners.add(callback)
-    return () => this.listeners.delete(callback)
+    this.scanListeners.add(callback)
+    return () => this.scanListeners.delete(callback)
+  }
+
+  public onStatusChange(callback: StatusCallback) {
+    this.statusListeners.add(callback)
+    callback(this.deviceStatus.value)
+    return () => this.statusListeners.delete(callback)
   }
 
   public disconnect() {
@@ -126,7 +187,7 @@ class LiveAttendanceService {
       this.socket.close()
       this.socket = null
     }
-    this.isConnected.value = false
+    this.isAgentConnected.value = false
   }
 }
 
