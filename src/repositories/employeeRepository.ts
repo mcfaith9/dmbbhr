@@ -1,4 +1,4 @@
-import { db, type EmployeeRecord } from '@/db'
+import { db, type EmployeeRecord, type WorkGroupRecord } from '@/db'
 import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
 import { workGroupRepository } from './workGroupRepository'
 
@@ -615,16 +615,19 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   return plainRecord
 }
 
+let notifyChangeTimer: any = null
+
 export const employeeRepository = {
-  async toEmployee(rec: EmployeeRecord): Promise<Employee> {
-    const wg = await workGroupRepository.getById(rec.workGroupId || 'wg-group-c')
+  toEmployee(rec: EmployeeRecord, wgMap?: Map<string, WorkGroupRecord>): Employee {
+    const wgId = rec.workGroupId || 'wg-group-c'
+    const wg = wgMap ? (wgMap.get(wgId) || wgMap.get('wg-group-c')) : workGroupRepository.getRecordByIdSync(wgId)
     return {
       id: `emp-${rec.bioId}`,
       employee_number: rec.employeeNumber,
       biometric_user_id: rec.bioId,
       full_name: rec.fullName,
       location: rec.location,
-      work_group_id: rec.workGroupId || 'wg-group-c',
+      work_group_id: wgId,
       work_group_name: wg?.name || 'Group C',
       work_group_code: wg?.code || 'C',
       department: rec.department,
@@ -640,6 +643,7 @@ export const employeeRepository = {
    */
   async getEmployees(params: { location?: string; workGroupId?: string; search?: string } = {}): Promise<Employee[]> {
     await ensureInitialized()
+    const wgMap = await workGroupRepository.getMap()
     let records = Array.from(employeeCache!.values())
 
     if (params.location && params.location !== 'all') {
@@ -671,7 +675,7 @@ export const employeeRepository = {
     }
 
     records.sort((a, b) => a.fullName.localeCompare(b.fullName))
-    return Promise.all(records.map(r => this.toEmployee(r)))
+    return records.map(r => this.toEmployee(r, wgMap))
   },
 
   /**
@@ -687,6 +691,7 @@ export const employeeRepository = {
    */
   async getByBioId(bioId: string): Promise<Employee | undefined> {
     await ensureInitialized()
+    await workGroupRepository.getMap()
     const rec = employeeCache!.get(String(bioId).trim())
     return rec ? this.toEmployee(rec) : undefined
   },
@@ -1238,13 +1243,19 @@ export const employeeRepository = {
   },
 
   notifyChange() {
-    for (const cb of changeListeners) {
-      try {
-        cb()
-      } catch {
-        // ignore
-      }
+    if (notifyChangeTimer) {
+      clearTimeout(notifyChangeTimer)
     }
+    notifyChangeTimer = setTimeout(() => {
+      notifyChangeTimer = null
+      for (const cb of changeListeners) {
+        try {
+          cb()
+        } catch {
+          // ignore
+        }
+      }
+    }, 60)
   },
 
   async count(): Promise<number> {

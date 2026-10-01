@@ -80,14 +80,11 @@ const calculatedExpectedOut = computed(() => {
 async function loadData() {
   loading.value = true
   try {
-    const list = await employeeService.getWorkGroups()
+    const [list, counts] = await Promise.all([
+      employeeService.getWorkGroups(),
+      employeeService.getAllAssignedEmployeeCounts()
+    ])
     workGroups.value = list
-
-    // Load assigned counts for each group
-    const counts: Record<string, number> = {}
-    for (const g of list) {
-      counts[g.id] = await employeeService.getAssignedEmployeeCount(g.id)
-    }
     employeeCounts.value = counts
   } finally {
     loading.value = false

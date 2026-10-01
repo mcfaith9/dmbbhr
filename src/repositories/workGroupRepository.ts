@@ -165,6 +165,16 @@ export const workGroupRepository = {
     }
   },
 
+  getRecordByIdSync(id: string): WorkGroupRecord | undefined {
+    if (!workGroupCache) return undefined
+    return workGroupCache.get(id) || workGroupCache.get('wg-group-c')
+  },
+
+  getByIdSync(id: string): WorkGroup | undefined {
+    const rec = this.getRecordByIdSync(id)
+    return rec ? this.toWorkGroup(rec) : undefined
+  },
+
   async getAll(): Promise<WorkGroup[]> {
     await ensureWorkGroupsInitialized()
     return Array.from(workGroupCache!.values()).map(this.toWorkGroup)
@@ -246,6 +256,19 @@ export const workGroupRepository = {
    */
   async getAssignedEmployeeCount(workGroupId: string): Promise<number> {
     return await db.employees.where('workGroupId').equals(workGroupId).count()
+  },
+
+  /**
+   * Fast batch count of assigned employees across all work groups
+   */
+  async getAllAssignedEmployeeCounts(): Promise<Record<string, number>> {
+    const employees = await db.employees.toArray()
+    const counts: Record<string, number> = {}
+    for (let i = 0; i < employees.length; i++) {
+      const wgId = employees[i].workGroupId || 'wg-group-c'
+      counts[wgId] = (counts[wgId] || 0) + 1
+    }
+    return counts
   },
 
   /**

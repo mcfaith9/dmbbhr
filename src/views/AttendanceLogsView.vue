@@ -87,7 +87,17 @@ const importProgress = ref({ processed: 0, total: 0, percentage: 0 })
 const importSuccessMsg = ref('')
 const importErrorMsg = ref('')
 
-async function loadData() {
+let reloadTimer: any = null
+let isExecutingReload = false
+let hasPendingReload = false
+
+async function executeLoadData() {
+  if (isExecutingReload) {
+    hasPendingReload = true
+    return
+  }
+  isExecutingReload = true
+  hasPendingReload = false
   loading.value = true
   try {
     const res = await attendanceService.getLogs(filters.value)
@@ -95,7 +105,31 @@ async function loadData() {
     meta.value = res.meta
   } finally {
     loading.value = false
+    isExecutingReload = false
+    if (hasPendingReload) {
+      hasPendingReload = false
+      executeLoadData()
+    }
   }
+}
+
+function triggerCoalescedLoad(immediate = false) {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+  if (immediate) {
+    executeLoadData()
+  } else {
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null
+      executeLoadData()
+    }, 150)
+  }
+}
+
+function loadData() {
+  triggerCoalescedLoad(true)
 }
 
 async function loadLookups() {
@@ -399,18 +433,22 @@ function handleNewBiometricScan(newLog: AttendanceLog) {
 
 onMounted(() => {
   loadLookups()
-  loadData()
+  executeLoadData()
 
   liveAttendanceService.connect()
   unsubscribeLive = liveAttendanceService.onScan((scan) => {
     handleNewBiometricScan(scan)
   })
   unsubscribeLogs = liveAttendanceService.onLogs(() => {
-    loadData()
+    triggerCoalescedLoad(false)
   })
 })
 
 onUnmounted(() => {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
   if (unsubscribeLive) unsubscribeLive()
   if (unsubscribeLogs) unsubscribeLogs()
 })

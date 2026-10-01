@@ -33,7 +33,7 @@ const props = withDefaults(defineProps<SidebarProps>(), {
 
 const route = useRoute()
 const router = useRouter()
-const currentUser = computed(() => authService.getCurrentUser())
+const currentUser = authService.currentUser
 
 const userData = computed(() => ({
   name: currentUser.value?.name || "DMBB HR Admin",

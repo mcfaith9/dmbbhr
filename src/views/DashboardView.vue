@@ -9,6 +9,8 @@ import {
 } from '@lucide/vue'
 import { attendanceService } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { getManilaDateString } from '@/services/attendanceEngine'
+import { punchRepository } from '@/repositories/punchRepository'
 import type { AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -22,20 +24,55 @@ const deviceStatus = liveAttendanceService.deviceStatus
 const totalLogsToday = ref(0)
 const uniqueUsersToday = ref(0)
 
-async function loadDashboard() {
+let reloadTimer: any = null
+let isExecutingReload = false
+let hasPendingReload = false
+
+async function executeLoadDashboard() {
+  if (isExecutingReload) {
+    hasPendingReload = true
+    return
+  }
+  isExecutingReload = true
+  hasPendingReload = false
   loading.value = true
   try {
-    const [recentRes, todayRes] = await Promise.all([
+    const todayStr = getManilaDateString(new Date())
+    const [recentRes, punchesToday] = await Promise.all([
       attendanceService.getLogs({ page: 1, pageSize: 6 }),
-      attendanceService.getLogs({ quickRange: 'today', pageSize: 999999 })
+      punchRepository.getPunchesByDate(todayStr)
     ])
     recentLogs.value = recentRes.logs
-    totalLogsToday.value = todayRes.meta.totalItems
-    const set = new Set(todayRes.logs.map(l => l.user_id))
+    totalLogsToday.value = punchesToday.length
+    const set = new Set(punchesToday.map(l => l.user_id))
     uniqueUsersToday.value = set.size
   } finally {
     loading.value = false
+    isExecutingReload = false
+    if (hasPendingReload) {
+      hasPendingReload = false
+      executeLoadDashboard()
+    }
   }
+}
+
+function triggerCoalescedDashboard(immediate = false) {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+  if (immediate) {
+    executeLoadDashboard()
+  } else {
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null
+      executeLoadDashboard()
+    }, 150)
+  }
+}
+
+function loadDashboard() {
+  triggerCoalescedDashboard(true)
 }
 
 function formatTime(dateStr: string) {
@@ -69,19 +106,26 @@ let unSubLogs: (() => void) | null = null
 let unSubScan: (() => void) | null = null
 
 onMounted(() => {
-  loadDashboard()
+  executeLoadDashboard()
   liveAttendanceService.connect()
   unSubScan = liveAttendanceService.onScan((scan) => {
     if (!recentLogs.value.some(l => l.id === scan.id)) {
       recentLogs.value.unshift(scan)
+      if (recentLogs.value.length > 6) {
+        recentLogs.value.pop()
+      }
     }
   })
   unSubLogs = liveAttendanceService.onLogs(() => {
-    loadDashboard()
+    triggerCoalescedDashboard(false)
   })
 })
 
 onUnmounted(() => {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
   if (unSubScan) unSubScan()
   if (unSubLogs) unSubLogs()
 })

@@ -92,6 +92,13 @@ export const employeeService = {
   },
 
   /**
+   * Fast batch lookup of assigned employee counts across all Work Groups
+   */
+  async getAllAssignedEmployeeCounts(): Promise<Record<string, number>> {
+    return workGroupRepository.getAllAssignedEmployeeCounts()
+  },
+
+  /**
    * Edits an employee. Bio ID is strictly permanent and read-only.
    * Updates Employee Name, Location, and Work Group.
    */

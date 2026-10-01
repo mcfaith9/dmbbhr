@@ -110,13 +110,47 @@ async function loadLookups() {
   workGroups.value = await employeeService.getWorkGroups()
 }
 
-async function loadEmployees() {
+let reloadTimer: any = null
+let isExecutingReload = false
+let hasPendingReload = false
+
+async function executeLoadEmployees() {
+  if (isExecutingReload) {
+    hasPendingReload = true
+    return
+  }
+  isExecutingReload = true
+  hasPendingReload = false
   loading.value = true
   try {
     employees.value = await employeeService.getEmployees()
   } finally {
     loading.value = false
+    isExecutingReload = false
+    if (hasPendingReload) {
+      hasPendingReload = false
+      executeLoadEmployees()
+    }
   }
+}
+
+function triggerCoalescedEmployees(immediate = false) {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+  if (immediate) {
+    executeLoadEmployees()
+  } else {
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null
+      executeLoadEmployees()
+    }, 120)
+  }
+}
+
+function loadEmployees() {
+  triggerCoalescedEmployees(true)
 }
 
 watch([selectedLocation, selectedWorkGroup], () => {
@@ -316,14 +350,17 @@ let unSubChange: (() => void) | null = null
 
 onMounted(async () => {
   await loadLookups()
-  await loadEmployees()
+  executeLoadEmployees()
   unSubChange = employeeService.onEmployeesChanged(() => {
-    loadLookups()
-    loadEmployees()
+    triggerCoalescedEmployees(false)
   })
 })
 
 onUnmounted(() => {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
   if (unSubChange) unSubChange()
 })
 </script>

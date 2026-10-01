@@ -57,7 +57,17 @@
     workGroups.value = await attendanceService.getWorkGroups()
   }
 
-  async function loadDailyAttendance() {
+  let refreshTimer: any = null
+  let isExecutingReload = false
+  let hasPendingReload = false
+
+  async function executeDailyAttendance() {
+    if (isExecutingReload) {
+      hasPendingReload = true
+      return
+    }
+    isExecutingReload = true
+    hasPendingReload = false
     loading.value = true
     try {
       const records = await attendanceService.getDailyAttendance(
@@ -68,16 +78,40 @@
       dailyRecords.value = records
     } finally {
       loading.value = false
+      isExecutingReload = false
+      if (hasPendingReload) {
+        hasPendingReload = false
+        executeDailyAttendance()
+      }
     }
   }
 
+  function triggerCoalescedRefresh(immediate = false) {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+    if (immediate) {
+      executeDailyAttendance()
+    } else {
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null
+        executeDailyAttendance()
+      }, 120)
+    }
+  }
+
+  function loadDailyAttendance() {
+    triggerCoalescedRefresh(true)
+  }
+
   watch([selectedLocation, selectedWorkGroup], () => {
-    loadDailyAttendance()
+    triggerCoalescedRefresh(true)
   })
 
   async function handleManualSync() {
     await liveAttendanceService.triggerManualSync()
-    loadDailyAttendance()
+    triggerCoalescedRefresh(true)
   }
 
   function setDateQuick(range: 'today' | 'yesterday') {
@@ -87,7 +121,7 @@
       selectedDate.value = yesterdayDateStr.value
     }
 
-    loadDailyAttendance()
+    triggerCoalescedRefresh(true)
   }
 
   const filteredRecords = computed(() => {
@@ -149,21 +183,25 @@
 
   onMounted(async () => {
     await loadLookups()
-    await loadDailyAttendance()
+    executeDailyAttendance()
     liveAttendanceService.connect()
 
     unSubLogs = liveAttendanceService.onLogs(() => {
-      loadDailyAttendance()
+      triggerCoalescedRefresh(false)
     })
     unSubScan = liveAttendanceService.onScan(() => {
-      loadDailyAttendance()
+      triggerCoalescedRefresh(false)
     })
     unSubEmployees = employeeService.onEmployeesChanged(() => {
-      loadDailyAttendance()
+      triggerCoalescedRefresh(false)
     })
   })
 
   onUnmounted(() => {
+    if (refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
     if (unSubLogs) unSubLogs()
     if (unSubScan) unSubScan()
     if (unSubEmployees) unSubEmployees()

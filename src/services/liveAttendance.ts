@@ -100,6 +100,8 @@ class LiveAttendanceService {
     return `http://${host}:5174`
   }
 
+  private hasInitialSynced = false
+
   public async fetchHttpSync() {
     try {
       const httpBase = this.getHttpBaseUrl()
@@ -125,13 +127,39 @@ class LiveAttendanceService {
     }
   }
 
-  public connect() {
-    this.fetchHttpSync()
+  private cleanupSocket() {
+    if (this.socket) {
+      this.socket.onopen = null
+      this.socket.onmessage = null
+      this.socket.onerror = null
+      this.socket.onclose = null
+      try {
+        if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+          this.socket.close()
+        }
+      } catch {
+        // ignore
+      }
+      this.socket = null
+    }
+  }
+
+  public connect(forceSync: boolean = false) {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+
+    if (forceSync || !this.hasInitialSynced) {
+      this.hasInitialSynced = true
+      this.fetchHttpSync()
+    }
 
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       return
     }
 
+    this.cleanupSocket()
     const url = this.getWsUrl()
 
     try {
@@ -226,6 +254,7 @@ class LiveAttendanceService {
       }
 
       this.socket.onclose = () => {
+        this.cleanupSocket()
         this.isAgentConnected.value = false
         // If the agent process was terminated or unreachable, device is definitely offline
         this.deviceStatus.value.status = 'offline'
@@ -241,6 +270,7 @@ class LiveAttendanceService {
         this.notifyStatusListeners()
       }
     } catch {
+      this.cleanupSocket()
       this.isAgentConnected.value = false
       this.deviceStatus.value.status = 'offline'
       this.scheduleReconnect()
@@ -389,10 +419,7 @@ class LiveAttendanceService {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    if (this.socket) {
-      this.socket.close()
-      this.socket = null
-    }
+    this.cleanupSocket()
     this.isAgentConnected.value = false
   }
 }
