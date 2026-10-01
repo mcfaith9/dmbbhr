@@ -5,6 +5,7 @@ export const description = "A two column login page with a cover image."
 <script setup lang="ts">
 import { Fingerprint } from "@lucide/vue"
 import LoginForm from "@/components/LoginForm.vue"
+import buildingImage from '@/assets/dbbbuildinganimated.jpg'
 </script>
 
 <template>
@@ -26,7 +27,7 @@ import LoginForm from "@/components/LoginForm.vue"
     </div>
     <div class="bg-muted relative hidden lg:block">
       <img
-        src="/placeholder.svg"
+        :src="buildingImage"
         alt="Image"
         class="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
       >
