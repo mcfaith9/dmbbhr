@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { DatePicker } from '@/components/ui/date-picker'
 
 const logs = ref<AttendanceLog[]>([])
 const loading = ref(false)
@@ -618,21 +619,19 @@ onUnmounted(() => {
         </div>
 
         <div>
-          <Input
+          <DatePicker
             v-model="filters.startDate"
-            type="date"
-            class="h-8 text-xs"
-            title="Start Date"
+            placeholder="Start Date"
+            class="h-8 text-xs w-full font-normal"
             @change="handleSearch"
           />
         </div>
 
         <div>
-          <Input
+          <DatePicker
             v-model="filters.endDate"
-            type="date"
-            class="h-8 text-xs"
-            title="End Date"
+            placeholder="End Date"
+            class="h-8 text-xs w-full font-normal"
             @change="handleSearch"
           />
         </div>

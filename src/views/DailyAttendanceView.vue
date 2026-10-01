@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { DatePicker } from '@/components/ui/date-picker'
 
 // Real device status and sync state
 const deviceStatus = liveAttendanceService.deviceStatus
@@ -288,10 +289,9 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <input
-            type="date"
+          <DatePicker
             v-model="selectedDate"
-            class="w-full text-xs h-8 px-2.5 rounded-md border bg-background text-foreground"
+            class="w-full text-xs h-8 font-normal"
             @change="loadDailyAttendance"
           />
         </div>
