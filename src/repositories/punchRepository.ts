@@ -189,6 +189,7 @@ export const punchRepository = {
       const log = this.toLog(r)
       if (emp) {
         log.employee_name = emp.fullName
+        log.department = emp.department || ''
         log.location_name = emp.location
         log.work_group_id = emp.workGroupId || 'wg-group-c'
         const wg = workGroupMap.get(log.work_group_id)
@@ -220,6 +221,7 @@ export const punchRepository = {
       const log = this.toLog(r)
       if (emp) {
         log.employee_name = emp.fullName
+        log.department = emp.department || ''
         log.location_name = emp.location
         log.work_group_id = emp.workGroupId || 'wg-group-c'
       }

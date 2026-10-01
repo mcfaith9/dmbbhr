@@ -69,6 +69,7 @@ export interface AttendanceLog {
   user_id: string // Biometric User ID, e.g. 5009, 25013
   employee_id?: string
   employee_name?: string
+  department?: string
   work_group_id?: string
   work_group_name?: string
   attendance_time: string // ISO string or format "Jun 18, 2026, 2:26 PM"

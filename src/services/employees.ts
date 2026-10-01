@@ -13,12 +13,14 @@ import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
 import {
   employeeRepository,
   VALID_LOCATIONS,
-  type PeopleImportPreviewResult
+  type PeopleImportPreviewResult,
+  type PeopleImportRowItem,
+  type PeopleImportApplyResult
 } from '@/repositories/employeeRepository'
 import { workGroupRepository } from '@/repositories/workGroupRepository'
 
 export { VALID_LOCATIONS }
-export type { PeopleImportPreviewResult }
+export type { PeopleImportPreviewResult, PeopleImportRowItem, PeopleImportApplyResult }
 
 export const employeeService = {
   /**
@@ -116,8 +118,8 @@ export const employeeService = {
   /**
    * Applies validated Excel import records to the database
    */
-  async applyImport(preview: PeopleImportPreviewResult) {
-    return employeeRepository.applyBulkEmployeeImport(preview.recordsToApply)
+  async applyImport(preview: PeopleImportPreviewResult): Promise<PeopleImportApplyResult> {
+    return employeeRepository.applyBulkEmployeeImport(preview.recordsToApply, preview)
   },
 
   /**

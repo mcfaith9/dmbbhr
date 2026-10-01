@@ -78,6 +78,7 @@ export const attendanceRepository = {
       const empContext: EmployeeScheduleContext = {
         bioId,
         name: emp?.fullName || punches[0].employee_name || `User ${bioId}`,
+        department: emp?.department || '',
         location: empLocation,
         workGroupId: empWgId,
         workGroupName: wg?.name || 'GROUP C',

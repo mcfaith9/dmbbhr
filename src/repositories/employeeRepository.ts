@@ -1,5 +1,5 @@
 import { db, type EmployeeRecord } from '@/db'
-import type { Employee, EmployeeLocation } from '@/types'
+import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
 import { workGroupRepository } from './workGroupRepository'
 
 export const VALID_LOCATIONS: EmployeeLocation[] = [
@@ -430,14 +430,32 @@ async function ensureInitialized() {
   }
 }
 
+export interface PeopleImportRowItem {
+  rowNumber: number
+  id: string // Bio ID
+  name: string
+  group: string
+  department: string
+  action: 'UPDATE' | 'CREATE' | 'UNCHANGED' | 'SKIP'
+  status: string
+  isWarning: boolean
+  isError: boolean
+  warningReason?: string
+  errorReason?: string
+  targetRecord?: EmployeeRecord
+}
+
 export interface PeopleImportMatchedRow {
   bioId: string
   existingName: string
   newName: string
   existingGroup: string
   newGroup: string
+  existingDept: string
+  newDept: string
   isNameUpdated: boolean
   isGroupUpdated: boolean
+  isDeptUpdated: boolean
   targetRecord: EmployeeRecord
 }
 
@@ -445,6 +463,7 @@ export interface PeopleImportNewRow {
   bioId: string
   name: string
   group: string
+  department: string
   location: EmployeeLocation
   targetRecord: EmployeeRecord
 }
@@ -464,15 +483,33 @@ export interface PeopleImportInvalidRow {
 
 export interface PeopleImportPreviewResult {
   totalRows: number
-  matchedUpdatedCount: number
-  newPeopleCount: number
+  updatedCount: number
+  newCount: number
+  unchangedCount: number
   unknownGroupsCount: number
   invalidCount: number
+  skippedCount: number
+  warningsCount: number
+  errorsCount: number
+  allRows: PeopleImportRowItem[]
+  recordsToApply: EmployeeRecord[]
+  // Compatibility fields
+  matchedUpdatedCount: number
+  newPeopleCount: number
   matchedUpdated: PeopleImportMatchedRow[]
   newPeople: PeopleImportNewRow[]
   unknownGroups: PeopleImportUnknownGroupRow[]
   invalidRows: PeopleImportInvalidRow[]
-  recordsToApply: EmployeeRecord[]
+}
+
+export interface PeopleImportApplyResult {
+  updatedCount: number
+  createdCount: number
+  unchangedCount: number
+  skippedCount: number
+  warningsCount: number
+  errorsCount: number
+  totalProcessed: number
 }
 
 export const employeeRepository = {
@@ -678,15 +715,16 @@ export const employeeRepository = {
   },
 
   /**
-   * Generates a full preview and validation for bulk importing employee names & groups from Excel.
+   * Generates a full preview and validation for bulk importing employee names, departments & groups from Excel.
    *
    * Rules:
-   * - Excel ID maps to permanent Bio ID.
+   * - Excel ID maps to permanent Bio ID (primary key).
    * - Bio ID cannot be duplicated.
-   * - If Bio ID exists: updates Name (if provided) and Work Group (if matched).
-   * - If Bio ID does not exist: creates new employee with Bio ID, Name, and Work Group.
+   * - If Bio ID exists: updates Name (if provided) and Department (if provided).
+   * - If Bio ID does not exist: creates new employee with Bio ID, Name, and Department.
    * - Does NOT erase existing fields if Excel value is blank.
    * - Group matches case-insensitively against Work Group Code ("A") or Name ("Group A").
+   * - If GROUP is empty, does NOT change or invent a Work Group.
    * - Unknown groups flagged in preview warnings.
    */
   async previewImportEmployeesFromExcel(rows: any[]): Promise<PeopleImportPreviewResult> {
@@ -694,6 +732,7 @@ export const employeeRepository = {
     const workGroups = await workGroupRepository.getAll()
     const defaultGroup = await workGroupRepository.getDefault()
 
+    const allRows: PeopleImportRowItem[] = []
     const matchedUpdated: PeopleImportMatchedRow[] = []
     const newPeople: PeopleImportNewRow[] = []
     const unknownGroups: PeopleImportUnknownGroupRow[] = []
@@ -702,11 +741,20 @@ export const employeeRepository = {
 
     const seenBioIdsInImport = new Set<string>()
 
+    let updatedCount = 0
+    let newCount = 0
+    let unchangedCount = 0
+    let unknownGroupsCount = 0
+    let invalidCount = 0
+    let skippedCount = 0
+    let warningsCount = 0
+    let errorsCount = 0
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const rowNum = i + 1
 
-      // Extract ID (Bio ID)
+      // 1. Extract ID (Bio ID)
       const rawId =
         row.ID ??
         row.id ??
@@ -717,30 +765,9 @@ export const employeeRepository = {
         row['user_id'] ??
         row['ID/Bio ID']
 
-      if (rawId === undefined || rawId === null || String(rawId).trim() === '') {
-        invalidRows.push({
-          rowNumber: rowNum,
-          reason: 'Missing ID / Bio ID',
-          raw: row
-        })
-        continue
-      }
-
-      const bioId = String(rawId).trim()
-
-      // Guard against duplicate rows in the same Excel file
-      if (seenBioIdsInImport.has(bioId)) {
-        invalidRows.push({
-          rowNumber: rowNum,
-          reason: `Duplicate Bio ID "${bioId}" in import file`,
-          raw: row
-        })
-        continue
-      }
-      seenBioIdsInImport.add(bioId)
-
-      // Extract Name
+      // 2. Extract Name
       const rawName =
+        row.NAME ??
         row.Name ??
         row.name ??
         row['Employee Name'] ??
@@ -750,8 +777,9 @@ export const employeeRepository = {
 
       const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
 
-      // Extract Group
+      // 3. Extract Group
       const rawGroup =
+        row.GROUP ??
         row.Group ??
         row.group ??
         row['Work Group'] ??
@@ -763,50 +791,179 @@ export const employeeRepository = {
 
       const cleanGroupStr = rawGroup !== undefined && rawGroup !== null ? String(rawGroup).trim() : ''
 
-      let matchedWg = cleanGroupStr ? await workGroupRepository.findMatchingGroup(cleanGroupStr) : undefined
+      // 4. Extract Department
+      const rawDept =
+        row.DEPARTMENT ??
+        row.Department ??
+        row.department ??
+        row.Dept ??
+        row.dept ??
+        row.DEPT
 
-      if (cleanGroupStr && !matchedWg) {
-        unknownGroups.push({
-          bioId,
-          name: cleanName || `User ${bioId}`,
-          rawGroup: cleanGroupStr,
-          rowNumber: rowNum
+      const cleanDept = rawDept !== undefined && rawDept !== null ? String(rawDept).trim() : ''
+
+      // Validate Bio ID existence
+      if (rawId === undefined || rawId === null || String(rawId).trim() === '') {
+        const item: PeopleImportRowItem = {
+          rowNumber: rowNum,
+          id: '-',
+          name: cleanName || 'Unknown',
+          group: cleanGroupStr || '-',
+          department: cleanDept || '-',
+          action: 'SKIP',
+          status: 'Invalid: Missing ID / Bio ID',
+          isWarning: false,
+          isError: true,
+          errorReason: 'Missing ID / Bio ID'
+        }
+        allRows.push(item)
+        invalidRows.push({
+          rowNumber: rowNum,
+          reason: 'Missing ID / Bio ID',
+          raw: row
         })
+        invalidCount++
+        skippedCount++
+        errorsCount++
+        continue
+      }
+
+      const bioId = String(rawId).trim()
+
+      // Guard against duplicate Bio IDs in the same import file
+      if (seenBioIdsInImport.has(bioId)) {
+        const item: PeopleImportRowItem = {
+          rowNumber: rowNum,
+          id: bioId,
+          name: cleanName || `User ${bioId}`,
+          group: cleanGroupStr || '-',
+          department: cleanDept || '-',
+          action: 'SKIP',
+          status: `Duplicate Bio ID "${bioId}" in import file`,
+          isWarning: true,
+          isError: true,
+          errorReason: `Duplicate Bio ID "${bioId}" in import file`
+        }
+        allRows.push(item)
+        invalidRows.push({
+          rowNumber: rowNum,
+          reason: `Duplicate Bio ID "${bioId}" in import file`,
+          raw: row
+        })
+        invalidCount++
+        skippedCount++
+        errorsCount++
+        continue
+      }
+      seenBioIdsInImport.add(bioId)
+
+      // Resolve Work Group if provided
+      let matchedWg: WorkGroup | undefined = undefined
+      let hasUnknownGroup = false
+
+      if (cleanGroupStr) {
+        matchedWg = await workGroupRepository.findMatchingGroup(cleanGroupStr)
+        if (!matchedWg) {
+          hasUnknownGroup = true
+          unknownGroupsCount++
+          warningsCount++
+          unknownGroups.push({
+            bioId,
+            name: cleanName || `User ${bioId}`,
+            rawGroup: cleanGroupStr,
+            rowNumber: rowNum
+          })
+        }
       }
 
       const existingRecord = employeeCache!.get(bioId)
 
       if (existingRecord) {
+        // CASE A: Existing Employee Match
         const existingWg = workGroups.find(w => w.id === (existingRecord.workGroupId || 'wg-group-c'))
+        
+        // Rules: If blank, do NOT erase existing values
         const targetName = cleanName !== '' ? cleanName : existingRecord.fullName
+        const targetDept = cleanDept !== '' ? cleanDept : (existingRecord.department || 'Operations')
         const targetWgId = matchedWg ? matchedWg.id : (existingRecord.workGroupId || 'wg-group-c')
         const targetWg = workGroups.find(w => w.id === targetWgId) || existingWg || defaultGroup
 
         const isNameUpdated = cleanName !== '' && cleanName !== existingRecord.fullName
+        const isDeptUpdated = cleanDept !== '' && cleanDept !== (existingRecord.department || '')
         const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
+        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated
 
         const targetRecord: EmployeeRecord = {
           ...existingRecord,
           fullName: targetName,
+          department: targetDept,
           workGroupId: targetWgId,
           updatedAt: new Date().toISOString()
         }
 
-        matchedUpdated.push({
-          bioId,
-          existingName: existingRecord.fullName,
-          newName: targetName,
-          existingGroup: existingWg?.name || existingRecord.workGroupId,
-          newGroup: targetWg?.name || targetWgId,
-          isNameUpdated,
-          isGroupUpdated,
-          targetRecord
-        })
+        if (hasChanges) {
+          updatedCount++
+          recordsToApplyMap.set(bioId, targetRecord)
 
-        recordsToApplyMap.set(bioId, targetRecord)
+          const changeNotes: string[] = []
+          if (isNameUpdated) changeNotes.push('Name')
+          if (isDeptUpdated) changeNotes.push('Dept')
+          if (isGroupUpdated) changeNotes.push('Group')
+
+          let statusText = changeNotes.length > 0 ? `${changeNotes.join(' & ')} will be updated` : 'Will update record'
+          if (hasUnknownGroup) {
+            statusText += ` (Warning: Unknown group "${cleanGroupStr}" - retained current group)`
+          }
+
+          const rowItem: PeopleImportRowItem = {
+            rowNumber: rowNum,
+            id: bioId,
+            name: targetName,
+            group: cleanGroupStr || '',
+            department: targetDept,
+            action: 'UPDATE',
+            status: statusText,
+            isWarning: hasUnknownGroup,
+            isError: false,
+            warningReason: hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - kept current group` : undefined,
+            targetRecord
+          }
+          allRows.push(rowItem)
+
+          matchedUpdated.push({
+            bioId,
+            existingName: existingRecord.fullName,
+            newName: targetName,
+            existingGroup: existingWg?.name || existingRecord.workGroupId,
+            newGroup: targetWg.name,
+            existingDept: existingRecord.department || '',
+            newDept: targetDept,
+            isNameUpdated,
+            isGroupUpdated,
+            isDeptUpdated,
+            targetRecord
+          })
+        } else {
+          unchangedCount++
+          const rowItem: PeopleImportRowItem = {
+            rowNumber: rowNum,
+            id: bioId,
+            name: existingRecord.fullName,
+            group: cleanGroupStr || '',
+            department: existingRecord.department || 'Operations',
+            action: 'UNCHANGED',
+            status: hasUnknownGroup ? `No changes (Warning: Unknown group "${cleanGroupStr}")` : 'No changes',
+            isWarning: hasUnknownGroup,
+            isError: false,
+            warningReason: hasUnknownGroup ? `Unknown Group "${cleanGroupStr}"` : undefined
+          }
+          allRows.push(rowItem)
+        }
       } else {
-        // New Employee
+        // CASE B: New Employee Record
+        newCount++
         const targetName = cleanName !== '' ? cleanName : `User ${bioId}`
+        const targetDept = cleanDept !== '' ? cleanDept : 'Operations'
         const targetWg = matchedWg || defaultGroup
         const targetWgId = targetWg.id
 
@@ -816,46 +973,86 @@ export const employeeRepository = {
           fullName: targetName,
           location: 'DBB CEBU',
           workGroupId: targetWgId,
-          department: 'Operations',
+          department: targetDept,
           position: 'Staff',
           status: 'active',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
 
+        recordsToApplyMap.set(bioId, targetRecord)
+
+        let statusText = 'New employee'
+        if (hasUnknownGroup) {
+          statusText += ` (Warning: Unknown group "${cleanGroupStr}" - assigned ${defaultGroup.name})`
+        }
+
+        const rowItem: PeopleImportRowItem = {
+          rowNumber: rowNum,
+          id: bioId,
+          name: targetName,
+          group: cleanGroupStr || '',
+          department: targetDept,
+          action: 'CREATE',
+          status: statusText,
+          isWarning: hasUnknownGroup,
+          isError: false,
+          warningReason: hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - assigned ${defaultGroup.name}` : undefined,
+          targetRecord
+        }
+        allRows.push(rowItem)
+
         newPeople.push({
           bioId,
           name: targetName,
           group: targetWg.name,
+          department: targetDept,
           location: 'DBB CEBU',
           targetRecord
         })
-
-        recordsToApplyMap.set(bioId, targetRecord)
       }
     }
 
     return {
       totalRows: rows.length,
-      matchedUpdatedCount: matchedUpdated.length,
-      newPeopleCount: newPeople.length,
-      unknownGroupsCount: unknownGroups.length,
-      invalidCount: invalidRows.length,
+      updatedCount,
+      newCount,
+      unchangedCount,
+      unknownGroupsCount,
+      invalidCount,
+      skippedCount,
+      warningsCount,
+      errorsCount,
+      allRows,
+      recordsToApply: Array.from(recordsToApplyMap.values()),
+      // Compatibility fields
+      matchedUpdatedCount: updatedCount,
+      newPeopleCount: newCount,
       matchedUpdated,
       newPeople,
       unknownGroups,
-      invalidRows,
-      recordsToApply: Array.from(recordsToApplyMap.values())
+      invalidRows
     }
   },
 
   /**
    * Applies validated import changes directly to IndexedDB
    */
-  async applyBulkEmployeeImport(records: EmployeeRecord[]): Promise<{ updatedCount: number; createdCount: number; totalProcessed: number }> {
+  async applyBulkEmployeeImport(
+    records: EmployeeRecord[],
+    preview?: PeopleImportPreviewResult
+  ): Promise<PeopleImportApplyResult> {
     await ensureInitialized()
     if (!records || records.length === 0) {
-      return { updatedCount: 0, createdCount: 0, totalProcessed: 0 }
+      return {
+        updatedCount: 0,
+        createdCount: 0,
+        unchangedCount: preview?.unchangedCount || 0,
+        skippedCount: preview?.skippedCount || 0,
+        warningsCount: preview?.warningsCount || 0,
+        errorsCount: preview?.errorsCount || 0,
+        totalProcessed: 0
+      }
     }
 
     let createdCount = 0
@@ -874,8 +1071,12 @@ export const employeeRepository = {
     this.notifyChange()
 
     return {
-      updatedCount,
-      createdCount,
+      updatedCount: preview ? preview.updatedCount : updatedCount,
+      createdCount: preview ? preview.newCount : createdCount,
+      unchangedCount: preview ? preview.unchangedCount : 0,
+      skippedCount: preview ? preview.skippedCount : 0,
+      warningsCount: preview ? preview.warningsCount : 0,
+      errorsCount: preview ? preview.errorsCount : 0,
       totalProcessed: records.length
     }
   },
@@ -887,13 +1088,12 @@ export const employeeRepository = {
     const employees = await this.getEmployees()
     return employees.map(emp => ({
       'ID': emp.biometric_user_id,
-      'Name': emp.full_name,
-      'Group': emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C'),
-      'Group Name': emp.work_group_name || 'Group C',
-      'Location': emp.location,
-      'Department': emp.department || 'Operations',
-      'Position': emp.position || 'Staff',
-      'Status': emp.status === 'active' ? 'Active' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive')
+      'NAME': emp.full_name,
+      'GROUP': emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C'),
+      'DEPARTMENT': emp.department || 'Operations',
+      'LOCATION': emp.location,
+      'POSITION': emp.position || 'Staff',
+      'STATUS': emp.status === 'active' ? 'Active' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive')
     }))
   },
 

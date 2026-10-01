@@ -19,7 +19,13 @@ import {
   RefreshCw
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
-import { employeeService, VALID_LOCATIONS, type PeopleImportPreviewResult } from '@/services/employees'
+import {
+  employeeService,
+  VALID_LOCATIONS,
+  type PeopleImportPreviewResult,
+  type PeopleImportRowItem,
+  type PeopleImportApplyResult
+} from '@/services/employees'
 import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -65,9 +71,40 @@ const importFileName = ref('')
 const isParsingExcel = ref(false)
 const isApplyingImport = ref(false)
 const importPreview = ref<PeopleImportPreviewResult | null>(null)
-const activePreviewTab = ref<'matched' | 'new' | 'unknown' | 'invalid'>('matched')
-const importResultSuccess = ref<{ updated: number; created: number; total: number } | null>(null)
+const activePreviewTab = ref<'all' | 'update' | 'create' | 'unchanged' | 'unknown' | 'invalid'>('all')
+const previewSearch = ref('')
+const importResultSuccess = ref<PeopleImportApplyResult | null>(null)
 const importError = ref<string>('')
+
+const filteredPreviewRows = computed<PeopleImportRowItem[]>(() => {
+  if (!importPreview.value) return []
+  let list = importPreview.value.allRows
+
+  if (activePreviewTab.value === 'update') {
+    list = list.filter(r => r.action === 'UPDATE')
+  } else if (activePreviewTab.value === 'create') {
+    list = list.filter(r => r.action === 'CREATE')
+  } else if (activePreviewTab.value === 'unchanged') {
+    list = list.filter(r => r.action === 'UNCHANGED')
+  } else if (activePreviewTab.value === 'unknown') {
+    list = list.filter(r => r.isWarning)
+  } else if (activePreviewTab.value === 'invalid') {
+    list = list.filter(r => r.action === 'SKIP' || r.isError)
+  }
+
+  if (previewSearch.value.trim()) {
+    const q = previewSearch.value.trim().toLowerCase()
+    list = list.filter(r =>
+      r.id.toLowerCase().includes(q) ||
+      r.name.toLowerCase().includes(q) ||
+      r.group.toLowerCase().includes(q) ||
+      r.department.toLowerCase().includes(q) ||
+      r.status.toLowerCase().includes(q)
+    )
+  }
+
+  return list
+})
 
 async function loadLookups() {
   workGroups.value = await employeeService.getWorkGroups()
@@ -205,17 +242,8 @@ async function handleFileSelect(event: Event) {
       // Generate full preview and validation
       const preview = await employeeService.previewImportFromExcel(jsonData)
       importPreview.value = preview
-
-      // Set default preview tab
-      if (preview.matchedUpdatedCount > 0) {
-        activePreviewTab.value = 'matched'
-      } else if (preview.newPeopleCount > 0) {
-        activePreviewTab.value = 'new'
-      } else if (preview.unknownGroupsCount > 0) {
-        activePreviewTab.value = 'unknown'
-      } else {
-        activePreviewTab.value = 'invalid'
-      }
+      activePreviewTab.value = 'all'
+      previewSearch.value = ''
 
       showImportModal.value = true
     } catch (err: any) {
@@ -241,11 +269,7 @@ async function executeImportChanges() {
 
   try {
     const result = await employeeService.applyImport(importPreview.value)
-    importResultSuccess.value = {
-      updated: result.updatedCount,
-      created: result.createdCount,
-      total: result.totalProcessed
-    }
+    importResultSuccess.value = result
 
     await loadEmployees()
 
@@ -334,7 +358,7 @@ onUnmounted(() => {
           @click="triggerFileInput"
         >
           <Upload :class="['size-3.5', isParsingExcel ? 'animate-spin' : '']" />
-          <span class="text-xs">{{ isParsingExcel ? 'Reading Excel...' : 'Import People' }}</span>
+          <span class="text-xs">{{ isParsingExcel ? 'Reading Excel...' : 'Import Employees' }}</span>
         </Button>
 
         <div class="flex items-center rounded-md border bg-card shadow-xs">
@@ -534,7 +558,7 @@ onUnmounted(() => {
           <div class="space-y-0.5">
             <div class="flex items-center gap-2">
               <FileSpreadsheet class="size-5 text-primary" />
-              <h2 class="font-bold text-base text-foreground">People Import Preview</h2>
+              <h2 class="font-bold text-base text-foreground">Import Employee Data</h2>
               <span class="text-xs font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground">
                 {{ importFileName }}
               </span>
@@ -562,7 +586,7 @@ onUnmounted(() => {
           <div class="text-xs">
             <span class="font-semibold text-sm">Import Complete!</span>
             <p class="mt-0.5">
-              Successfully updated <strong>{{ importResultSuccess.updated }}</strong> existing profiles and created <strong>{{ importResultSuccess.created }}</strong> new employees.
+              Successfully updated <strong>{{ importResultSuccess.updatedCount }}</strong> existing profiles and created <strong>{{ importResultSuccess.createdCount }}</strong> new employees.
             </p>
           </div>
         </div>
@@ -577,227 +601,207 @@ onUnmounted(() => {
         </div>
 
         <!-- Summary KPI Counter Cards -->
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 p-4 border-b bg-card">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-4 border-b bg-card">
           <div class="rounded-lg border p-2.5 bg-muted/20">
             <div class="text-[11px] text-muted-foreground font-medium">Total Rows</div>
             <div class="text-lg font-bold font-mono text-foreground">{{ importPreview.totalRows }}</div>
           </div>
           <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
-            <div class="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">Matched / Updated</div>
+            <div class="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-tight">Existing to Update</div>
             <div class="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-              {{ importPreview.matchedUpdatedCount }}
+              {{ importPreview.updatedCount }}
             </div>
           </div>
           <div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-2.5">
-            <div class="text-[11px] text-blue-700 dark:text-blue-400 font-medium">New People</div>
+            <div class="text-[11px] text-blue-700 dark:text-blue-400 font-medium leading-tight">New Employees</div>
             <div class="text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
-              {{ importPreview.newPeopleCount }}
+              {{ importPreview.newCount }}
+            </div>
+          </div>
+          <div class="rounded-lg border p-2.5 bg-muted/20">
+            <div class="text-[11px] text-muted-foreground font-medium">Unchanged</div>
+            <div class="text-lg font-bold font-mono text-foreground">
+              {{ importPreview.unchangedCount }}
             </div>
           </div>
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
-            <div class="text-[11px] text-amber-700 dark:text-amber-400 font-medium">Unknown Groups</div>
+            <div class="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-tight">Unknown Groups</div>
             <div class="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
               {{ importPreview.unknownGroupsCount }}
             </div>
           </div>
           <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5">
-            <div class="text-[11px] text-destructive font-medium">Invalid Rows</div>
+            <div class="text-[11px] text-destructive font-medium leading-tight">Invalid Rows</div>
             <div class="text-lg font-bold font-mono text-destructive">
               {{ importPreview.invalidCount }}
             </div>
           </div>
         </div>
 
-        <!-- Preview Tabs Header -->
-        <div class="flex items-center gap-1 px-4 border-b bg-muted/20 overflow-x-auto text-xs">
-          <button
-            type="button"
-            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
-            :class="activePreviewTab === 'matched' ? 'border-primary text-primary font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
-            @click="activePreviewTab = 'matched'"
-          >
-            <span>Matched / Updated</span>
-            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{{ importPreview.matchedUpdatedCount }}</Badge>
-          </button>
-          <button
-            type="button"
-            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
-            :class="activePreviewTab === 'new' ? 'border-primary text-primary font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
-            @click="activePreviewTab = 'new'"
-          >
-            <span>New People</span>
-            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{{ importPreview.newPeopleCount }}</Badge>
-          </button>
-          <button
-            type="button"
-            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
-            :class="activePreviewTab === 'unknown' ? 'border-amber-500 text-amber-600 font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
-            @click="activePreviewTab = 'unknown'"
-          >
-            <span>Unknown Groups</span>
-            <Badge
-              :variant="importPreview.unknownGroupsCount > 0 ? 'warning' : 'secondary'"
-              class="text-[10px] px-1.5 py-0"
-            >
-              {{ importPreview.unknownGroupsCount }}
-            </Badge>
-          </button>
-          <button
-            type="button"
-            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
-            :class="activePreviewTab === 'invalid' ? 'border-destructive text-destructive font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
-            @click="activePreviewTab = 'invalid'"
-          >
-            <span>Invalid Rows</span>
-            <Badge
-              :variant="importPreview.invalidCount > 0 ? 'destructive' : 'secondary'"
-              class="text-[10px] px-1.5 py-0"
-            >
-              {{ importPreview.invalidCount }}
-            </Badge>
-          </button>
+        <!-- Warning notice if unknown groups -->
+        <div
+          v-if="importPreview.unknownGroupsCount > 0"
+          class="px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2"
+        >
+          <AlertTriangle class="size-4 shrink-0 text-amber-600" />
+          <span>
+            <strong>{{ importPreview.unknownGroupsCount }} row(s)</strong> have Work Groups not registered in Settings. Existing employees keep their current group; new employees use the default group.
+          </span>
         </div>
 
-        <!-- Preview Tab Content Area (Scrollable) -->
-        <div class="flex-1 overflow-y-auto p-4 min-h-[220px]">
-          <!-- TAB 1: Matched / Updated -->
-          <div v-if="activePreviewTab === 'matched'" class="space-y-3">
-            <div v-if="importPreview.matchedUpdated.length === 0" class="text-center py-8 text-xs text-muted-foreground">
-              No existing employee matches found in this spreadsheet.
-            </div>
-            <div v-else class="rounded-lg border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow class="bg-muted/40 text-xs">
-                    <TableHead class="w-[90px] font-semibold">Bio ID</TableHead>
-                    <TableHead class="font-semibold">Current Name</TableHead>
-                    <TableHead class="font-semibold">New Name (Excel)</TableHead>
-                    <TableHead class="font-semibold">Current Group</TableHead>
-                    <TableHead class="font-semibold">New Work Group</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-for="row in importPreview.matchedUpdated.slice(0, 100)" :key="row.bioId" class="text-xs">
-                    <TableCell class="font-mono font-medium">{{ row.bioId }}</TableCell>
-                    <TableCell class="text-muted-foreground">{{ row.existingName }}</TableCell>
-                    <TableCell class="font-medium text-foreground">
-                      <span v-if="row.isNameUpdated" class="text-emerald-600 font-semibold flex items-center gap-1">
-                        {{ row.newName }}
-                      </span>
-                      <span v-else class="text-muted-foreground italic">Unchanged</span>
-                    </TableCell>
-                    <TableCell class="text-muted-foreground">{{ row.existingGroup }}</TableCell>
-                    <TableCell>
-                      <span v-if="row.isGroupUpdated" class="text-emerald-600 font-semibold">
-                        {{ row.newGroup }}
-                      </span>
-                      <span v-else class="text-muted-foreground italic">Unchanged</span>
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-            <p v-if="importPreview.matchedUpdated.length > 100" class="text-[11px] text-muted-foreground text-center">
-              Showing first 100 of {{ importPreview.matchedUpdated.length }} matched records.
-            </p>
+        <!-- Filter & Search Toolbar -->
+        <div class="p-3 border-b bg-muted/20 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+          <div class="flex items-center gap-1 overflow-x-auto text-xs pb-1 sm:pb-0">
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'all' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'all'"
+            >
+              <span>All</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'all' ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted text-muted-foreground'">{{ importPreview.totalRows }}</span>
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'update' ? 'bg-emerald-600 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'update'"
+            >
+              <span>Update</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'update' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.updatedCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'create' ? 'bg-blue-600 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'create'"
+            >
+              <span>Create</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'create' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.newCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'unchanged' ? 'bg-slate-700 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'unchanged'"
+            >
+              <span>Unchanged</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'unchanged' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.unchangedCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'unknown' ? 'bg-amber-600 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'unknown'"
+            >
+              <span>Unknown Groups</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'unknown' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.unknownGroupsCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'invalid' ? 'bg-destructive text-destructive-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'invalid'"
+            >
+              <span>Invalid</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'invalid' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.invalidCount }}</span>
+            </button>
           </div>
 
-          <!-- TAB 2: New People -->
-          <div v-if="activePreviewTab === 'new'" class="space-y-3">
-            <div v-if="importPreview.newPeople.length === 0" class="text-center py-8 text-xs text-muted-foreground">
-              No new employee Bio IDs in this spreadsheet.
-            </div>
-            <div v-else class="rounded-lg border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow class="bg-muted/40 text-xs">
-                    <TableHead class="w-[90px] font-semibold">New Bio ID</TableHead>
-                    <TableHead class="font-semibold">Name</TableHead>
-                    <TableHead class="font-semibold">Assigned Work Group</TableHead>
-                    <TableHead class="font-semibold">Location</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-for="row in importPreview.newPeople.slice(0, 100)" :key="row.bioId" class="text-xs">
-                    <TableCell class="font-mono font-semibold text-blue-600">{{ row.bioId }}</TableCell>
-                    <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" class="font-mono text-[10px]">
-                        {{ row.group }}
-                      </Badge>
-                    </TableCell>
-                    <TableCell class="text-muted-foreground">{{ row.location }}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-            <p v-if="importPreview.newPeople.length > 100" class="text-[11px] text-muted-foreground text-center">
-              Showing first 100 of {{ importPreview.newPeople.length }} new employee records.
-            </p>
+          <div class="relative w-full sm:w-56 shrink-0">
+            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            <Input
+              v-model="previewSearch"
+              placeholder="Search ID, Name, Dept..."
+              class="h-8 pl-8 text-xs w-full bg-card"
+            />
           </div>
+        </div>
 
-          <!-- TAB 3: Unknown Groups Warnings -->
-          <div v-if="activePreviewTab === 'unknown'" class="space-y-3">
-            <div v-if="importPreview.unknownGroups.length === 0" class="text-center py-8 text-xs text-muted-foreground">
-              <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5" />
-              All Excel groups matched existing Work Group settings.
-            </div>
-            <div v-else class="space-y-2">
-              <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-start gap-2">
-                <AlertTriangle class="size-4 shrink-0 mt-0.5 text-amber-600" />
-                <div>
-                  <strong>Work Group Warning:</strong> The following rows contain group codes that do not exist in Settings. They will retain their existing group (or default to Group C) until you create the Work Group in Settings.
-                </div>
-              </div>
-
-              <div class="rounded-lg border overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow class="bg-muted/40 text-xs">
-                      <TableHead class="w-[70px] font-semibold">Row</TableHead>
-                      <TableHead class="w-[90px] font-semibold">Bio ID</TableHead>
-                      <TableHead class="font-semibold">Employee Name</TableHead>
-                      <TableHead class="font-semibold text-amber-600">Unknown Group in Excel</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow v-for="row in importPreview.unknownGroups" :key="row.rowNumber" class="text-xs">
-                      <TableCell class="font-mono text-muted-foreground">Row {{ row.rowNumber }}</TableCell>
-                      <TableCell class="font-mono font-medium">{{ row.bioId }}</TableCell>
-                      <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
-                      <TableCell class="font-mono font-bold text-amber-600 dark:text-amber-400">
-                        "{{ row.rawGroup }}"
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
+        <!-- Unified Table Area (Scrollable) -->
+        <div class="flex-1 overflow-y-auto min-h-[300px] max-h-[50vh]">
+          <div v-if="filteredPreviewRows.length === 0" class="text-center py-12 text-xs text-muted-foreground">
+            No rows match the selected filter.
           </div>
-
-          <!-- TAB 4: Invalid Rows -->
-          <div v-if="activePreviewTab === 'invalid'" class="space-y-3">
-            <div v-if="importPreview.invalidRows.length === 0" class="text-center py-8 text-xs text-muted-foreground">
-              <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5" />
-              No invalid rows detected.
-            </div>
-            <div v-else class="rounded-lg border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow class="bg-muted/40 text-xs">
-                    <TableHead class="w-[80px] font-semibold">Row</TableHead>
-                    <TableHead class="font-semibold text-destructive">Validation Issue</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-for="row in importPreview.invalidRows" :key="row.rowNumber" class="text-xs">
-                    <TableCell class="font-mono font-semibold text-muted-foreground">Row {{ row.rowNumber }}</TableCell>
-                    <TableCell class="text-destructive font-medium">{{ row.reason }}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-          </div>
+          <Table v-else>
+            <TableHeader class="sticky top-0 bg-muted/80 backdrop-blur-xs z-10 shadow-xs">
+              <TableRow class="text-xs">
+                <TableHead class="w-[90px] font-semibold">ID</TableHead>
+                <TableHead class="font-semibold">Name</TableHead>
+                <TableHead class="w-[120px] font-semibold">Group</TableHead>
+                <TableHead class="w-[140px] font-semibold">Department</TableHead>
+                <TableHead class="w-[100px] font-semibold">Action</TableHead>
+                <TableHead class="font-semibold">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="row in filteredPreviewRows" :key="row.rowNumber" class="text-xs hover:bg-muted/30">
+                <TableCell class="font-mono font-medium text-foreground">
+                  {{ row.id }}
+                </TableCell>
+                <TableCell class="font-medium text-foreground">
+                  {{ row.name }}
+                </TableCell>
+                <TableCell>
+                  <span v-if="row.group" class="font-mono text-xs">
+                    {{ row.group }}
+                  </span>
+                  <span v-else class="text-muted-foreground italic text-[11px]">—</span>
+                </TableCell>
+                <TableCell>
+                  <span v-if="row.department" class="text-foreground font-medium text-xs">
+                    {{ row.department }}
+                  </span>
+                  <span v-else class="text-muted-foreground italic text-[11px]">—</span>
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    v-if="row.action === 'UPDATE'"
+                    class="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] px-2 py-0.5 font-semibold"
+                  >
+                    Update
+                  </Badge>
+                  <Badge
+                    v-else-if="row.action === 'CREATE'"
+                    class="bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30 text-[10px] px-2 py-0.5 font-semibold"
+                  >
+                    Create
+                  </Badge>
+                  <Badge
+                    v-else-if="row.action === 'UNCHANGED'"
+                    variant="secondary"
+                    class="text-[10px] px-2 py-0.5 text-muted-foreground"
+                  >
+                    Unchanged
+                  </Badge>
+                  <Badge
+                    v-else
+                    variant="destructive"
+                    class="text-[10px] px-2 py-0.5"
+                  >
+                    Skip
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div class="flex items-center gap-1.5">
+                    <AlertTriangle v-if="row.isWarning" class="size-3.5 text-amber-500 shrink-0" />
+                    <AlertCircle v-else-if="row.isError" class="size-3.5 text-destructive shrink-0" />
+                    <span
+                      :class="[
+                        row.isError
+                          ? 'text-destructive font-medium'
+                          : row.isWarning
+                            ? 'text-amber-700 dark:text-amber-300'
+                            : 'text-muted-foreground'
+                      ]"
+                    >
+                      {{ row.status }}
+                    </span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
         </div>
 
         <!-- Dialog Footer Actions -->

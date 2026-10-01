@@ -30,6 +30,7 @@ export const DEFAULT_ATTENDANCE_CONFIG: AttendanceEngineConfig = {
 export interface EmployeeScheduleContext {
   bioId: string
   name: string
+  department?: string
   location: string
   workGroupId?: string
   workGroupName?: string
@@ -52,6 +53,7 @@ export interface DailyAttendanceRecord {
   id: string
   biometric_user_id: string
   employee_name: string
+  department?: string
   location: string
   work_group_id: string
   work_group_name: string
@@ -417,6 +419,7 @@ export function processEmployeeDayPunches(
     id: `daily-${bioId}-${selectedDate}`,
     biometric_user_id: bioId,
     employee_name: employeeName,
+    department: employeeContext?.department || '',
     location: employeeLocation,
     work_group_id: workGroupId,
     work_group_name: workGroupName,
