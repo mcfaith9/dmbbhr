@@ -115,7 +115,7 @@ const navSections: NavItem[] = [
     title: "Administration",
     icon: Settings,
     children: [
-      { title: "UsersRound", url: "/users", description: "Admin and HR user accounts" },
+      { title: "Accounts", url: "/users", description: "Manage user accounts, roles, and access" },
       { title: "Settings", url: "/settings", description: "System & branch preferences" },
     ],
   },
