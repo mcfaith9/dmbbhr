@@ -675,7 +675,7 @@ onMounted(() => {
               <DialogTitle class="text-base sm:text-lg flex items-center gap-2 font-bold text-foreground flex-wrap">
                 <CalendarDays class="size-5 text-primary" />
                 <span>{{ selectedDayFormatted }}</span>
-                <Badge v-if="selectedDayHoliday" variant="destructive" class="text-[11px] font-normal">
+                <Badge v-if="selectedDayHoliday" variant="destructive" class="text-[11px] font-normal text-white">
                   {{ selectedDayHoliday.name }} ({{ selectedDayHoliday.type }})
                 </Badge>
                 <Badge v-else-if="selectedDayIsWeekend" variant="secondary" class="text-[11px] font-normal">
@@ -779,6 +779,15 @@ onMounted(() => {
               </div>
             </div>
 
+            <div class="relative w-full sm:w-[200px]">
+              <Search class="absolute left-2.5 top-2 size-3 text-muted-foreground" />
+              <Input
+                v-model="dialogSearch"
+                placeholder="Search name or BIO ID"
+                class="h-7 text-xs pl-7"
+              />
+            </div>
+
             <!-- Toolbar & Filter Pills in Dialog -->
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
               <div class="flex items-center gap-1.5 flex-wrap text-xs">
@@ -855,16 +864,7 @@ onMounted(() => {
                 >
                   Single Punch ({{ dialogStats.singlePunch + dialogStats.awaitingOut }})
                 </button>
-              </div>
-
-              <div class="relative w-full sm:w-[190px]">
-                <Search class="absolute left-2.5 top-2 size-3 text-muted-foreground" />
-                <Input
-                  v-model="dialogSearch"
-                  placeholder="Search name or ID..."
-                  class="h-7 text-xs pl-7"
-                />
-              </div>
+              </div>              
             </div>
 
             <!-- Empty Date Banner when 0 punches recorded -->

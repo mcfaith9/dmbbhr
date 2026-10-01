@@ -479,7 +479,7 @@ onUnmounted(() => {
       <Table>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="w-[110px] font-semibold">Bio ID (Permanent)</TableHead>
+            <TableHead class="w-[110px] font-semibold">BIO ID</TableHead>
             <TableHead class="font-semibold">Employee Name</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
             <TableHead class="font-semibold">Work Group</TableHead>

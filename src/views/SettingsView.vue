@@ -427,6 +427,64 @@ onMounted(() => {
       </div>
 
       <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-3">
+        <div class="flex items-center justify-between font-semibold text-sm text-foreground">
+          <div class="flex items-center gap-2">
+            <Server class="size-4 text-primary" />
+            <span>Biometric Hardware Listener</span>
+          </div>
+          <Badge
+            variant="outline"
+            class="text-[10px] uppercase font-mono"
+          >
+            Not Configured
+          </Badge>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2.5 rounded bg-muted/40 border">
+            <span class="text-muted-foreground">Target Device:</span>
+            <div class="font-mono font-medium text-foreground">BIO 2</div>
+          </div>
+          <div class="p-2.5 rounded bg-muted/40 border">
+            <span class="text-muted-foreground">Socket Target IP & Port:</span>
+            <div class="font-mono font-medium text-foreground">192.168.x.x : 4370 (TCP/IP)</div>
+          </div>
+          <div class="p-2.5 rounded bg-muted/40 border">
+            <span class="text-muted-foreground">Local Dev Socket Bridge:</span>
+            <div class="font-mono font-medium text-foreground">ws://localhost:5174</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-3">
+        <div class="flex items-center justify-between font-semibold text-sm text-foreground">
+          <div class="flex items-center gap-2">
+            <Server class="size-4 text-primary" />
+            <span>Biometric Hardware Listener</span>
+          </div>
+          <Badge
+            variant="outline"
+            class="text-[10px] uppercase font-mono"
+          >
+            Not Configured
+          </Badge>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="p-2.5 rounded bg-muted/40 border">
+            <span class="text-muted-foreground">Target Device:</span>
+            <div class="font-mono font-medium text-foreground">BIO 3</div>
+          </div>
+          <div class="p-2.5 rounded bg-muted/40 border">
+            <span class="text-muted-foreground">Socket Target IP & Port:</span>
+            <div class="font-mono font-medium text-foreground">192.168.x.x : 4370 (TCP/IP)</div>
+          </div>
+          <div class="p-2.5 rounded bg-muted/40 border">
+            <span class="text-muted-foreground">Local Dev Socket Bridge:</span>
+            <div class="font-mono font-medium text-foreground">ws://localhost:5174</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-3">
         <div class="flex items-center gap-2 font-semibold text-sm text-foreground">
           <Database class="size-4 text-primary" />
           <span>Backend Target & Timezone</span>

@@ -63,10 +63,17 @@ const breadcrumbs = computed(() => {
 
           <div class="flex items-center gap-3">
             <!-- Active Location Indicator -->
+            <!-- BIONETRIC 3 -->
             <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs">
-              <span class="size-2 rounded-full bg-emerald-500" />
-              <span class="font-medium text-foreground">DBB Cebu</span>
-              <span class="text-muted-foreground text-[10px]">(Active Branch)</span>
+              <span class="size-2 rounded-full bg-gray-500" />
+              <span class="font-medium text-xs text-foreground">N/Config</span>
+              <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">192.168.x.x:4370</span>
+            </div>
+            <!-- BIONETRIC 2 -->
+            <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs">
+              <span class="size-2 rounded-full bg-gray-500" />
+              <span class="font-medium text-xs text-foreground">N/Config</span>
+              <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">192.168.x.x:4370</span>
             </div>
             <!-- Live Biometric Hardware Status (Single Source of Truth) -->
             <router-link
@@ -99,7 +106,7 @@ const breadcrumbs = computed(() => {
                 {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting' : 'Offline') }}
               </span>
               <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">
-                {{ deviceStatus.ip }}:{{ deviceStatus.port }}
+                BISMAC B-29b
               </span>
             </router-link>
           </div>
