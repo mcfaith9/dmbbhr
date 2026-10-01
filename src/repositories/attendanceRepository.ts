@@ -94,8 +94,12 @@ export const attendanceRepository = {
       }
     }
 
-    // 4. Sort alphabetically by employee name
-    records.sort((a, b) => a.employee_name.localeCompare(b.employee_name))
+    // 4. Default sorting: Newest fingerprint / latest attendance time first (descending)
+    records.sort((a, b) => {
+      const timeDiff = (b.latest_punch_time_ms || 0) - (a.latest_punch_time_ms || 0)
+      if (timeDiff !== 0) return timeDiff
+      return a.employee_name.localeCompare(b.employee_name)
+    })
 
     // 5. Update cached Daily Summary asynchronously for high-speed Calendar retrieval
     this.updateDailySummaryCache(selectedDate, records).catch(() => {})

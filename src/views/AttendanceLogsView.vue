@@ -458,10 +458,6 @@ onUnmounted(() => {
           <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
           <span class="text-xs">{{ isSyncing ? 'Syncing...' : 'Sync Device' }}</span>
         </Button>
-        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadData">
-          <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
-          <span class="text-xs">Reload</span>
-        </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="showImportModal = true">
           <Upload class="size-3.5" />
           <span class="text-xs">Import Biometric (Excel)</span>

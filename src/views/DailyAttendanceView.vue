@@ -11,7 +11,8 @@ import {
   Search,
   X,
   MapPin,
-  Layers
+  Layers,
+  ArrowDownUp
 } from '@lucide/vue'
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
@@ -40,6 +41,7 @@ const todayDateStr = getManilaDateString(new Date())
 const selectedDate = ref<string>(todayDateStr)
 const selectedLocation = ref<string>('all')
 const selectedWorkGroup = ref<string>('all')
+const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
 const searchQuery = ref<string>('')
 const loading = ref<boolean>(false)
 const dailyRecords = ref<DailyAttendanceRecord[]>([])
@@ -85,13 +87,34 @@ function setDateQuick(range: 'today' | 'yesterday') {
 
 const filteredRecords = computed(() => {
   let list = dailyRecords.value
-  if (!searchQuery.value.trim()) return list
-  const q = searchQuery.value.trim().toLowerCase()
-  return list.filter(r =>
-    r.biometric_user_id.toLowerCase().includes(q) ||
-    r.employee_name.toLowerCase().includes(q) ||
-    (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
-  )
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.trim().toLowerCase()
+    list = list.filter(r =>
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      r.employee_name.toLowerCase().includes(q) ||
+      (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
+    )
+  }
+
+  const sorted = [...list]
+  if (selectedSort.value === 'newest') {
+    sorted.sort((a, b) => {
+      const diff = (b.latest_punch_time_ms || 0) - (a.latest_punch_time_ms || 0)
+      if (diff !== 0) return diff
+      return a.employee_name.localeCompare(b.employee_name)
+    })
+  } else if (selectedSort.value === 'earliest') {
+    sorted.sort((a, b) => {
+      const diff = (a.first_punch_time_ms || 0) - (b.first_punch_time_ms || 0)
+      if (diff !== 0) return diff
+      return a.employee_name.localeCompare(b.employee_name)
+    })
+  } else if (selectedSort.value === 'name') {
+    sorted.sort((a, b) => a.employee_name.localeCompare(b.employee_name))
+  } else if (selectedSort.value === 'late') {
+    sorted.sort((a, b) => b.late_minutes - a.late_minutes)
+  }
+  return sorted
 })
 
 const stats = computed(() => {
@@ -184,10 +207,6 @@ onUnmounted(() => {
         >
           <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
           <span class="text-xs">{{ isSyncing ? 'Syncing...' : 'Sync Attendance' }}</span>
-        </Button>
-        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadDailyAttendance">
-          <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
-          <span class="text-xs">Reload Date</span>
         </Button>
       </div>
     </div>
@@ -305,8 +324,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Search, Location, and Work Group Filters with Shadcn Select -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-2 items-center">
+    <!-- Search, Location, Work Group, and Sort By Filters with Shadcn Select -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 items-center">
       <div class="relative sm:col-span-2">
         <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
         <Input
@@ -345,6 +364,26 @@ onUnmounted(() => {
               <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
                 {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
               </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <!-- Sort By Filter (Default: Newest Fingerprint First) -->
+      <div>
+        <Select v-model="selectedSort">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
+            <div class="flex items-center gap-1.5 truncate">
+              <ArrowDownUp class="size-3 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="Sort: Latest Punch" />
+            </div>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="newest">Latest Punch First (Default)</SelectItem>
+              <SelectItem value="earliest">Earliest Punch First</SelectItem>
+              <SelectItem value="name">Employee Name (A-Z)</SelectItem>
+              <SelectItem value="late">Most Late First</SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>

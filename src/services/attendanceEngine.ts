@@ -77,6 +77,9 @@ export interface DailyAttendanceRecord {
   punches_summary: string
   has_valid_out: boolean
   is_awaiting_out: boolean
+  first_punch_time_ms: number
+  latest_punch_time_ms: number
+  latest_punch_time: string
   raw_punches: AttendanceLog[]
   valid_punches: AttendanceLog[]
 }
@@ -399,6 +402,10 @@ export function processEmployeeDayPunches(
     statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
   }
 
+  const lastValidPunch = validPunches[validCount - 1] || firstPunch
+  const latestPunchMs = new Date(lastValidPunch.attendance_time).getTime()
+  const latestPunchTimeStr = formatManilaTime(lastValidPunch.attendance_time)
+
   const formattedDisplayDate = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Manila',
     month: 'short',
@@ -435,6 +442,9 @@ export function processEmployeeDayPunches(
     punches_summary: punchesSummary,
     has_valid_out: hasValidOut,
     is_awaiting_out: isAwaitingOut,
+    first_punch_time_ms: firstPunchMs,
+    latest_punch_time_ms: latestPunchMs,
+    latest_punch_time: latestPunchTimeStr,
     raw_punches: sortedLogs,
     valid_punches: validPunches
   }
