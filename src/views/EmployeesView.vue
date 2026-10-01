@@ -334,7 +334,7 @@ onUnmounted(() => {
           @click="triggerFileInput"
         >
           <Upload :class="['size-3.5', isParsingExcel ? 'animate-spin' : '']" />
-          <span class="text-xs">{{ isParsingExcel ? 'Reading Excel...' : 'Import People (Excel)' }}</span>
+          <span class="text-xs">{{ isParsingExcel ? 'Reading Excel...' : 'Import People' }}</span>
         </Button>
 
         <div class="flex items-center rounded-md border bg-card shadow-xs">
@@ -344,8 +344,8 @@ onUnmounted(() => {
             class="h-8 px-2.5 text-xs rounded-r-none border-r"
             @click="exportPeople('xlsx')"
           >
-            <Download class="size-3.5 mr-1.5" />
-            Export Excel
+            <Download class="size-3.5" />
+            Excel
           </Button>
           <Button
             variant="ghost"
@@ -353,6 +353,7 @@ onUnmounted(() => {
             class="h-8 px-2.5 text-xs rounded-l-none"
             @click="exportPeople('csv')"
           >
+            <Download class="size-3.5" />
             CSV
           </Button>
         </div>

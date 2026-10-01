@@ -3,11 +3,11 @@ import type { SidebarProps } from '@/components/ui/sidebar'
 import {
   LayoutDashboard,
   Clock,
-  Users,
+  UsersRound,
   Fingerprint,
   CalendarDays,
   WalletCards,
-  FileSpreadsheet,
+  ChartPie,
   Settings,
 } from "@lucide/vue"
 import { h, ref, computed } from "vue"
@@ -75,7 +75,7 @@ const navSections: NavItem[] = [
     id: "employees",
     title: "Employees",
     url: "/employees",
-    icon: Users,
+    icon: UsersRound,
   },
   {
     id: "devices",
@@ -108,14 +108,14 @@ const navSections: NavItem[] = [
     id: "reports",
     title: "Reports",
     url: "/reports",
-    icon: FileSpreadsheet,
+    icon: ChartPie,
   },
   {
     id: "administration",
     title: "Administration",
     icon: Settings,
     children: [
-      { title: "Users", url: "/users", description: "Admin and HR user accounts" },
+      { title: "UsersRound", url: "/users", description: "Admin and HR user accounts" },
       { title: "Settings", url: "/settings", description: "System & branch preferences" },
     ],
   },
@@ -294,7 +294,7 @@ function isPathActive(url: string): boolean {
               to="/employees"
               class="flex items-center gap-2 rounded-md p-2 hover:bg-muted text-foreground transition-colors"
             >
-              <Users class="size-3.5 text-muted-foreground" />
+              <UsersRound class="size-3.5 text-muted-foreground" />
               <span>Employee Directory</span>
             </router-link>
           </div>

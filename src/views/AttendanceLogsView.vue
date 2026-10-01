@@ -460,14 +460,15 @@ onUnmounted(() => {
         </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="showImportModal = true">
           <Upload class="size-3.5" />
-          <span class="text-xs">Import Biometric (Excel)</span>
+          <span class="text-xs">Import Biometric</span>
         </Button>
         <div class="flex items-center rounded-md border bg-card">
           <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-r-none border-r" @click="exportLogs('xlsx')">
-            <Download class="size-3.5 mr-1.5" />
+            <Download class="size-3.5" />
             Excel
           </Button>
           <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-l-none" @click="exportLogs('csv')">
+            <Download class="size-3.5" />
             CSV
           </Button>
         </div>
