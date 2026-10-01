@@ -96,7 +96,7 @@ const breadcrumbs = computed(() => {
                 />
               </span>
               <span class="font-medium text-xs">
-                ● {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting' : 'Offline') }}
+                {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting' : 'Offline') }}
               </span>
               <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">
                 {{ deviceStatus.ip }}:{{ deviceStatus.port }}
