@@ -512,6 +512,109 @@ export interface PeopleImportApplyResult {
   totalProcessed: number
 }
 
+/**
+ * Serialization Boundary Helper:
+ * Ensures the given employee object is converted into a strictly plain, serializable,
+ * structured-clone-safe EmployeeRecord before any IndexedDB / Dexie operations.
+ *
+ * Strips Vue reactive proxies, functions, prototype links, non-cloneable symbols,
+ * DateValue instances, and DOM/component refs.
+ */
+export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
+  if (!input || typeof input !== 'object') {
+    throw new Error('Invalid employee input: expected an object record.')
+  }
+
+  // Extract raw Bio ID (must be a valid non-empty string)
+  const rawBioId = input.bioId ?? input.biometric_user_id ?? input.id ?? input.ID
+  const cleanBioId = String(rawBioId !== undefined && rawBioId !== null ? rawBioId : '').trim()
+  if (!cleanBioId || cleanBioId === '-' || cleanBioId === 'undefined' || cleanBioId === 'null') {
+    throw new Error('Missing or invalid permanent Bio ID.')
+  }
+
+  // Extract Name (string only)
+  const rawName = input.fullName ?? input.full_name ?? input.name ?? input.NAME
+  const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : `User ${cleanBioId}`
+
+  // Extract Work Group ID (primitive string only)
+  let cleanWgId = 'wg-group-c'
+  if (input.workGroupId && typeof input.workGroupId === 'object') {
+    cleanWgId = String(input.workGroupId.id || 'wg-group-c').trim()
+  } else if (input.workGroupId !== undefined && input.workGroupId !== null && String(input.workGroupId).trim() !== '') {
+    cleanWgId = String(input.workGroupId).trim()
+  } else if (input.work_group_id !== undefined && input.work_group_id !== null && String(input.work_group_id).trim() !== '') {
+    cleanWgId = String(input.work_group_id).trim()
+  }
+
+  // Extract Department (primitive string only)
+  const rawDept = input.department ?? input.DEPARTMENT ?? input.dept ?? input.DEPT
+  const cleanDept = rawDept !== undefined && rawDept !== null ? String(rawDept).trim() : 'Operations'
+
+  // Extract Location (primitive string only)
+  const rawLoc = input.location ?? input.LOCATION
+  let cleanLoc: EmployeeLocation = 'DBB CEBU'
+  if (rawLoc && typeof rawLoc === 'string') {
+    const trimmedLoc = rawLoc.trim()
+    if (VALID_LOCATIONS.includes(trimmedLoc as EmployeeLocation)) {
+      cleanLoc = trimmedLoc as EmployeeLocation
+    }
+  }
+
+  // Extract Position (primitive string only)
+  const rawPos = input.position ?? input.POSITION
+  const cleanPos = rawPos !== undefined && rawPos !== null ? String(rawPos).trim() : 'Staff'
+
+  // Extract Status (primitive string only)
+  const rawStatus = input.status
+  let cleanStatus: 'active' | 'inactive' | 'on_leave' = 'active'
+  if (rawStatus === 'inactive' || rawStatus === 'on_leave') {
+    cleanStatus = rawStatus
+  }
+
+  // Extract Employee Number (primitive string only)
+  const rawEmpNum = input.employeeNumber ?? input.employee_number
+  const cleanEmpNum = rawEmpNum !== undefined && rawEmpNum !== null && String(rawEmpNum).trim() !== ''
+    ? String(rawEmpNum).trim()
+    : `EMP-${cleanBioId}`
+
+  // Extract Created / Updated Dates (primitive ISO strings only)
+  let cleanCreatedAt = new Date().toISOString()
+  if (typeof input.createdAt === 'string' && input.createdAt) {
+    cleanCreatedAt = input.createdAt
+  } else if (typeof input.created_at === 'string' && input.created_at) {
+    cleanCreatedAt = input.created_at
+  }
+
+  const cleanUpdatedAt = new Date().toISOString()
+
+  // Construct a fresh, strictly plain object literal (Object.prototype, no Vue proxies, no functions)
+  const plainRecord: EmployeeRecord = {
+    bioId: cleanBioId,
+    employeeNumber: cleanEmpNum,
+    fullName: cleanName || `User ${cleanBioId}`,
+    location: cleanLoc,
+    workGroupId: cleanWgId,
+    department: cleanDept || 'Operations',
+    position: cleanPos || 'Staff',
+    status: cleanStatus,
+    createdAt: cleanCreatedAt,
+    updatedAt: cleanUpdatedAt
+  }
+
+  // Pre-validate structured-clone safety
+  if (typeof structuredClone === 'function') {
+    try {
+      structuredClone(plainRecord)
+    } catch (cloneErr: any) {
+      throw new Error(
+        `Employee record serialization validation failed for Bio ID "${cleanBioId}" (${cleanName}): ${cloneErr.message}`
+      )
+    }
+  }
+
+  return plainRecord
+}
+
 export const employeeRepository = {
   async toEmployee(rec: EmployeeRecord): Promise<Employee> {
     const wg = await workGroupRepository.getById(rec.workGroupId || 'wg-group-c')
@@ -598,32 +701,20 @@ export const employeeRepository = {
   ): Promise<Employee> {
     await ensureInitialized()
     const cleanBioId = String(bioId).trim()
-    let record = employeeCache!.get(cleanBioId)
+    const existing = employeeCache!.get(cleanBioId)
 
-    if (!record) {
-      record = {
-        bioId: cleanBioId,
-        employeeNumber: `EMP-${cleanBioId}`,
-        fullName: updates.fullName.trim() || `User ${cleanBioId}`,
-        location: updates.location || 'DBB CEBU',
-        workGroupId: updates.workGroupId || 'wg-group-c',
-        department: updates.department?.trim() || 'Operations',
-        position: updates.position?.trim() || 'Staff',
-        status: 'active',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    } else {
-      record = {
-        ...record,
-        fullName: updates.fullName.trim() || record.fullName,
-        location: updates.location || record.location,
-        workGroupId: updates.workGroupId || record.workGroupId || 'wg-group-c',
-        department: updates.department !== undefined ? updates.department.trim() : record.department,
-        position: updates.position !== undefined ? updates.position.trim() : record.position,
-        updatedAt: new Date().toISOString()
-      }
-    }
+    const record = toPersistableEmployeeRecord({
+      bioId: cleanBioId,
+      employeeNumber: existing?.employeeNumber || `EMP-${cleanBioId}`,
+      fullName: updates.fullName.trim() || existing?.fullName || `User ${cleanBioId}`,
+      location: updates.location || existing?.location || 'DBB CEBU',
+      workGroupId: updates.workGroupId || existing?.workGroupId || 'wg-group-c',
+      department: updates.department !== undefined ? updates.department.trim() : (existing?.department || 'Operations'),
+      position: updates.position !== undefined ? updates.position.trim() : (existing?.position || 'Staff'),
+      status: existing?.status || 'active',
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    })
 
     await db.employees.put(record)
     employeeCache!.set(cleanBioId, record)
@@ -643,10 +734,10 @@ export const employeeRepository = {
   ): Promise<EmployeeRecord> {
     await ensureInitialized()
     const cleanBioId = String(bioId).trim()
-    let record = employeeCache!.get(cleanBioId)
+    const existing = employeeCache!.get(cleanBioId)
 
-    if (!record) {
-      record = {
+    if (!existing) {
+      const record = toPersistableEmployeeRecord({
         bioId: cleanBioId,
         employeeNumber: `EMP-${cleanBioId}`,
         fullName: name && name.trim() ? name.trim() : `User ${cleanBioId}`,
@@ -657,19 +748,24 @@ export const employeeRepository = {
         status: 'active',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      }
+      })
       await db.employees.put(record)
       employeeCache!.set(cleanBioId, record)
       this.notifyChange()
-    } else if (name && name.trim() && record.fullName.startsWith('User ')) {
-      record.fullName = name.trim()
-      record.updatedAt = new Date().toISOString()
+      return record
+    } else if (name && name.trim() && existing.fullName.startsWith('User ')) {
+      const record = toPersistableEmployeeRecord({
+        ...existing,
+        fullName: name.trim(),
+        updatedAt: new Date().toISOString()
+      })
       await db.employees.put(record)
       employeeCache!.set(cleanBioId, record)
       this.notifyChange()
+      return record
     }
 
-    return record
+    return existing
   },
 
   /**
@@ -683,10 +779,10 @@ export const employeeRepository = {
 
     for (const emp of employees) {
       const cleanBioId = String(emp.bioId).trim()
-      let existing = employeeCache!.get(cleanBioId)
+      const existing = employeeCache!.get(cleanBioId)
 
       if (!existing) {
-        const newRec: EmployeeRecord = {
+        const newRec = toPersistableEmployeeRecord({
           bioId: cleanBioId,
           employeeNumber: `EMP-${cleanBioId}`,
           fullName: emp.name && emp.name.trim() ? emp.name.trim() : `User ${cleanBioId}`,
@@ -697,14 +793,17 @@ export const employeeRepository = {
           status: 'active',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
-        }
+        })
         recordsToPut.push(newRec)
         employeeCache!.set(cleanBioId, newRec)
       } else if (emp.name && emp.name.trim() && existing.fullName.startsWith('User ')) {
-        existing.fullName = emp.name.trim()
-        existing.updatedAt = new Date().toISOString()
-        recordsToPut.push(existing)
-        employeeCache!.set(cleanBioId, existing)
+        const updatedRec = toPersistableEmployeeRecord({
+          ...existing,
+          fullName: emp.name.trim(),
+          updatedAt: new Date().toISOString()
+        })
+        recordsToPut.push(updatedRec)
+        employeeCache!.set(cleanBioId, updatedRec)
       }
     }
 
@@ -893,13 +992,18 @@ export const employeeRepository = {
         const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
         const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated
 
-        const targetRecord: EmployeeRecord = {
-          ...existingRecord,
+        const targetRecord = toPersistableEmployeeRecord({
+          bioId: existingRecord.bioId,
+          employeeNumber: existingRecord.employeeNumber,
           fullName: targetName,
-          department: targetDept,
+          location: existingRecord.location,
           workGroupId: targetWgId,
+          department: targetDept,
+          position: existingRecord.position,
+          status: existingRecord.status,
+          createdAt: existingRecord.createdAt,
           updatedAt: new Date().toISOString()
-        }
+        })
 
         if (hasChanges) {
           updatedCount++
@@ -967,7 +1071,7 @@ export const employeeRepository = {
         const targetWg = matchedWg || defaultGroup
         const targetWgId = targetWg.id
 
-        const targetRecord: EmployeeRecord = {
+        const targetRecord = toPersistableEmployeeRecord({
           bioId,
           employeeNumber: `EMP-${bioId}`,
           fullName: targetName,
@@ -978,7 +1082,7 @@ export const employeeRepository = {
           status: 'active',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
-        }
+        })
 
         recordsToApplyMap.set(bioId, targetRecord)
 
@@ -1055,10 +1159,42 @@ export const employeeRepository = {
       }
     }
 
+    // Step 1: Explicit Serialization Boundary
+    // Guarantee that every record is converted to a plain, structured-clone-safe object
+    const sanitizedRecords: EmployeeRecord[] = []
+    for (let i = 0; i < records.length; i++) {
+      const rec = records[i]
+      try {
+        const plainRec = toPersistableEmployeeRecord(rec)
+        sanitizedRecords.push(plainRec)
+      } catch (err: any) {
+        throw new Error(
+          `Failed to serialize employee at row ${i + 1}:\nBio ID: ${rec?.bioId ?? 'unknown'}\nName: ${rec?.fullName ?? (rec as any)?.name ?? 'unknown'}\nIssue: ${err.message}`
+        )
+      }
+    }
+
+    // Step 2: Persist into IndexedDB with diagnostic itemized verification if put fails
+    try {
+      await db.employees.bulkPut(sanitizedRecords)
+    } catch (bulkError: any) {
+      for (const rec of sanitizedRecords) {
+        try {
+          await db.employees.put(rec)
+        } catch (singleErr: any) {
+          throw new Error(
+            `Failed to save employee:\nBio ID: ${rec.bioId}\nName: ${rec.fullName}\nField details: Dept=${rec.department}, Group=${rec.workGroupId}\nUnderlying error: ${singleErr.message || singleErr}`
+          )
+        }
+      }
+      throw bulkError
+    }
+
+    // Step 3: Update local memory cache with the sanitized plain records
     let createdCount = 0
     let updatedCount = 0
 
-    for (const rec of records) {
+    for (const rec of sanitizedRecords) {
       if (employeeCache!.has(rec.bioId)) {
         updatedCount++
       } else {
@@ -1067,7 +1203,6 @@ export const employeeRepository = {
       employeeCache!.set(rec.bioId, rec)
     }
 
-    await db.employees.bulkPut(records)
     this.notifyChange()
 
     return {
@@ -1077,7 +1212,7 @@ export const employeeRepository = {
       skippedCount: preview ? preview.skippedCount : 0,
       warningsCount: preview ? preview.warningsCount : 0,
       errorsCount: preview ? preview.errorsCount : 0,
-      totalProcessed: records.length
+      totalProcessed: sanitizedRecords.length
     }
   },
 

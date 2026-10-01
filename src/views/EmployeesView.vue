@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, toRaw } from 'vue'
 import {
   Search,
   Fingerprint,
@@ -268,7 +268,12 @@ async function executeImportChanges() {
   importError.value = ''
 
   try {
-    const result = await employeeService.applyImport(importPreview.value)
+    const rawPreview = toRaw(importPreview.value)
+    const rawRecords = toRaw(rawPreview.recordsToApply).map(r => toRaw(r))
+    const result = await employeeService.applyImport({
+      ...rawPreview,
+      recordsToApply: rawRecords
+    })
     importResultSuccess.value = result
 
     await loadEmployees()
