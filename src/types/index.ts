@@ -29,7 +29,8 @@ export type EmployeeLocation = 'DMBB CEBU' | 'DBB CEBU' | 'DBB NEGROS' | 'DBB IL
 
 export interface WorkGroup {
   id: string // e.g. "wg-group-a", "wg-group-b", "wg-group-c"
-  name: string // "GROUP A", "GROUP B", "GROUP C"
+  name: string // "Group A", "Group B", "Group C"
+  code: string // "A", "B", "C" (unique short code)
   standard_in: string // "06:00", "07:00", "08:00" (24h format HH:mm)
   required_work_minutes: number // 480 (8 hours)
   lunch_start: string // "12:00"
@@ -50,6 +51,7 @@ export interface Employee {
   location: EmployeeLocation
   work_group_id: string // References WorkGroup.id
   work_group_name?: string
+  work_group_code?: string
   first_name?: string
   last_name?: string
   middle_name?: string

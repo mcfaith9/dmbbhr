@@ -142,6 +142,270 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     status: 'active',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50041',
+    employeeNumber: 'EMP-50041',
+    fullName: 'E Cantila, Eduardo Jr.',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50058',
+    employeeNumber: 'EMP-50058',
+    fullName: 'E Cuizon, Mark Lester',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50036',
+    employeeNumber: 'EMP-50036',
+    fullName: 'E Rosal, Joven',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50049',
+    employeeNumber: 'EMP-50049',
+    fullName: 'G Villacarlos, Jonathan',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '5009',
+    employeeNumber: 'EMP-5009',
+    fullName: 'K Pasana, Dothy Marie',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50064',
+    employeeNumber: 'EMP-50064',
+    fullName: 'L Rosal, Jayson',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50054',
+    employeeNumber: 'EMP-50054',
+    fullName: 'L Tangente, Ryan',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50063',
+    employeeNumber: 'EMP-50063',
+    fullName: 'M Baydal, Reynald',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50066',
+    employeeNumber: 'EMP-50066',
+    fullName: 'M Dunque, Glenn',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50050',
+    employeeNumber: 'EMP-50050',
+    fullName: 'N Fernandez, Ronie',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50056',
+    employeeNumber: 'EMP-50056',
+    fullName: 'O Baydal, Reneboy',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50038',
+    employeeNumber: 'EMP-50038',
+    fullName: 'P Rosal, Junjie',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50067',
+    employeeNumber: 'EMP-50067',
+    fullName: 'R Labalan, Dennis',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50035',
+    employeeNumber: 'EMP-50035',
+    fullName: 'R Rosales, Larry',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50051',
+    employeeNumber: 'EMP-50051',
+    fullName: 'R Rosell, Ricky',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50070',
+    employeeNumber: 'EMP-50070',
+    fullName: 'R Valiente, Ronnie',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50045',
+    employeeNumber: 'EMP-50045',
+    fullName: 'S Dela Cruz, Ronil',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50037',
+    employeeNumber: 'EMP-50037',
+    fullName: 'S Rosal, Jessie',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50069',
+    employeeNumber: 'EMP-50069',
+    fullName: 'T Rosal, Ronilo',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50055',
+    employeeNumber: 'EMP-50055',
+    fullName: 'T Velasquez, Mark',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50068',
+    employeeNumber: 'EMP-50068',
+    fullName: 'V Rosal, Alvin',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50048',
+    employeeNumber: 'EMP-50048',
+    fullName: 'Y Fernandez, Jonathan',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   }
 ]
 
@@ -166,6 +430,51 @@ async function ensureInitialized() {
   }
 }
 
+export interface PeopleImportMatchedRow {
+  bioId: string
+  existingName: string
+  newName: string
+  existingGroup: string
+  newGroup: string
+  isNameUpdated: boolean
+  isGroupUpdated: boolean
+  targetRecord: EmployeeRecord
+}
+
+export interface PeopleImportNewRow {
+  bioId: string
+  name: string
+  group: string
+  location: EmployeeLocation
+  targetRecord: EmployeeRecord
+}
+
+export interface PeopleImportUnknownGroupRow {
+  bioId: string
+  name: string
+  rawGroup: string
+  rowNumber: number
+}
+
+export interface PeopleImportInvalidRow {
+  rowNumber: number
+  reason: string
+  raw: any
+}
+
+export interface PeopleImportPreviewResult {
+  totalRows: number
+  matchedUpdatedCount: number
+  newPeopleCount: number
+  unknownGroupsCount: number
+  invalidCount: number
+  matchedUpdated: PeopleImportMatchedRow[]
+  newPeople: PeopleImportNewRow[]
+  unknownGroups: PeopleImportUnknownGroupRow[]
+  invalidRows: PeopleImportInvalidRow[]
+  recordsToApply: EmployeeRecord[]
+}
+
 export const employeeRepository = {
   async toEmployee(rec: EmployeeRecord): Promise<Employee> {
     const wg = await workGroupRepository.getById(rec.workGroupId || 'wg-group-c')
@@ -176,7 +485,8 @@ export const employeeRepository = {
       full_name: rec.fullName,
       location: rec.location,
       work_group_id: rec.workGroupId || 'wg-group-c',
-      work_group_name: wg?.name || 'GROUP C',
+      work_group_name: wg?.name || 'Group C',
+      work_group_code: wg?.code || 'C',
       department: rec.department,
       position: rec.position,
       status: rec.status,
@@ -326,7 +636,7 @@ export const employeeRepository = {
   },
 
   /**
-   * Bulk register employees
+   * Bulk register or update employees discovered during punch imports
    */
   async bulkRegisterEmployees(
     employees: { bioId: string; name: string; location?: EmployeeLocation; workGroupId?: string }[]
@@ -365,6 +675,226 @@ export const employeeRepository = {
       await db.employees.bulkPut(recordsToPut)
       this.notifyChange()
     }
+  },
+
+  /**
+   * Generates a full preview and validation for bulk importing employee names & groups from Excel.
+   *
+   * Rules:
+   * - Excel ID maps to permanent Bio ID.
+   * - Bio ID cannot be duplicated.
+   * - If Bio ID exists: updates Name (if provided) and Work Group (if matched).
+   * - If Bio ID does not exist: creates new employee with Bio ID, Name, and Work Group.
+   * - Does NOT erase existing fields if Excel value is blank.
+   * - Group matches case-insensitively against Work Group Code ("A") or Name ("Group A").
+   * - Unknown groups flagged in preview warnings.
+   */
+  async previewImportEmployeesFromExcel(rows: any[]): Promise<PeopleImportPreviewResult> {
+    await ensureInitialized()
+    const workGroups = await workGroupRepository.getAll()
+    const defaultGroup = await workGroupRepository.getDefault()
+
+    const matchedUpdated: PeopleImportMatchedRow[] = []
+    const newPeople: PeopleImportNewRow[] = []
+    const unknownGroups: PeopleImportUnknownGroupRow[] = []
+    const invalidRows: PeopleImportInvalidRow[] = []
+    const recordsToApplyMap = new Map<string, EmployeeRecord>()
+
+    const seenBioIdsInImport = new Set<string>()
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      const rowNum = i + 1
+
+      // Extract ID (Bio ID)
+      const rawId =
+        row.ID ??
+        row.id ??
+        row['Bio ID'] ??
+        row['BioId'] ??
+        row['User ID'] ??
+        row['UserId'] ??
+        row['user_id'] ??
+        row['ID/Bio ID']
+
+      if (rawId === undefined || rawId === null || String(rawId).trim() === '') {
+        invalidRows.push({
+          rowNumber: rowNum,
+          reason: 'Missing ID / Bio ID',
+          raw: row
+        })
+        continue
+      }
+
+      const bioId = String(rawId).trim()
+
+      // Guard against duplicate rows in the same Excel file
+      if (seenBioIdsInImport.has(bioId)) {
+        invalidRows.push({
+          rowNumber: rowNum,
+          reason: `Duplicate Bio ID "${bioId}" in import file`,
+          raw: row
+        })
+        continue
+      }
+      seenBioIdsInImport.add(bioId)
+
+      // Extract Name
+      const rawName =
+        row.Name ??
+        row.name ??
+        row['Employee Name'] ??
+        row['employee_name'] ??
+        row['Full Name'] ??
+        row.fullName
+
+      const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
+
+      // Extract Group
+      const rawGroup =
+        row.Group ??
+        row.group ??
+        row['Work Group'] ??
+        row['WorkGroup'] ??
+        row['Group Code'] ??
+        row['Group Name'] ??
+        row.workGroupId ??
+        row.work_group
+
+      const cleanGroupStr = rawGroup !== undefined && rawGroup !== null ? String(rawGroup).trim() : ''
+
+      let matchedWg = cleanGroupStr ? await workGroupRepository.findMatchingGroup(cleanGroupStr) : undefined
+
+      if (cleanGroupStr && !matchedWg) {
+        unknownGroups.push({
+          bioId,
+          name: cleanName || `User ${bioId}`,
+          rawGroup: cleanGroupStr,
+          rowNumber: rowNum
+        })
+      }
+
+      const existingRecord = employeeCache!.get(bioId)
+
+      if (existingRecord) {
+        const existingWg = workGroups.find(w => w.id === (existingRecord.workGroupId || 'wg-group-c'))
+        const targetName = cleanName !== '' ? cleanName : existingRecord.fullName
+        const targetWgId = matchedWg ? matchedWg.id : (existingRecord.workGroupId || 'wg-group-c')
+        const targetWg = workGroups.find(w => w.id === targetWgId) || existingWg || defaultGroup
+
+        const isNameUpdated = cleanName !== '' && cleanName !== existingRecord.fullName
+        const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
+
+        const targetRecord: EmployeeRecord = {
+          ...existingRecord,
+          fullName: targetName,
+          workGroupId: targetWgId,
+          updatedAt: new Date().toISOString()
+        }
+
+        matchedUpdated.push({
+          bioId,
+          existingName: existingRecord.fullName,
+          newName: targetName,
+          existingGroup: existingWg?.name || existingRecord.workGroupId,
+          newGroup: targetWg?.name || targetWgId,
+          isNameUpdated,
+          isGroupUpdated,
+          targetRecord
+        })
+
+        recordsToApplyMap.set(bioId, targetRecord)
+      } else {
+        // New Employee
+        const targetName = cleanName !== '' ? cleanName : `User ${bioId}`
+        const targetWg = matchedWg || defaultGroup
+        const targetWgId = targetWg.id
+
+        const targetRecord: EmployeeRecord = {
+          bioId,
+          employeeNumber: `EMP-${bioId}`,
+          fullName: targetName,
+          location: 'DBB CEBU',
+          workGroupId: targetWgId,
+          department: 'Operations',
+          position: 'Staff',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+
+        newPeople.push({
+          bioId,
+          name: targetName,
+          group: targetWg.name,
+          location: 'DBB CEBU',
+          targetRecord
+        })
+
+        recordsToApplyMap.set(bioId, targetRecord)
+      }
+    }
+
+    return {
+      totalRows: rows.length,
+      matchedUpdatedCount: matchedUpdated.length,
+      newPeopleCount: newPeople.length,
+      unknownGroupsCount: unknownGroups.length,
+      invalidCount: invalidRows.length,
+      matchedUpdated,
+      newPeople,
+      unknownGroups,
+      invalidRows,
+      recordsToApply: Array.from(recordsToApplyMap.values())
+    }
+  },
+
+  /**
+   * Applies validated import changes directly to IndexedDB
+   */
+  async applyBulkEmployeeImport(records: EmployeeRecord[]): Promise<{ updatedCount: number; createdCount: number; totalProcessed: number }> {
+    await ensureInitialized()
+    if (!records || records.length === 0) {
+      return { updatedCount: 0, createdCount: 0, totalProcessed: 0 }
+    }
+
+    let createdCount = 0
+    let updatedCount = 0
+
+    for (const rec of records) {
+      if (employeeCache!.has(rec.bioId)) {
+        updatedCount++
+      } else {
+        createdCount++
+      }
+      employeeCache!.set(rec.bioId, rec)
+    }
+
+    await db.employees.bulkPut(records)
+    this.notifyChange()
+
+    return {
+      updatedCount,
+      createdCount,
+      totalProcessed: records.length
+    }
+  },
+
+  /**
+   * Generates formatted data for Excel/CSV export of People Directory
+   */
+  async getAllForExport(): Promise<any[]> {
+    const employees = await this.getEmployees()
+    return employees.map(emp => ({
+      'ID': emp.biometric_user_id,
+      'Name': emp.full_name,
+      'Group': emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C'),
+      'Group Name': emp.work_group_name || 'Group C',
+      'Location': emp.location,
+      'Department': emp.department || 'Operations',
+      'Position': emp.position || 'Staff',
+      'Status': emp.status === 'active' ? 'Active' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive')
+    }))
   },
 
   onChange(cb: () => void): () => void {

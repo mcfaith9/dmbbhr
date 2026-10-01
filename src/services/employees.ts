@@ -1,18 +1,24 @@
 /**
- * Master Employee Directory Service
+ * Master Employee Directory & Work Group Service
  *
  * Implements:
  * - Bio ID (biometric_user_id) as permanent, immutable identifier
+ * - Bulk Excel import of Employee names and Work Groups with full interactive preview
  * - Editable Employee Name, Location, and Work Group
- * - Persistent storage in IndexedDB (survives browser refresh and dev restarts)
- * - Work Group integration (GROUP A: 6am-3pm, GROUP B: 7am-4pm, GROUP C: 8am-5pm)
+ * - Full canonical Work Group management (Add/Edit/Delete with deletion protection)
+ * - Persistent storage in IndexedDB
  */
 
-import type { Employee, EmployeeLocation } from '@/types'
-import { employeeRepository, VALID_LOCATIONS } from '@/repositories/employeeRepository'
+import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
+import {
+  employeeRepository,
+  VALID_LOCATIONS,
+  type PeopleImportPreviewResult
+} from '@/repositories/employeeRepository'
 import { workGroupRepository } from '@/repositories/workGroupRepository'
 
 export { VALID_LOCATIONS }
+export type { PeopleImportPreviewResult }
 
 export const employeeService = {
   /**
@@ -39,8 +45,48 @@ export const employeeService = {
   /**
    * Gets all available Work Groups
    */
-  async getWorkGroups() {
+  async getWorkGroups(): Promise<WorkGroup[]> {
     return workGroupRepository.getAll()
+  },
+
+  /**
+   * Gets single Work Group by ID
+   */
+  async getWorkGroupById(id: string): Promise<WorkGroup | undefined> {
+    return workGroupRepository.getById(id)
+  },
+
+  /**
+   * Saves or updates a Work Group with validation
+   */
+  async saveWorkGroup(data: Partial<WorkGroup> & { name: string; code: string }): Promise<WorkGroup> {
+    const wg = await workGroupRepository.saveWorkGroup(data)
+    employeeRepository.notifyChange()
+    return wg
+  },
+
+  /**
+   * Deletes a Work Group with protection against in-use groups
+   */
+  async deleteWorkGroup(id: string): Promise<void> {
+    await workGroupRepository.deleteWorkGroup(id)
+    employeeRepository.notifyChange()
+  },
+
+  /**
+   * Reassigns employees to a target group and deletes the old group
+   */
+  async reassignAndDeleteWorkGroup(fromId: string, toId: string) {
+    const res = await workGroupRepository.reassignAndDeleteWorkGroup(fromId, toId)
+    employeeRepository.notifyChange()
+    return res
+  },
+
+  /**
+   * Gets the number of employees assigned to a Work Group
+   */
+  async getAssignedEmployeeCount(workGroupId: string): Promise<number> {
+    return workGroupRepository.getAssignedEmployeeCount(workGroupId)
   },
 
   /**
@@ -58,6 +104,27 @@ export const employeeService = {
       department: updates.department,
       position: updates.position
     })
+  },
+
+  /**
+   * Generates preview and validation for bulk Excel employee import
+   */
+  async previewImportFromExcel(rows: any[]): Promise<PeopleImportPreviewResult> {
+    return employeeRepository.previewImportEmployeesFromExcel(rows)
+  },
+
+  /**
+   * Applies validated Excel import records to the database
+   */
+  async applyImport(preview: PeopleImportPreviewResult) {
+    return employeeRepository.applyBulkEmployeeImport(preview.recordsToApply)
+  },
+
+  /**
+   * Gets formatted data for People Directory Excel export
+   */
+  async getExportData(): Promise<any[]> {
+    return employeeRepository.getAllForExport()
   },
 
   /**

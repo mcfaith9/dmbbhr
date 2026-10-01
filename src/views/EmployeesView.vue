@@ -7,12 +7,19 @@ import {
   Edit2,
   X,
   CheckCircle2,
+  AlertTriangle,
+  AlertCircle,
   MapPin,
   Building,
   Save,
-  Layers
+  Layers,
+  Upload,
+  Download,
+  FileSpreadsheet,
+  RefreshCw
 } from '@lucide/vue'
-import { employeeService, VALID_LOCATIONS } from '@/services/employees'
+import * as XLSX from 'xlsx'
+import { employeeService, VALID_LOCATIONS, type PeopleImportPreviewResult } from '@/services/employees'
 import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -39,7 +46,7 @@ const selectedWorkGroup = ref<string>('all')
 const currentPage = ref(1)
 const pageSize = ref(10)
 
-// Modal state
+// Modal state for single employee edit
 const showEditModal = ref(false)
 const editBioId = ref('')
 const editName = ref('')
@@ -50,6 +57,17 @@ const editPosition = ref('')
 const editSaving = ref(false)
 const editSuccessMsg = ref('')
 const editErrorMsg = ref('')
+
+// Bulk Import State
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const showImportModal = ref(false)
+const importFileName = ref('')
+const isParsingExcel = ref(false)
+const isApplyingImport = ref(false)
+const importPreview = ref<PeopleImportPreviewResult | null>(null)
+const activePreviewTab = ref<'matched' | 'new' | 'unknown' | 'invalid'>('matched')
+const importResultSuccess = ref<{ updated: number; created: number; total: number } | null>(null)
+const importError = ref<string>('')
 
 async function loadLookups() {
   workGroups.value = await employeeService.getWorkGroups()
@@ -87,6 +105,7 @@ const filteredEmployees = computed(() => {
       e.biometric_user_id.toLowerCase().includes(q) ||
       e.employee_number.toLowerCase().includes(q) ||
       (e.work_group_name && e.work_group_name.toLowerCase().includes(q)) ||
+      (e.work_group_code && e.work_group_code.toLowerCase().includes(q)) ||
       (e.department && e.department.toLowerCase().includes(q))
     )
   }
@@ -119,12 +138,14 @@ function openEditModal(emp: Employee) {
 
 async function saveEmployee() {
   if (!editName.value.trim()) {
-    editErrorMsg.value = 'Employee Name is required.'
+    editErrorMsg.value = 'Employee Name cannot be empty.'
     return
   }
 
   editSaving.value = true
   editErrorMsg.value = ''
+  editSuccessMsg.value = ''
+
   try {
     await employeeService.updateEmployee(editBioId.value, {
       full_name: editName.value.trim(),
@@ -134,17 +155,131 @@ async function saveEmployee() {
       position: editPosition.value.trim()
     })
 
-    editSuccessMsg.value = 'Employee profile saved successfully.'
-    await loadEmployees()
-
+    editSuccessMsg.value = `Employee profile for Bio ID ${editBioId.value} updated successfully.`
     setTimeout(() => {
       showEditModal.value = false
-      editSuccessMsg.value = ''
-    }, 600)
+      loadEmployees()
+    }, 1200)
   } catch (err: any) {
     editErrorMsg.value = err.message || 'Failed to update employee.'
   } finally {
     editSaving.value = false
+  }
+}
+
+// -------------------------------------------------------------
+// Bulk Excel Import Workflow
+// -------------------------------------------------------------
+function triggerFileInput() {
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+    fileInputRef.value.click()
+  }
+}
+
+async function handleFileSelect(event: Event) {
+  const target = event.target as HTMLInputElement
+  if (!target.files || target.files.length === 0) return
+
+  const file = target.files[0]
+  importFileName.value = file.name
+  isParsingExcel.value = true
+  importError.value = ''
+  importResultSuccess.value = null
+
+  const reader = new FileReader()
+  reader.onload = async (e: any) => {
+    try {
+      const data = new Uint8Array(e.target.result)
+      const workbook = XLSX.read(data, { type: 'array' })
+      const firstSheetName = workbook.SheetNames[0]
+      const worksheet = workbook.Sheets[firstSheetName]
+      const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet)
+
+      if (jsonData.length === 0) {
+        importError.value = 'The selected Excel sheet contains no rows.'
+        isParsingExcel.value = false
+        return
+      }
+
+      // Generate full preview and validation
+      const preview = await employeeService.previewImportFromExcel(jsonData)
+      importPreview.value = preview
+
+      // Set default preview tab
+      if (preview.matchedUpdatedCount > 0) {
+        activePreviewTab.value = 'matched'
+      } else if (preview.newPeopleCount > 0) {
+        activePreviewTab.value = 'new'
+      } else if (preview.unknownGroupsCount > 0) {
+        activePreviewTab.value = 'unknown'
+      } else {
+        activePreviewTab.value = 'invalid'
+      }
+
+      showImportModal.value = true
+    } catch (err: any) {
+      importError.value = 'Failed to parse Excel file: ' + err.message
+    } finally {
+      isParsingExcel.value = false
+    }
+  }
+
+  reader.onerror = () => {
+    importError.value = 'Failed to read file.'
+    isParsingExcel.value = false
+  }
+
+  reader.readAsArrayBuffer(file)
+}
+
+async function executeImportChanges() {
+  if (!importPreview.value || importPreview.value.recordsToApply.length === 0) return
+
+  isApplyingImport.value = true
+  importError.value = ''
+
+  try {
+    const result = await employeeService.applyImport(importPreview.value)
+    importResultSuccess.value = {
+      updated: result.updatedCount,
+      created: result.createdCount,
+      total: result.totalProcessed
+    }
+
+    await loadEmployees()
+
+    setTimeout(() => {
+      showImportModal.value = false
+      importPreview.value = null
+    }, 2500)
+  } catch (err: any) {
+    importError.value = 'Error saving changes: ' + err.message
+  } finally {
+    isApplyingImport.value = false
+  }
+}
+
+// -------------------------------------------------------------
+// People Export Workflow
+// -------------------------------------------------------------
+async function exportPeople(format: 'xlsx' | 'csv') {
+  const data = await employeeService.getExportData()
+  if (data.length === 0) {
+    alert('No employee records available to export.')
+    return
+  }
+
+  const worksheet = XLSX.utils.json_to_sheet(data)
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'People_Directory')
+
+  const filename = `DMBBHR_People_Directory_${new Date().toISOString().slice(0, 10)}.${format}`
+
+  if (format === 'csv') {
+    XLSX.writeFile(workbook, filename, { bookType: 'csv' })
+  } else {
+    XLSX.writeFile(workbook, filename, { bookType: 'xlsx' })
   }
 }
 
@@ -154,6 +289,7 @@ onMounted(async () => {
   await loadLookups()
   await loadEmployees()
   unSubChange = employeeService.onEmployeesChanged(() => {
+    loadLookups()
     loadEmployees()
   })
 })
@@ -165,18 +301,61 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-4">
-    <!-- Header -->
+    <!-- Hidden File Input for Excel Import -->
+    <input
+      ref="fileInputRef"
+      type="file"
+      accept=".xlsx, .xls, .csv"
+      class="hidden"
+      @change="handleFileSelect"
+    />
+
+    <!-- Header with Action Buttons -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
         <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-          <span>Employee Directory</span>
+          <span>People Directory</span>
           <span class="text-xs px-2 py-0.5 rounded-full bg-muted font-normal text-muted-foreground font-mono">
             {{ filteredEmployees.length }} Profiles
           </span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Master employee records linked by permanent Bio ID. Editable Name, Location, and Work Group schedule.
+          Master employee records linked by permanent Bio ID. Bulk update names and Work Group schedules from Excel.
         </p>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <Button
+          variant="default"
+          size="sm"
+          class="h-8 gap-1.5 font-medium shadow-xs"
+          :disabled="isParsingExcel"
+          @click="triggerFileInput"
+        >
+          <Upload :class="['size-3.5', isParsingExcel ? 'animate-spin' : '']" />
+          <span class="text-xs">{{ isParsingExcel ? 'Reading Excel...' : 'Import People (Excel)' }}</span>
+        </Button>
+
+        <div class="flex items-center rounded-md border bg-card shadow-xs">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-8 px-2.5 text-xs rounded-r-none border-r"
+            @click="exportPeople('xlsx')"
+          >
+            <Download class="size-3.5 mr-1.5" />
+            Export Excel
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-8 px-2.5 text-xs rounded-l-none"
+            @click="exportPeople('csv')"
+          >
+            CSV
+          </Button>
+        </div>
       </div>
     </div>
 
@@ -187,8 +366,8 @@ onUnmounted(() => {
         <Input
           v-model="searchQuery"
           type="text"
-          placeholder="Search by Bio ID, name, or role..."
-          class="pl-8 h-8 text-xs"
+          placeholder="Search by Bio ID, name, or work group..."
+          class="pl-8 h-8 text-xs bg-card"
           @input="currentPage = 1"
         />
       </div>
@@ -220,7 +399,7 @@ onUnmounted(() => {
             <SelectGroup>
               <SelectItem value="all">All Work Groups</SelectItem>
               <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
-                {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
+                {{ wg.name }} (Code: {{ wg.code }})
               </SelectItem>
             </SelectGroup>
           </SelectContent>
@@ -228,26 +407,28 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Table -->
+    <!-- Master Employee Table -->
     <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="font-semibold w-[130px]">Bio ID (Permanent)</TableHead>
+            <TableHead class="w-[110px] font-semibold">Bio ID (Permanent)</TableHead>
             <TableHead class="font-semibold">Employee Name</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
             <TableHead class="font-semibold">Work Group</TableHead>
+            <TableHead class="font-semibold">Group Code</TableHead>
             <TableHead class="font-semibold">Department</TableHead>
             <TableHead class="font-semibold">Position</TableHead>
             <TableHead class="font-semibold">Status</TableHead>
-            <TableHead class="font-semibold text-right w-[90px]">Action</TableHead>
+            <TableHead class="text-right font-semibold">Actions</TableHead>
           </TableRow>
         </TableHeader>
 
         <TableBody>
           <template v-if="loading">
             <TableRow>
-              <TableCell colspan="8" class="h-32 text-center text-xs text-muted-foreground">
+              <TableCell colspan="9" class="h-32 text-center text-xs text-muted-foreground">
+                <RefreshCw class="size-4 animate-spin mx-auto mb-2 text-primary" />
                 Loading employee records...
               </TableCell>
             </TableRow>
@@ -255,12 +436,12 @@ onUnmounted(() => {
 
           <template v-else-if="filteredEmployees.length === 0">
             <TableRow>
-              <TableCell colspan="8" class="h-32 text-center text-muted-foreground">
+              <TableCell colspan="9" class="h-32 text-center text-muted-foreground">
                 <div class="flex flex-col items-center justify-center gap-1.5">
                   <Users class="size-6 text-muted-foreground/40" />
                   <span class="font-medium text-foreground text-sm">No employees found</span>
                   <p class="text-xs text-muted-foreground">
-                    Try adjusting your search query or filters.
+                    Try adjusting your search query, or click <strong>Import People (Excel)</strong> to bulk upload names.
                   </p>
                 </div>
               </TableCell>
@@ -287,10 +468,17 @@ onUnmounted(() => {
 
               <!-- Work Group Badge -->
               <TableCell class="text-xs">
-                <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40">
+                <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40 font-medium">
                   <Layers class="size-2.5 text-primary" />
-                  {{ emp.work_group_name || 'GROUP C' }}
+                  {{ emp.work_group_name || 'Group C' }}
                 </Badge>
+              </TableCell>
+
+              <!-- Work Group Code -->
+              <TableCell class="text-xs font-mono font-bold text-foreground">
+                <span class="px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 text-[11px]">
+                  {{ emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C') }}
+                </span>
               </TableCell>
 
               <TableCell class="text-xs text-muted-foreground">
@@ -332,10 +520,322 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Edit Employee Modal -->
+    <!-- ============================================================= -->
+    <!-- BULK EXCEL IMPORT PREVIEW DIALOG -->
+    <!-- ============================================================= -->
+    <div
+      v-if="showImportModal && importPreview"
+      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+    >
+      <div class="bg-card text-card-foreground border rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+        <!-- Dialog Header -->
+        <div class="p-4 border-b bg-muted/30 flex items-center justify-between">
+          <div class="space-y-0.5">
+            <div class="flex items-center gap-2">
+              <FileSpreadsheet class="size-5 text-primary" />
+              <h2 class="font-bold text-base text-foreground">People Import Preview</h2>
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                {{ importFileName }}
+              </span>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Review how Excel IDs match to permanent Bio IDs and canonical Work Groups before applying changes.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="text-muted-foreground hover:text-foreground rounded p-1"
+            :disabled="isApplyingImport"
+            @click="showImportModal = false"
+          >
+            <X class="size-4" />
+          </button>
+        </div>
+
+        <!-- Success notification if completed -->
+        <div
+          v-if="importResultSuccess"
+          class="p-4 m-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 flex items-center gap-3 animate-in fade-in duration-200"
+        >
+          <CheckCircle2 class="size-5 text-emerald-600 shrink-0" />
+          <div class="text-xs">
+            <span class="font-semibold text-sm">Import Complete!</span>
+            <p class="mt-0.5">
+              Successfully updated <strong>{{ importResultSuccess.updated }}</strong> existing profiles and created <strong>{{ importResultSuccess.created }}</strong> new employees.
+            </p>
+          </div>
+        </div>
+
+        <!-- Error notification -->
+        <div
+          v-if="importError"
+          class="p-3 m-4 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2"
+        >
+          <AlertCircle class="size-4 shrink-0" />
+          <span>{{ importError }}</span>
+        </div>
+
+        <!-- Summary KPI Counter Cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 p-4 border-b bg-card">
+          <div class="rounded-lg border p-2.5 bg-muted/20">
+            <div class="text-[11px] text-muted-foreground font-medium">Total Rows</div>
+            <div class="text-lg font-bold font-mono text-foreground">{{ importPreview.totalRows }}</div>
+          </div>
+          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
+            <div class="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">Matched / Updated</div>
+            <div class="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+              {{ importPreview.matchedUpdatedCount }}
+            </div>
+          </div>
+          <div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-2.5">
+            <div class="text-[11px] text-blue-700 dark:text-blue-400 font-medium">New People</div>
+            <div class="text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
+              {{ importPreview.newPeopleCount }}
+            </div>
+          </div>
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+            <div class="text-[11px] text-amber-700 dark:text-amber-400 font-medium">Unknown Groups</div>
+            <div class="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+              {{ importPreview.unknownGroupsCount }}
+            </div>
+          </div>
+          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5">
+            <div class="text-[11px] text-destructive font-medium">Invalid Rows</div>
+            <div class="text-lg font-bold font-mono text-destructive">
+              {{ importPreview.invalidCount }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview Tabs Header -->
+        <div class="flex items-center gap-1 px-4 border-b bg-muted/20 overflow-x-auto text-xs">
+          <button
+            type="button"
+            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
+            :class="activePreviewTab === 'matched' ? 'border-primary text-primary font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
+            @click="activePreviewTab = 'matched'"
+          >
+            <span>Matched / Updated</span>
+            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{{ importPreview.matchedUpdatedCount }}</Badge>
+          </button>
+          <button
+            type="button"
+            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
+            :class="activePreviewTab === 'new' ? 'border-primary text-primary font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
+            @click="activePreviewTab = 'new'"
+          >
+            <span>New People</span>
+            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">{{ importPreview.newPeopleCount }}</Badge>
+          </button>
+          <button
+            type="button"
+            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
+            :class="activePreviewTab === 'unknown' ? 'border-amber-500 text-amber-600 font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
+            @click="activePreviewTab = 'unknown'"
+          >
+            <span>Unknown Groups</span>
+            <Badge
+              :variant="importPreview.unknownGroupsCount > 0 ? 'warning' : 'secondary'"
+              class="text-[10px] px-1.5 py-0"
+            >
+              {{ importPreview.unknownGroupsCount }}
+            </Badge>
+          </button>
+          <button
+            type="button"
+            class="px-3 py-2.5 font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5"
+            :class="activePreviewTab === 'invalid' ? 'border-destructive text-destructive font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
+            @click="activePreviewTab = 'invalid'"
+          >
+            <span>Invalid Rows</span>
+            <Badge
+              :variant="importPreview.invalidCount > 0 ? 'destructive' : 'secondary'"
+              class="text-[10px] px-1.5 py-0"
+            >
+              {{ importPreview.invalidCount }}
+            </Badge>
+          </button>
+        </div>
+
+        <!-- Preview Tab Content Area (Scrollable) -->
+        <div class="flex-1 overflow-y-auto p-4 min-h-[220px]">
+          <!-- TAB 1: Matched / Updated -->
+          <div v-if="activePreviewTab === 'matched'" class="space-y-3">
+            <div v-if="importPreview.matchedUpdated.length === 0" class="text-center py-8 text-xs text-muted-foreground">
+              No existing employee matches found in this spreadsheet.
+            </div>
+            <div v-else class="rounded-lg border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow class="bg-muted/40 text-xs">
+                    <TableHead class="w-[90px] font-semibold">Bio ID</TableHead>
+                    <TableHead class="font-semibold">Current Name</TableHead>
+                    <TableHead class="font-semibold">New Name (Excel)</TableHead>
+                    <TableHead class="font-semibold">Current Group</TableHead>
+                    <TableHead class="font-semibold">New Work Group</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="row in importPreview.matchedUpdated.slice(0, 100)" :key="row.bioId" class="text-xs">
+                    <TableCell class="font-mono font-medium">{{ row.bioId }}</TableCell>
+                    <TableCell class="text-muted-foreground">{{ row.existingName }}</TableCell>
+                    <TableCell class="font-medium text-foreground">
+                      <span v-if="row.isNameUpdated" class="text-emerald-600 font-semibold flex items-center gap-1">
+                        {{ row.newName }}
+                      </span>
+                      <span v-else class="text-muted-foreground italic">Unchanged</span>
+                    </TableCell>
+                    <TableCell class="text-muted-foreground">{{ row.existingGroup }}</TableCell>
+                    <TableCell>
+                      <span v-if="row.isGroupUpdated" class="text-emerald-600 font-semibold">
+                        {{ row.newGroup }}
+                      </span>
+                      <span v-else class="text-muted-foreground italic">Unchanged</span>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+            <p v-if="importPreview.matchedUpdated.length > 100" class="text-[11px] text-muted-foreground text-center">
+              Showing first 100 of {{ importPreview.matchedUpdated.length }} matched records.
+            </p>
+          </div>
+
+          <!-- TAB 2: New People -->
+          <div v-if="activePreviewTab === 'new'" class="space-y-3">
+            <div v-if="importPreview.newPeople.length === 0" class="text-center py-8 text-xs text-muted-foreground">
+              No new employee Bio IDs in this spreadsheet.
+            </div>
+            <div v-else class="rounded-lg border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow class="bg-muted/40 text-xs">
+                    <TableHead class="w-[90px] font-semibold">New Bio ID</TableHead>
+                    <TableHead class="font-semibold">Name</TableHead>
+                    <TableHead class="font-semibold">Assigned Work Group</TableHead>
+                    <TableHead class="font-semibold">Location</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="row in importPreview.newPeople.slice(0, 100)" :key="row.bioId" class="text-xs">
+                    <TableCell class="font-mono font-semibold text-blue-600">{{ row.bioId }}</TableCell>
+                    <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" class="font-mono text-[10px]">
+                        {{ row.group }}
+                      </Badge>
+                    </TableCell>
+                    <TableCell class="text-muted-foreground">{{ row.location }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+            <p v-if="importPreview.newPeople.length > 100" class="text-[11px] text-muted-foreground text-center">
+              Showing first 100 of {{ importPreview.newPeople.length }} new employee records.
+            </p>
+          </div>
+
+          <!-- TAB 3: Unknown Groups Warnings -->
+          <div v-if="activePreviewTab === 'unknown'" class="space-y-3">
+            <div v-if="importPreview.unknownGroups.length === 0" class="text-center py-8 text-xs text-muted-foreground">
+              <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5" />
+              All Excel groups matched existing Work Group settings.
+            </div>
+            <div v-else class="space-y-2">
+              <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-start gap-2">
+                <AlertTriangle class="size-4 shrink-0 mt-0.5 text-amber-600" />
+                <div>
+                  <strong>Work Group Warning:</strong> The following rows contain group codes that do not exist in Settings. They will retain their existing group (or default to Group C) until you create the Work Group in Settings.
+                </div>
+              </div>
+
+              <div class="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow class="bg-muted/40 text-xs">
+                      <TableHead class="w-[70px] font-semibold">Row</TableHead>
+                      <TableHead class="w-[90px] font-semibold">Bio ID</TableHead>
+                      <TableHead class="font-semibold">Employee Name</TableHead>
+                      <TableHead class="font-semibold text-amber-600">Unknown Group in Excel</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow v-for="row in importPreview.unknownGroups" :key="row.rowNumber" class="text-xs">
+                      <TableCell class="font-mono text-muted-foreground">Row {{ row.rowNumber }}</TableCell>
+                      <TableCell class="font-mono font-medium">{{ row.bioId }}</TableCell>
+                      <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
+                      <TableCell class="font-mono font-bold text-amber-600 dark:text-amber-400">
+                        "{{ row.rawGroup }}"
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB 4: Invalid Rows -->
+          <div v-if="activePreviewTab === 'invalid'" class="space-y-3">
+            <div v-if="importPreview.invalidRows.length === 0" class="text-center py-8 text-xs text-muted-foreground">
+              <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5" />
+              No invalid rows detected.
+            </div>
+            <div v-else class="rounded-lg border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow class="bg-muted/40 text-xs">
+                    <TableHead class="w-[80px] font-semibold">Row</TableHead>
+                    <TableHead class="font-semibold text-destructive">Validation Issue</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="row in importPreview.invalidRows" :key="row.rowNumber" class="text-xs">
+                    <TableCell class="font-mono font-semibold text-muted-foreground">Row {{ row.rowNumber }}</TableCell>
+                    <TableCell class="text-destructive font-medium">{{ row.reason }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dialog Footer Actions -->
+        <div class="p-4 border-t bg-muted/30 flex items-center justify-between gap-2 flex-wrap">
+          <div class="text-xs text-muted-foreground">
+            Ready to apply <strong>{{ importPreview.recordsToApply.length }}</strong> employee profile changes to the local database.
+          </div>
+          <div class="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 text-xs"
+              :disabled="isApplyingImport"
+              @click="showImportModal = false"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              class="h-8 text-xs gap-1.5 font-medium shadow-xs"
+              :disabled="isApplyingImport || importPreview.recordsToApply.length === 0 || importResultSuccess !== null"
+              @click="executeImportChanges"
+            >
+              <RefreshCw v-if="isApplyingImport" class="size-3.5 animate-spin" />
+              <CheckCircle2 v-else class="size-3.5" />
+              <span>{{ isApplyingImport ? 'Applying Changes...' : 'Import Changes' }}</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- EDIT SINGLE EMPLOYEE MODAL -->
+    <!-- ============================================================= -->
     <div
       v-if="showEditModal"
-      class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
     >
       <div class="bg-card text-card-foreground border rounded-xl shadow-xl w-full max-w-md overflow-hidden">
         <div class="flex items-center justify-between p-4 border-b bg-muted/40">
@@ -352,44 +852,38 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <form @submit.prevent="saveEmployee" class="p-5 space-y-4 text-xs">
-          <!-- Bio ID (Read-only & Disabled) -->
-          <div class="space-y-1.5">
-            <label class="font-medium text-foreground flex items-center justify-between">
-              <span>Bio ID (Permanent Biometric Identifier)</span>
-              <span class="text-[10px] font-mono text-muted-foreground">Read-only / Fixed</span>
+        <form @submit.prevent="saveEmployee" class="p-4 space-y-3.5">
+          <!-- Permanent Bio ID (Read-only) -->
+          <div class="space-y-1">
+            <label class="text-xs font-semibold text-muted-foreground flex items-center justify-between">
+              <span>Biometric User ID</span>
+              <span class="text-[10px] text-amber-600 dark:text-amber-400 font-mono font-normal">Permanent Immutable Key</span>
             </label>
-            <Input
-              :value="editBioId"
-              disabled
-              readonly
-              class="h-8 text-xs font-mono font-bold bg-muted/70 cursor-not-allowed text-muted-foreground"
-            />
-            <p class="text-[10px] text-muted-foreground">
-              Bio ID connects hardware scans to this employee and cannot be altered.
-            </p>
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted/60 text-xs font-mono font-semibold text-foreground">
+              <Fingerprint class="size-3.5 text-muted-foreground" />
+              <span>{{ editBioId }}</span>
+            </div>
           </div>
 
-          <!-- Employee Name (Editable) -->
-          <div class="space-y-1.5">
-            <label class="font-medium text-foreground">
-              Employee Name <span class="text-destructive">*</span>
+          <!-- Employee Name -->
+          <div class="space-y-1">
+            <label class="text-xs font-semibold text-foreground">
+              Employee Full Name <span class="text-destructive">*</span>
             </label>
             <Input
               v-model="editName"
-              placeholder="e.g. B Basalo, Randy"
+              type="text"
               required
+              placeholder="e.g. Santos, Roberto"
               class="h-8 text-xs"
             />
           </div>
 
-          <!-- Location (Editable with Shadcn Select) -->
-          <div class="space-y-1.5">
-            <label class="font-medium text-foreground">
-              Location <span class="text-destructive">*</span>
-            </label>
+          <!-- Location -->
+          <div class="space-y-1">
+            <label class="text-xs font-semibold text-foreground">Branch Location</label>
             <Select v-model="editLocation">
-              <SelectTrigger class="h-8 text-xs w-full bg-background">
+              <SelectTrigger class="h-8 text-xs w-full bg-card">
                 <SelectValue placeholder="Select Location" />
               </SelectTrigger>
               <SelectContent>
@@ -402,60 +896,56 @@ onUnmounted(() => {
             </Select>
           </div>
 
-          <!-- Work Group (Editable with Shadcn Select) -->
-          <div class="space-y-1.5">
-            <label class="font-medium text-foreground">
-              Work Group Schedule <span class="text-destructive">*</span>
-            </label>
+          <!-- Work Group Schedule -->
+          <div class="space-y-1">
+            <label class="text-xs font-semibold text-foreground">Assigned Work Group</label>
             <Select v-model="editWorkGroupId">
-              <SelectTrigger class="h-8 text-xs w-full bg-background">
+              <SelectTrigger class="h-8 text-xs w-full bg-card">
                 <SelectValue placeholder="Select Work Group" />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
                   <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
-                    {{ wg.name }} ({{ wg.standard_in }} IN → {{ wg.expected_out }} OUT)
+                    {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
                   </SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <p class="text-[10px] text-muted-foreground">
-              Determines Standard IN, 8 required working hours, and unpaid lunch window (12pm-1pm).
-            </p>
           </div>
 
-          <!-- Department & Position -->
-          <div class="grid grid-cols-2 gap-3">
-            <div class="space-y-1.5">
-              <label class="font-medium text-foreground">Department</label>
-              <Input
-                v-model="editDepartment"
-                placeholder="e.g. Operations"
-                class="h-8 text-xs"
-              />
-            </div>
-            <div class="space-y-1.5">
-              <label class="font-medium text-foreground">Position</label>
-              <Input
-                v-model="editPosition"
-                placeholder="e.g. Staff"
-                class="h-8 text-xs"
-              />
-            </div>
+          <!-- Department -->
+          <div class="space-y-1">
+            <label class="text-xs font-semibold text-foreground">Department</label>
+            <Input
+              v-model="editDepartment"
+              type="text"
+              placeholder="Operations"
+              class="h-8 text-xs"
+            />
           </div>
 
-          <!-- Success/Error Alerts -->
-          <div v-if="editSuccessMsg" class="p-2.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+          <!-- Position -->
+          <div class="space-y-1">
+            <label class="text-xs font-semibold text-foreground">Position / Role</label>
+            <Input
+              v-model="editPosition"
+              type="text"
+              placeholder="Staff"
+              class="h-8 text-xs"
+            />
+          </div>
+
+          <!-- Feedback messages -->
+          <div v-if="editSuccessMsg" class="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
             <CheckCircle2 class="size-4 shrink-0" />
             <span>{{ editSuccessMsg }}</span>
           </div>
 
-          <div v-if="editErrorMsg" class="p-2.5 rounded-md bg-destructive/10 border border-destructive/30 text-destructive flex items-center gap-2">
-            <X class="size-4 shrink-0" />
+          <div v-if="editErrorMsg" class="p-2.5 rounded bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
+            <AlertCircle class="size-4 shrink-0" />
             <span>{{ editErrorMsg }}</span>
           </div>
 
-          <!-- Actions -->
           <div class="flex items-center justify-end gap-2 pt-2 border-t">
             <Button
               type="button"
@@ -468,13 +958,12 @@ onUnmounted(() => {
             </Button>
             <Button
               type="submit"
-              variant="default"
               size="sm"
-              class="h-8 text-xs gap-1.5 font-medium shadow-xs"
+              class="h-8 text-xs gap-1.5 font-medium"
               :disabled="editSaving"
             >
               <Save class="size-3.5" />
-              <span>{{ editSaving ? 'Saving...' : 'Save Changes' }}</span>
+              <span>{{ editSaving ? 'Saving...' : 'Save Profile' }}</span>
             </Button>
           </div>
         </form>

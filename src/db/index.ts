@@ -3,7 +3,8 @@ import type { EmployeeLocation } from '@/types'
 
 export interface WorkGroupRecord {
   id: string // "wg-group-a", "wg-group-b", "wg-group-c"
-  name: string // "GROUP A", "GROUP B", "GROUP C"
+  name: string // "Group A", "Group B", "Group C"
+  code: string // "A", "B", "C" (unique short code)
   standardIn: string // "06:00", "07:00", "08:00"
   requiredWorkMinutes: number // 480 (8 hours)
   lunchStart: string // "12:00"
@@ -150,8 +151,8 @@ export class DMBBHRDatabase extends Dexie {
     super('DMBBHR_LocalDB')
 
     // Schema definition with targeted high-performance indices
-    this.version(2).stores({
-      workGroups: 'id, name, isDefault',
+    this.version(3).stores({
+      workGroups: 'id, name, code, isDefault',
       biometricPunches: 'id, bioId, date, timestampMs, deviceId, isDuplicate, [date+bioId], [bioId+timestampMs]',
       employees: 'bioId, fullName, location, workGroupId, status',
       dailyAttendance: 'id, bioId, date, status, location, workGroupId, [date+location]',
