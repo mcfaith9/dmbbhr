@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
   Clock,
   RefreshCw,
@@ -10,7 +10,7 @@ import {
   Users,
   Search,
   X,
-  MapPin,
+  MapPin
 } from '@lucide/vue'
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
@@ -19,6 +19,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 
 // Real device status and sync state
 const deviceStatus = liveAttendanceService.deviceStatus
@@ -42,6 +50,10 @@ async function loadDailyAttendance() {
     loading.value = false
   }
 }
+
+watch(selectedLocation, () => {
+  loadDailyAttendance()
+})
 
 async function handleManualSync() {
   await liveAttendanceService.triggerManualSync()
@@ -75,9 +87,10 @@ const filteredRecords = computed(() => {
 const stats = computed(() => {
   const total = filteredRecords.value.length
   const late = filteredRecords.value.filter(r => r.late_minutes > 0).length
-  const regular = filteredRecords.value.filter(r => r.late_minutes === 0 && r.total_punches >= 2).length
-  const singlePunch = filteredRecords.value.filter(r => r.total_punches === 1).length
-  return { total, late, regular, singlePunch }
+  const onTime = filteredRecords.value.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+  const awaitingOut = filteredRecords.value.filter(r => r.status === 'Awaiting OUT').length
+  const singlePunchNoOut = filteredRecords.value.filter(r => r.status === 'Single Punch (No OUT)').length
+  return { total, late, onTime, awaitingOut, singlePunchNoOut }
 })
 
 const displayDateTitle = computed(() => {
@@ -145,7 +158,7 @@ onUnmounted(() => {
           </Badge>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Calculated from real synced BISMAC BISBIO B-29b biometric scans. Zero mock/dummy data.
+          Processed from persistent biometric scans in Philippine Standard Time. Lateness is measured cleanly against schedule.
         </p>
       </div>
 
@@ -163,7 +176,7 @@ onUnmounted(() => {
         </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadDailyAttendance">
           <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
-          <span class="text-xs">Refresh</span>
+          <span class="text-xs">Reload Date</span>
         </Button>
       </div>
     </div>
@@ -255,7 +268,7 @@ onUnmounted(() => {
       </div>
 
       <div class="rounded-xl border bg-card p-3 shadow-xs flex flex-col justify-center">
-        <span class="text-[11px] text-muted-foreground font-medium">Employees Present</span>
+        <span class="text-[11px] text-muted-foreground font-medium">Employees Recorded</span>
         <div class="text-xl font-bold text-foreground mt-0.5 flex items-center gap-1.5">
           <Users class="size-4 text-primary" />
           <span>{{ stats.total }}</span>
@@ -263,18 +276,25 @@ onUnmounted(() => {
       </div>
 
       <div class="rounded-xl border bg-card p-3 shadow-xs flex flex-col justify-center">
-        <span class="text-[11px] text-muted-foreground font-medium">Punctuality Summary</span>
-        <div class="text-xs text-foreground mt-1 flex items-center gap-2 font-mono">
-          <span class="text-emerald-600 font-semibold">{{ stats.regular }} on time</span>
+        <span class="text-[11px] text-muted-foreground font-medium">Attendance Breakdown</span>
+        <div class="text-xs text-foreground mt-1 flex items-center gap-1.5 font-mono flex-wrap">
+          <span class="text-emerald-600 font-semibold">{{ stats.onTime }} on time</span>
           <span>•</span>
           <span :class="stats.late > 0 ? 'text-amber-600 font-semibold' : 'text-muted-foreground'">
             {{ stats.late }} late
+          </span>
+          <span>•</span>
+          <span v-if="stats.awaitingOut > 0" class="text-sky-600 font-semibold">
+            {{ stats.awaitingOut }} awaiting OUT
+          </span>
+          <span v-else class="text-muted-foreground">
+            {{ stats.singlePunchNoOut }} no OUT
           </span>
         </div>
       </div>
     </div>
 
-    <!-- Search and Location Filters -->
+    <!-- Search and Shadcn Location Filters -->
     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
       <div class="flex items-center gap-2 flex-1 max-w-lg">
         <div class="relative w-full max-w-xs">
@@ -286,17 +306,20 @@ onUnmounted(() => {
           />
         </div>
 
-        <!-- Location Filter Dropdown -->
-        <select
-          v-model="selectedLocation"
-          class="h-8 text-xs px-2.5 rounded-md border bg-card text-foreground"
-          @change="loadDailyAttendance"
-        >
-          <option value="all">All Locations</option>
-          <option v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
-            {{ loc }}
-          </option>
-        </select>
+        <!-- Shadcn-Vue Select Location Filter -->
+        <Select v-model="selectedLocation">
+          <SelectTrigger class="h-8 text-xs w-[160px] bg-card">
+            <SelectValue placeholder="All Locations" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Locations</SelectItem>
+              <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
+                {{ loc }}
+              </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
 
       <!-- Quick Location Badge summary buttons -->
@@ -308,7 +331,7 @@ onUnmounted(() => {
           type="button"
           class="px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
           :class="selectedLocation === loc ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80 text-muted-foreground'"
-          @click="selectedLocation = selectedLocation === loc ? 'all' : loc; loadDailyAttendance()"
+          @click="selectedLocation = selectedLocation === loc ? 'all' : loc"
         >
           {{ loc }}
         </button>
@@ -320,7 +343,7 @@ onUnmounted(() => {
       <!-- Loading State -->
       <div v-if="loading" class="p-8 text-center text-xs text-muted-foreground space-y-2">
         <RefreshCw class="size-5 animate-spin mx-auto text-primary" />
-        <p>Loading real attendance records for {{ selectedDate }}...</p>
+        <p>Loading attendance records for {{ selectedDate }}...</p>
       </div>
 
       <!-- Empty State -->
@@ -334,36 +357,26 @@ onUnmounted(() => {
         <div class="space-y-1">
           <p class="font-semibold text-foreground text-sm">No attendance records available for {{ displayDateTitle }}.</p>
           <p class="text-muted-foreground max-w-md mx-auto">
-            Click <strong>Sync Attendance</strong> to retrieve actual records from the BISMAC BISBIO B-29b biometric device.
+            Import historical Excel scans or click <strong>Sync Attendance</strong> to retrieve records from the biometric device.
           </p>
         </div>
-        <Button
-          variant="default"
-          size="sm"
-          class="h-8 gap-1.5 font-medium shadow-xs"
-          :disabled="isSyncing"
-          @click="handleManualSync"
-        >
-          <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
-          <span>{{ isSyncing ? 'Syncing...' : 'Sync Attendance' }}</span>
-        </Button>
       </div>
 
-      <!-- Data Table -->
+      <!-- Data Table with Clean Separated Status and Late Metric -->
       <Table v-else>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="font-semibold">User ID</TableHead>
+            <TableHead class="font-semibold">Bio ID</TableHead>
             <TableHead class="font-semibold">Employee Name</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
-            <TableHead class="font-semibold">Date</TableHead>
             <TableHead class="font-semibold">First IN</TableHead>
             <TableHead class="font-semibold">Break OUT</TableHead>
             <TableHead class="font-semibold">Break IN</TableHead>
             <TableHead class="font-semibold">Final OUT</TableHead>
             <TableHead class="font-semibold text-center">Total Hours</TableHead>
+            <TableHead class="font-semibold text-center">Late (mins)</TableHead>
             <TableHead class="font-semibold text-center">Punches</TableHead>
-            <TableHead class="font-semibold text-right">Remarks</TableHead>
+            <TableHead class="font-semibold text-right">Attendance Status</TableHead>
           </TableRow>
         </TableHeader>
 
@@ -377,7 +390,6 @@ onUnmounted(() => {
                 {{ row.location }}
               </span>
             </TableCell>
-            <TableCell class="text-xs text-muted-foreground">{{ row.date }}</TableCell>
             <TableCell class="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">
               {{ row.time_in }}
             </TableCell>
@@ -387,12 +399,34 @@ onUnmounted(() => {
               {{ row.time_out }}
             </TableCell>
             <TableCell class="text-center font-mono font-semibold text-xs">{{ row.total_hours }}</TableCell>
-            <TableCell class="text-center font-mono text-xs text-muted-foreground">
-              <span class="px-1.5 py-0.5 rounded bg-muted text-[11px]">{{ row.total_punches }}</span>
+            
+            <!-- Dedicated Late Minutes Column -->
+            <TableCell class="text-center font-mono text-xs">
+              <span
+                v-if="row.late_minutes > 0"
+                class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold"
+              >
+                {{ row.late_minutes }}m
+              </span>
+              <span v-else class="text-muted-foreground text-[11px]">
+                0m
+              </span>
             </TableCell>
+
+            <TableCell class="text-center font-mono text-xs text-muted-foreground">
+              <span class="px-1.5 py-0.5 rounded bg-muted text-[11px]" :title="row.punches_summary">
+                {{ row.total_punches }}
+              </span>
+            </TableCell>
+
+            <!-- Distinct Clean Status Column -->
             <TableCell class="text-right">
               <Badge
-                :variant="row.late_minutes > 0 ? 'warning' : (row.total_punches === 1 ? 'outline' : 'success')"
+                :variant="
+                  row.status === 'Regular Day'
+                    ? (row.late_minutes > 0 ? 'warning' : 'success')
+                    : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline')
+                "
                 class="text-[10px]"
               >
                 {{ row.status }}

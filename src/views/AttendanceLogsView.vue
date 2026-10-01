@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import {
   Download,
   Upload,
@@ -8,9 +8,9 @@ import {
   Calendar as CalendarIcon,
   X,
   CheckCircle2,
-  AlertCircle,
   Radio,
   Fingerprint,
+  Trash2
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import { attendanceService } from '@/services/attendance'
@@ -22,6 +22,14 @@ import { Pagination } from '@/components/ui/pagination'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 
 const logs = ref<AttendanceLog[]>([])
 const loading = ref(false)
@@ -38,16 +46,14 @@ function getTodayManilaDateString(): string {
   }).format(new Date())
 }
 
-const todayDateString = getTodayManilaDateString()
-
-// Filter state - DEFAULTS TO TODAY DYNAMICALLY
+// Filter state - DEFAULTS TO ALL DATES SO IMPORTED HISTORICAL EXCEL DATA IS VISIBLE IMMEDIATELY
 const filters = ref<AttendanceFilterParams>({
   search: '',
   locationId: 'all',
   deviceId: 'all',
-  quickRange: 'today',
-  startDate: todayDateString,
-  endDate: todayDateString,
+  quickRange: 'all',
+  startDate: '',
+  endDate: '',
   type: 'all',
   state: 'all',
   page: 1,
@@ -97,6 +103,15 @@ function handleSearch() {
   loadData()
 }
 
+// Watch filters for instant pagination / dropdown updates
+watch(
+  () => [filters.value.locationId, filters.value.deviceId, filters.value.type, filters.value.state],
+  () => {
+    filters.value.page = 1
+    loadData()
+  }
+)
+
 function setQuickRange(range: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') {
   filters.value.quickRange = range
   filters.value.page = 1
@@ -145,14 +160,13 @@ function setQuickRange(range: 'today' | 'yesterday' | 'this_week' | 'this_month'
 }
 
 function resetFilters() {
-  const today = getTodayManilaDateString()
   filters.value = {
     search: '',
     locationId: 'all',
     deviceId: 'all',
-    quickRange: 'today',
-    startDate: today,
-    endDate: today,
+    quickRange: 'all',
+    startDate: '',
+    endDate: '',
     type: 'all',
     state: 'all',
     page: 1,
@@ -269,8 +283,8 @@ function validateImportData(rows: any[]) {
   let duplicates = 0
 
   rows.forEach((row, index) => {
-    const userId = row['User ID'] || row['userId'] || row['User_ID'] || row['ID']
-    const time = row['Date/Time'] || row['DateTime'] || row['Date'] || row['attTime'] || row['Time']
+    const userId = row['User ID'] || row['userId'] || row['User_ID'] || row['ID'] || row.user_id
+    const time = row['Date/Time'] || row['DateTime'] || row['Date'] || row['attTime'] || row['Time'] || row.attendance_time
 
     if (!userId || !time) {
       if (importValidation.value.errors.length < 3) {
@@ -300,26 +314,20 @@ async function confirmImport() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]]
       const rows: any[] = XLSX.utils.sheet_to_json(sheet)
 
-      const normalizedRecords = rows.map(r => ({
-        user_id: String(r['User ID'] || r['userId'] || r['User_ID'] || r['ID'] || ''),
-        employee_name: r['Name'] || r['Employee'] || r['Employee Name'] || '',
-        attendance_time: r['Date/Time'] || r['DateTime'] || r['Date'] || new Date().toISOString(),
-        type: Number(r['Type'] ?? 1),
-        state: Number(r['State'] ?? 1),
-        serial_number: r['Serial'] || r['Serial Number'] || 0,
-        device_ip: r['IP'] || '192.168.1.201'
-      }))
-
-      const result = await attendanceService.importLogsChunked(normalizedRecords, (processed, total) => {
-        importProgress.value = {
-          processed,
-          total,
-          percentage: total > 0 ? Math.round((processed / total) * 100) : 100
+      const result = await attendanceService.importLogsChunked(
+        rows,
+        importFile.value?.name || 'biometric.xlsx',
+        (processed, total) => {
+          importProgress.value = {
+            processed,
+            total,
+            percentage: total > 0 ? Math.round((processed / total) * 100) : 100
+          }
         }
-      })
+      )
 
-      importSuccessMsg.value = `Successfully imported ${result.importedCount.toLocaleString()} records across ${result.chunkCount} safe batches (${result.duplicateCount.toLocaleString()} duplicate scans flagged for audit).`
-      
+      importSuccessMsg.value = `Successfully persisted ${result.importedCount.toLocaleString()} records into local database (${result.duplicateCount.toLocaleString()} duplicates skipped, ${result.invalidCount} invalid).`
+
       setTimeout(() => {
         showImportModal.value = false
         importFile.value = null
@@ -327,9 +335,9 @@ async function confirmImport() {
         importSuccessMsg.value = ''
         importProgress.value = { processed: 0, total: 0, percentage: 0 }
         loadData()
-      }, 1800)
+      }, 1500)
     } catch (err: any) {
-      importErrorMsg.value = 'Import failed: ' + (err?.message || 'Server error while persisting attendance records.')
+      importErrorMsg.value = 'Import failed: ' + (err?.message || 'Error persisting attendance records.')
     } finally {
       isImporting.value = false
     }
@@ -343,18 +351,19 @@ async function confirmImport() {
   reader.readAsArrayBuffer(importFile.value)
 }
 
+async function handleClearAll() {
+  if (confirm('Are you sure you want to clear all stored attendance records from local storage? This action cannot be undone.')) {
+    await attendanceService.clearAllLogs()
+    loadData()
+  }
+}
+
 const deviceStatus = liveAttendanceService.deviceStatus
 const isSyncing = liveAttendanceService.isSyncing
-const syncProgress = liveAttendanceService.syncProgress
-const showSyncReport = ref(false)
 
 async function handleManualSync() {
   await liveAttendanceService.triggerManualSync()
   loadData()
-}
-
-function dismissSyncProgress() {
-  liveAttendanceService.clearSyncProgress()
 }
 
 const latestLiveScan = ref<AttendanceLog | null>(null)
@@ -362,13 +371,11 @@ let unsubscribeLive: (() => void) | null = null
 let unsubscribeLogs: (() => void) | null = null
 
 function handleNewBiometricScan(newLog: AttendanceLog) {
-  // Prepend to visible table list immediately if not already present
   if (!logs.value.some(l => l.id === newLog.id)) {
     logs.value.unshift(newLog)
     meta.value.totalItems += 1
   }
 
-  // Highlight banner
   latestLiveScan.value = newLog
   setTimeout(() => {
     if (latestLiveScan.value?.id === newLog.id) {
@@ -381,7 +388,6 @@ onMounted(() => {
   loadLookups()
   loadData()
 
-  // Connect to local Node.js biometric WebSocket bridge
   liveAttendanceService.connect()
   unsubscribeLive = liveAttendanceService.onScan((scan) => {
     handleNewBiometricScan(scan)
@@ -392,12 +398,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (unsubscribeLive) {
-    unsubscribeLive()
-  }
-  if (unsubscribeLogs) {
-    unsubscribeLogs()
-  }
+  if (unsubscribeLive) unsubscribeLive()
+  if (unsubscribeLogs) unsubscribeLogs()
 })
 </script>
 
@@ -408,13 +410,13 @@ onUnmounted(() => {
       <div>
         <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <span>Attendance Logs</span>
-          <span class="text-xs px-2 py-0.5 rounded-full bg-muted font-normal text-muted-foreground">
-            Auditable Raw Scans
+          <span class="text-xs px-2 py-0.5 rounded-full bg-muted font-normal text-muted-foreground font-mono">
+            {{ meta.totalItems.toLocaleString() }} Stored Records
           </span>
           <Badge
             :variant="deviceStatus.status === 'online' ? 'success' : (deviceStatus.status === 'connecting' ? 'warning' : 'outline')"
             class="text-[11px] gap-1 cursor-pointer transition-colors"
-            :title="`Status: ${deviceStatus.status.toUpperCase()} (${deviceStatus.reason}) - Target: ${deviceStatus.ip}:${deviceStatus.port}`"
+            :title="`Status: ${deviceStatus.status.toUpperCase()} - Target: ${deviceStatus.ip}:${deviceStatus.port}`"
             @click="liveAttendanceService.connect()"
           >
             <Radio
@@ -429,7 +431,7 @@ onUnmounted(() => {
           </Badge>
         </h1>
         <p class="text-xs text-muted-foreground">
-          Historical and live biometric attendance records. Preserves original raw Type, State, and Serial.
+          Historical and live biometric attendance records. Persisted locally in IndexedDB across browser refreshes and restarts.
         </p>
       </div>
 
@@ -443,20 +445,20 @@ onUnmounted(() => {
           @click="handleManualSync"
         >
           <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
-          <span class="text-xs">{{ isSyncing ? 'Syncing...' : 'Sync Attendance' }}</span>
+          <span class="text-xs">{{ isSyncing ? 'Syncing...' : 'Sync Device' }}</span>
         </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadData">
           <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
-          <span class="text-xs">Refresh</span>
+          <span class="text-xs">Reload</span>
         </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="showImportModal = true">
           <Upload class="size-3.5" />
-          <span class="text-xs">Import Biometric</span>
+          <span class="text-xs">Import Biometric (Excel)</span>
         </Button>
         <div class="flex items-center rounded-md border bg-card">
           <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-r-none border-r" @click="exportLogs('xlsx')">
             <Download class="size-3.5 mr-1.5" />
-            Excel (.xlsx)
+            Excel
           </Button>
           <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-l-none" @click="exportLogs('csv')">
             CSV
@@ -465,124 +467,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Biometric Sync Progress & Audit Banner -->
-    <div
-      v-if="syncProgress"
-      class="rounded-xl border p-4 text-xs transition-all shadow-xs animate-in fade-in duration-200"
-      :class="[
-        syncProgress.stage === 'error'
-          ? 'border-destructive/40 bg-destructive/10 text-destructive-foreground'
-          : syncProgress.stage === 'complete'
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-foreground'
-            : 'border-primary/30 bg-primary/5 text-foreground'
-      ]"
-    >
-      <div class="flex items-start justify-between gap-3">
-        <div class="space-y-1.5 flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <Radio
-              v-if="isSyncing"
-              class="size-3.5 text-primary animate-spin"
-            />
-            <CheckCircle2
-              v-else-if="syncProgress.stage === 'complete'"
-              class="size-3.5 text-emerald-600 dark:text-emerald-400"
-            />
-            <AlertCircle
-              v-else-if="syncProgress.stage === 'error'"
-              class="size-3.5 text-destructive"
-            />
-            <span class="font-semibold text-sm">
-              {{
-                syncProgress.stage === 'complete'
-                  ? 'Biometric Synchronization Complete'
-                  : syncProgress.stage === 'error'
-                    ? 'Biometric Synchronization Error'
-                    : 'Syncing Biometric Attendance...'
-              }}
-            </span>
-            <span class="text-[11px] font-mono text-muted-foreground ml-auto pr-2">
-              {{ syncProgress.progress }}%
-            </span>
-          </div>
-
-          <!-- Progress Bar -->
-          <div class="h-2 w-full rounded-full bg-muted/60 overflow-hidden">
-            <div
-              class="h-full transition-all duration-300 rounded-full"
-              :class="[
-                syncProgress.stage === 'error'
-                  ? 'bg-destructive'
-                  : syncProgress.stage === 'complete'
-                    ? 'bg-emerald-600 dark:bg-emerald-500'
-                    : 'bg-primary'
-              ]"
-              :style="{ width: `${syncProgress.progress}%` }"
-            />
-          </div>
-
-          <!-- Progress Message -->
-          <div class="flex items-center justify-between text-xs text-muted-foreground pt-0.5">
-            <span class="truncate">{{ syncProgress.message }}</span>
-            <span v-if="syncProgress.summary?.strategyUsed" class="font-medium shrink-0 ml-2">
-              Strategy: {{ syncProgress.summary.strategyUsed }}
-            </span>
-          </div>
-
-          <!-- Detailed Summary if complete -->
-          <div
-            v-if="syncProgress.stage === 'complete' && syncProgress.summary"
-            class="flex items-center gap-3 pt-1 text-[11px] text-muted-foreground flex-wrap font-mono"
-          >
-            <span class="inline-flex items-center gap-1 text-foreground font-semibold font-sans">
-              Device Returned: <strong class="text-primary">{{ syncProgress.summary.deviceReturned?.toLocaleString() || syncProgress.summary.totalValid?.toLocaleString() }}</strong>
-            </span>
-            <span>•</span>
-            <span class="text-emerald-700 dark:text-emerald-300 font-medium font-sans">
-              Parsed: {{ syncProgress.summary.parsedCount?.toLocaleString() || syncProgress.summary.totalValid?.toLocaleString() }}
-            </span>
-            <span>•</span>
-            <span class="font-sans">
-              +{{ syncProgress.summary.newRecords?.toLocaleString() }} new stored
-            </span>
-            <span>•</span>
-            <span class="font-sans">
-              {{ syncProgress.summary.alreadySynced?.toLocaleString() }} duplicates skipped
-            </span>
-            <span>•</span>
-            <span class="font-semibold text-foreground font-sans">
-              Total Stored: {{ syncProgress.summary.totalValid?.toLocaleString() }}
-            </span>
-          </div>
-
-          <!-- Corrupt Samples Inspector -->
-          <div
-            v-if="showSyncReport && syncProgress.summary?.invalidSamples?.length"
-            class="mt-2 p-2.5 rounded-md bg-background border font-mono text-[11px] space-y-1"
-          >
-            <div class="font-sans font-semibold text-muted-foreground">Rejected Raw Records (Protected from store):</div>
-            <div
-              v-for="(sample, idx) in syncProgress.summary.invalidSamples"
-              :key="idx"
-              class="text-muted-foreground"
-            >
-              • Raw User ID: <code class="text-destructive font-bold">{{ sample.rawUserId }}</code> | Raw Date: <code>{{ sample.rawDate }}</code> ({{ sample.reason }})
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          class="text-muted-foreground hover:text-foreground p-1 rounded-md transition-colors"
-          title="Dismiss"
-          @click="dismissSyncProgress"
-        >
-          <X class="size-3.5" />
-        </button>
-      </div>
-    </div>
-
-    <!-- Live Scan Flash Notification (Appears automatically without refresh) -->
+    <!-- Live Scan Flash Notification -->
     <div
       v-if="latestLiveScan"
       class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-foreground shadow-xs flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300"
@@ -599,7 +484,6 @@ onUnmounted(() => {
           <div class="text-xs text-muted-foreground mt-0.5">
             User ID: <strong class="text-foreground font-mono">{{ latestLiveScan.user_id }}</strong>
             <span v-if="latestLiveScan.employee_name"> • {{ latestLiveScan.employee_name }}</span>
-            • Device: <span class="font-mono">{{ latestLiveScan.device_name }}</span>
             • Time: {{ formatTime(latestLiveScan.attendance_time) }}
           </div>
         </div>
@@ -609,7 +493,7 @@ onUnmounted(() => {
       </Button>
     </div>
 
-    <!-- Filter Toolbar -->
+    <!-- Filter Toolbar with Shadcn Select Dropdowns -->
     <div class="rounded-xl border bg-card p-3 shadow-xs space-y-3">
       <!-- Quick Range Pills -->
       <div class="flex items-center gap-1.5 flex-wrap text-xs">
@@ -678,7 +562,7 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- Main Input Filters -->
+      <!-- Main Input Filters with Shadcn Select -->
       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
         <div class="relative lg:col-span-2">
           <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
@@ -692,33 +576,37 @@ onUnmounted(() => {
         </div>
 
         <div>
-          <select
-            v-model="filters.locationId"
-            class="w-full h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            @change="handleSearch"
-          >
-            <option value="all">All Locations</option>
-            <option
-              v-for="loc in locations"
-              :key="loc.id"
-              :value="loc.name"
-            >
-              {{ loc.name }}
-            </option>
-          </select>
+          <!-- Shadcn Location Select -->
+          <Select v-model="filters.locationId">
+            <SelectTrigger class="h-8 text-xs w-full bg-background">
+              <SelectValue placeholder="All Locations" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">All Locations</SelectItem>
+                <SelectItem v-for="loc in locations" :key="loc.id" :value="loc.name">
+                  {{ loc.name }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
 
         <div>
-          <select
-            v-model="filters.deviceId"
-            class="w-full h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            @change="handleSearch"
-          >
-            <option value="all">All Devices</option>
-            <option v-for="dev in devices" :key="dev.id" :value="dev.id">
-              {{ dev.name }}
-            </option>
-          </select>
+          <!-- Shadcn Device Select -->
+          <Select v-model="filters.deviceId">
+            <SelectTrigger class="h-8 text-xs w-full bg-background">
+              <SelectValue placeholder="All Devices" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">All Devices</SelectItem>
+                <SelectItem v-for="dev in devices" :key="dev.id" :value="dev.id">
+                  {{ dev.name }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
 
         <div>
@@ -742,50 +630,67 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Secondary filter bar (Type & State) -->
+      <!-- Secondary filter bar with Shadcn Select (Type & State) -->
       <div class="flex items-center justify-between pt-1 border-t text-xs text-muted-foreground flex-wrap gap-2">
         <div class="flex items-center gap-3 flex-wrap">
           <div class="flex items-center gap-1.5">
             <span class="text-[11px]">Type:</span>
-            <select
-              v-model="filters.type"
-              class="h-7 rounded border border-input bg-background px-1.5 text-xs text-foreground"
-              @change="handleSearch"
-            >
-              <option value="all">All Types</option>
-              <option value="1">Type 1 (Fingerprint)</option>
-              <option value="2">Type 2 (Face / Biometric)</option>
-              <option value="3">Type 3 (Password / Card)</option>
-            </select>
+            <Select v-model="filters.type">
+              <SelectTrigger class="h-7 text-xs w-[140px] bg-background">
+                <SelectValue placeholder="All Types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="1">Type 1 (Fingerprint)</SelectItem>
+                  <SelectItem value="2">Type 2 (Face)</SelectItem>
+                  <SelectItem value="3">Type 3 (Password/Card)</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
 
           <div class="flex items-center gap-1.5">
             <span class="text-[11px]">Raw State:</span>
-            <select
-              v-model="filters.state"
-              class="h-7 rounded border border-input bg-background px-1.5 text-xs text-foreground"
-              @change="handleSearch"
-            >
-              <option value="all">All States</option>
-              <option value="1">State 1</option>
-              <option value="2">State 2</option>
-              <option value="3">State 3</option>
-              <option value="4">State 4</option>
-            </select>
+            <Select v-model="filters.state">
+              <SelectTrigger class="h-7 text-xs w-[120px] bg-background">
+                <SelectValue placeholder="All States" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">All States</SelectItem>
+                  <SelectItem value="1">State 1</SelectItem>
+                  <SelectItem value="2">State 2</SelectItem>
+                  <SelectItem value="3">State 3</SelectItem>
+                  <SelectItem value="4">State 4</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        <button
-          type="button"
-          class="text-xs text-primary hover:underline font-medium"
-          @click="resetFilters"
-        >
-          Reset Filters
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="text-xs text-primary hover:underline font-medium"
+            @click="resetFilters"
+          >
+            Reset Filters
+          </button>
+          <span class="text-muted-foreground">•</span>
+          <button
+            type="button"
+            class="text-xs text-destructive hover:underline font-medium flex items-center gap-1"
+            @click="handleClearAll"
+          >
+            <Trash2 class="size-3" />
+            Clear Storage
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Attendance Table Card -->
+    <!-- Attendance Table Card with Server/IndexedDB Pagination -->
     <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
       <Table>
         <TableHeader>
@@ -809,7 +714,7 @@ onUnmounted(() => {
               <TableCell colspan="10" class="h-32 text-center text-muted-foreground">
                 <div class="flex items-center justify-center gap-2">
                   <RefreshCw class="size-4 animate-spin" />
-                  <span>Loading attendance logs...</span>
+                  <span>Loading records from local database...</span>
                 </div>
               </TableCell>
             </TableRow>
@@ -824,21 +729,20 @@ onUnmounted(() => {
                   </div>
                   <div class="space-y-1">
                     <span class="font-medium text-foreground text-sm block">
-                      No attendance records available. Click Sync Attendance to retrieve records from the biometric device.
+                      No attendance logs found.
                     </span>
                     <p class="text-xs text-muted-foreground">
-                      {{ filters.quickRange === 'today' ? 'No attendance records recorded for Today yet.' : 'No records match the active search/date filter.' }}
+                      Click <strong>Import Biometric (Excel)</strong> to load historical data, or click <strong>Sync Device</strong> when connected.
                     </p>
                   </div>
                   <Button
-                    variant="default"
+                    variant="outline"
                     size="sm"
                     class="h-8 gap-1.5 font-medium shadow-xs mt-1"
-                    :disabled="isSyncing"
-                    @click="handleManualSync"
+                    @click="showImportModal = true"
                   >
-                    <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
-                    <span>{{ isSyncing ? 'Syncing...' : 'Sync Attendance' }}</span>
+                    <Upload class="size-3.5" />
+                    <span>Upload Excel File</span>
                   </Button>
                 </div>
               </TableCell>
@@ -860,9 +764,6 @@ onUnmounted(() => {
                   <span class="font-medium text-foreground">
                     {{ log.employee_name || 'Unassigned User' }}
                   </span>
-                  <span class="text-[11px] text-muted-foreground">
-                    {{ log.employee_id ? 'Linked' : 'Not linked to HR profile' }}
-                  </span>
                 </div>
               </TableCell>
 
@@ -875,13 +776,13 @@ onUnmounted(() => {
               </TableCell>
 
               <TableCell class="text-center font-mono text-xs">
-                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium" :title="'Raw biometric Type value: ' + log.type">
+                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
                   {{ log.type }}
                 </span>
               </TableCell>
 
               <TableCell class="text-center font-mono text-xs">
-                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium" :title="'Raw biometric State value: ' + log.state">
+                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
                   {{ log.state }}
                 </span>
               </TableCell>
@@ -909,7 +810,6 @@ onUnmounted(() => {
                   v-if="log.is_duplicate"
                   variant="warning"
                   class="text-[10px] uppercase font-mono"
-                  title="Duplicate scan detected within threshold (preserved for audit)"
                 >
                   Duplicate
                 </Badge>
@@ -951,7 +851,7 @@ onUnmounted(() => {
               Import Biometric Device Data
             </h2>
             <p class="text-xs text-muted-foreground mt-0.5">
-              Upload historical CSV or Excel files directly extracted from B-29b
+              Upload historical CSV or Excel files. Records will be saved to local persistent database.
             </p>
           </div>
           <button
@@ -976,7 +876,7 @@ onUnmounted(() => {
         <!-- Real-time chunked import progress bar -->
         <div v-if="isImporting" class="rounded-md border bg-muted/40 p-3 space-y-2">
           <div class="flex items-center justify-between text-xs">
-            <span class="font-medium text-foreground">Importing to MySQL backend in chunks...</span>
+            <span class="font-medium text-foreground">Importing into IndexedDB in chunks...</span>
             <span class="font-mono text-muted-foreground">{{ importProgress.processed.toLocaleString() }} / {{ importProgress.total.toLocaleString() }} ({{ importProgress.percentage }}%)</span>
           </div>
           <div class="w-full bg-secondary h-2 rounded-full overflow-hidden">
@@ -986,7 +886,7 @@ onUnmounted(() => {
             />
           </div>
           <p class="text-[11px] text-muted-foreground">
-            Processed safely without browser localStorage limitations.
+            Processed safely in batches with automatic duplicate key detection.
           </p>
         </div>
 
@@ -1009,11 +909,11 @@ onUnmounted(() => {
           <div v-if="importFile && importValidation.totalRecords > 0" class="space-y-2 border-t pt-3">
             <div class="flex items-center justify-between text-xs">
               <span class="text-muted-foreground">Detected Records:</span>
-              <strong class="text-foreground">{{ importValidation.totalRecords }}</strong>
+              <strong class="text-foreground">{{ importValidation.totalRecords.toLocaleString() }}</strong>
             </div>
             <div class="flex items-center justify-between text-xs">
               <span class="text-muted-foreground">Valid for import:</span>
-              <strong class="text-emerald-600">{{ importValidation.validCount }}</strong>
+              <strong class="text-emerald-600">{{ importValidation.validCount.toLocaleString() }}</strong>
             </div>
 
             <div class="border rounded-md overflow-hidden text-[11px]">
@@ -1045,7 +945,7 @@ onUnmounted(() => {
             @click="confirmImport"
           >
             <span v-if="isImporting">Importing...</span>
-            <span v-else>Confirm Import ({{ importValidation.validCount }})</span>
+            <span v-else>Confirm Import ({{ importValidation.validCount.toLocaleString() }})</span>
           </Button>
         </div>
       </div>

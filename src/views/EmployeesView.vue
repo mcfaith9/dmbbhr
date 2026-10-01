@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
   Search,
   Fingerprint,
@@ -18,6 +18,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 
 const employees = ref<Employee[]>([])
 const loading = ref(false)
@@ -47,6 +55,10 @@ async function loadEmployees() {
     loading.value = false
   }
 }
+
+watch(selectedLocation, () => {
+  currentPage.value = 1
+})
 
 // Debounced filtering
 const filteredEmployees = computed(() => {
@@ -107,7 +119,7 @@ async function saveEmployee() {
       position: editPosition.value.trim()
     })
 
-    editSuccessMsg.value = 'Employee updated successfully.'
+    editSuccessMsg.value = 'Employee profile saved successfully.'
     await loadEmployees()
 
     setTimeout(() => {
@@ -166,17 +178,20 @@ onUnmounted(() => {
           />
         </div>
 
-        <!-- Location Filter Dropdown -->
-        <select
-          v-model="selectedLocation"
-          class="h-8 text-xs px-2.5 rounded-md border bg-card text-foreground"
-          @change="currentPage = 1"
-        >
-          <option value="all">All Locations</option>
-          <option v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
-            {{ loc }}
-          </option>
-        </select>
+        <!-- Shadcn Select Location Filter -->
+        <Select v-model="selectedLocation">
+          <SelectTrigger class="h-8 text-xs w-[160px] bg-card">
+            <SelectValue placeholder="All Locations" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Locations</SelectItem>
+              <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
+                {{ loc }}
+              </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
 
       <!-- Quick Location Badge summary -->
@@ -298,7 +313,7 @@ onUnmounted(() => {
         <div class="flex items-center justify-between p-4 border-b bg-muted/40">
           <div class="flex items-center gap-2">
             <Building class="size-4 text-primary" />
-            <h2 class="font-semibold text-sm">Edit Employee</h2>
+            <h2 class="font-semibold text-sm">Edit Employee Profile</h2>
           </div>
           <button
             type="button"
@@ -314,7 +329,7 @@ onUnmounted(() => {
           <div class="space-y-1.5">
             <label class="font-medium text-foreground flex items-center justify-between">
               <span>Bio ID (Permanent Biometric Identifier)</span>
-              <span class="text-[10px] font-mono text-muted-foreground">Read-only / Unchanged</span>
+              <span class="text-[10px] font-mono text-muted-foreground">Read-only / Hardware Fixed</span>
             </label>
             <Input
               :value="editBioId"
@@ -323,11 +338,11 @@ onUnmounted(() => {
               class="h-8 text-xs font-mono font-bold bg-muted/70 cursor-not-allowed text-muted-foreground"
             />
             <p class="text-[10px] text-muted-foreground">
-              Bio ID is assigned by the hardware scanner and cannot be modified.
+              Bio ID is assigned by the hardware scanner and cannot be altered.
             </p>
           </div>
 
-          <!-- Employee Name -->
+          <!-- Employee Name (Editable) -->
           <div class="space-y-1.5">
             <label class="font-medium text-foreground">
               Employee Name <span class="text-destructive">*</span>
@@ -340,20 +355,23 @@ onUnmounted(() => {
             />
           </div>
 
-          <!-- Location -->
+          <!-- Location (Editable with Shadcn Select) -->
           <div class="space-y-1.5">
             <label class="font-medium text-foreground">
               Location <span class="text-destructive">*</span>
             </label>
-            <select
-              v-model="editLocation"
-              class="w-full h-8 text-xs px-2.5 rounded-md border bg-background text-foreground"
-              required
-            >
-              <option v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
-                {{ loc }}
-              </option>
-            </select>
+            <Select v-model="editLocation">
+              <SelectTrigger class="h-8 text-xs w-full bg-background">
+                <SelectValue placeholder="Select Location" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
+                    {{ loc }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
 
           <!-- Department & Position -->
