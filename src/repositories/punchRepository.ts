@@ -2,6 +2,7 @@ import { db, type BiometricPunchRecord } from '@/db'
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta } from '@/types'
 import { getManilaDateString } from '@/services/attendanceEngine'
 import { employeeRepository } from './employeeRepository'
+import { workGroupRepository } from './workGroupRepository'
 
 export interface ImportResult {
   totalInFile: number
@@ -52,6 +53,7 @@ export const punchRepository = {
       locationId: log.location_id || 'loc-cebu',
       locationName: log.location_name || 'DBB CEBU',
       employeeName: log.employee_name || `User ${bioId}`,
+      workGroupId: log.work_group_id || 'wg-group-c',
       isDuplicate: Boolean(log.is_duplicate),
       importedAt: log.created_at || new Date().toISOString()
     }
@@ -65,6 +67,7 @@ export const punchRepository = {
       id: rec.id,
       user_id: rec.bioId,
       employee_name: rec.employeeName || `User ${rec.bioId}`,
+      work_group_id: rec.workGroupId || 'wg-group-c',
       attendance_time: rec.timestamp,
       type: rec.type,
       state: rec.state,
@@ -90,7 +93,7 @@ export const punchRepository = {
     // Build Dexie query
     let collection = db.biometricPunches.toCollection()
 
-    // 1. Single Date filtering (High-speed indexed B-tree)
+    // 1. Date range indexed filtering
     if (params.quickRange === 'today') {
       const today = getManilaDateString(new Date())
       collection = db.biometricPunches.where('date').equals(today)
@@ -111,14 +114,18 @@ export const punchRepository = {
       collection = db.biometricPunches.where('bioId').equals(params.userId.trim())
     }
 
-    // Apply secondary filters (type, state, search, location)
+    // Apply secondary filters
     let filteredRecords: BiometricPunchRecord[]
-    const employeeMap = await employeeRepository.getEmployeeMap()
+    const [employeeMap, workGroupMap] = await Promise.all([
+      employeeRepository.getEmployeeMap(),
+      workGroupRepository.getMap()
+    ])
 
     const hasSecondaryFilters = Boolean(
       (params.type !== undefined && params.type !== '' && params.type !== 'all') ||
       (params.state !== undefined && params.state !== '' && params.state !== 'all') ||
       (params.locationId && params.locationId !== 'all') ||
+      (params.workGroupId && params.workGroupId !== 'all') ||
       (params.search && params.search.trim()) ||
       (params.userId && params.userId.trim())
     )
@@ -128,6 +135,7 @@ export const punchRepository = {
       const searchQ = (params.search || '').trim().toLowerCase()
       const userQ = (params.userId || '').trim().toLowerCase()
       const locTarget = (params.locationId || '').trim().toLowerCase()
+      const wgTarget = (params.workGroupId || '').trim()
       const typeNum = params.type !== undefined && params.type !== '' && params.type !== 'all' ? Number(params.type) : null
       const stateNum = params.state !== undefined && params.state !== '' && params.state !== 'all' ? Number(params.state) : null
 
@@ -138,6 +146,7 @@ export const punchRepository = {
         const emp = employeeMap.get(r.bioId)
         const empLoc = (emp?.location || r.locationName || '').toLowerCase()
         const empName = emp?.fullName || r.employeeName || ''
+        const empWg = emp?.workGroupId || r.workGroupId || 'wg-group-c'
 
         if (userQ && r.bioId.toLowerCase() !== userQ) return false
 
@@ -149,6 +158,10 @@ export const punchRepository = {
             (locTarget === 'loc-dbb-negros' && empLoc === 'dbb negros') ||
             (locTarget === 'loc-dbb-iloilo' && empLoc === 'dbb iloilo')
           if (!matchLoc) return false
+        }
+
+        if (wgTarget && wgTarget !== 'all') {
+          if (empWg !== wgTarget) return false
         }
 
         if (searchQ) {
@@ -170,13 +183,16 @@ export const punchRepository = {
     const offset = (page - 1) * pageSize
     const pageRecords = filteredRecords.slice(offset, offset + pageSize)
 
-    // Convert to AttendanceLog with latest employee directory metadata
+    // Convert to AttendanceLog with latest employee & work group metadata
     const logs = pageRecords.map(r => {
       const emp = employeeMap.get(r.bioId)
       const log = this.toLog(r)
       if (emp) {
         log.employee_name = emp.fullName
         log.location_name = emp.location
+        log.work_group_id = emp.workGroupId || 'wg-group-c'
+        const wg = workGroupMap.get(log.work_group_id)
+        log.work_group_name = wg?.name || 'GROUP C'
       }
       return log
     })
@@ -205,6 +221,7 @@ export const punchRepository = {
       if (emp) {
         log.employee_name = emp.fullName
         log.location_name = emp.location
+        log.work_group_id = emp.workGroupId || 'wg-group-c'
       }
       return log
     })
@@ -212,7 +229,6 @@ export const punchRepository = {
 
   /**
    * Bulk imports raw records with streaming transactions, deduplication, and progress reporting.
-   * Can ingest 24,000 to 100,000+ records safely.
    */
   async bulkImport(
     rawRecords: any[],
@@ -230,9 +246,8 @@ export const punchRepository = {
     let invalidCount = 0
     let batchCount = 0
 
-    // Set of existing punch keys in local DB for fast in-batch check
     const existingIds = new Set(await db.biometricPunches.toCollection().primaryKeys())
-    const employeeBatchMap = new Map<string, { bioId: string; name: string; location: any }>()
+    const employeeBatchMap = new Map<string, { bioId: string; name: string; location: any; workGroupId?: string }>()
 
     for (let i = 0; i < total; i += BATCH_SIZE) {
       const chunk = rawRecords.slice(i, i + BATCH_SIZE)
@@ -242,6 +257,7 @@ export const punchRepository = {
         const userId = String(raw['User ID'] || raw['userId'] || raw['User_ID'] || raw['ID'] || raw.user_id || '').trim()
         const rawTime = raw['Date/Time'] || raw['DateTime'] || raw['Date'] || raw['attTime'] || raw['Time'] || raw.attendance_time
         const rawName = String(raw['Name'] || raw['Employee'] || raw['Employee Name'] || raw.employee_name || '').trim()
+        const rawWg = raw['Work Group'] || raw['WorkGroup'] || raw['Group'] || raw.work_group_id || 'wg-group-c'
 
         if (!userId || !rawTime) {
           invalidCount++
@@ -281,12 +297,13 @@ export const punchRepository = {
           locationId: 'loc-cebu',
           locationName: 'DBB CEBU',
           employeeName: rawName || `User ${userId}`,
+          workGroupId: rawWg,
           isDuplicate: false,
           importedAt: new Date().toISOString()
         })
 
         if (rawName && !employeeBatchMap.has(userId)) {
-          employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: 'DBB CEBU' })
+          employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: 'DBB CEBU', workGroupId: rawWg })
         }
       }
 
@@ -301,16 +318,13 @@ export const punchRepository = {
         onProgress(Math.min(i + BATCH_SIZE, total), total)
       }
 
-      // Yield event loop to ensure UI responsiveness
       await new Promise(r => setTimeout(r, 0))
     }
 
-    // Register any discovered employees
     if (employeeBatchMap.size > 0) {
       await employeeRepository.bulkRegisterEmployees(Array.from(employeeBatchMap.values()))
     }
 
-    // Record the completed import job
     await db.importJobs.put({
       id: `job-${Date.now()}`,
       filename,
@@ -331,16 +345,13 @@ export const punchRepository = {
     }
   },
 
-  /**
-   * Adds a single live biometric scan with deduplication
-   */
   async addPunch(log: AttendanceLog): Promise<boolean> {
     const record = this.toRecord(log)
     if (!record) return false
 
     const existing = await db.biometricPunches.get(record.id)
     if (existing) {
-      return false // Duplicate scan
+      return false
     }
 
     await db.biometricPunches.put(record)
@@ -348,16 +359,10 @@ export const punchRepository = {
     return true
   },
 
-  /**
-   * Counts total stored punches
-   */
   async count(): Promise<number> {
     return db.biometricPunches.count()
   },
 
-  /**
-   * Clears all punch records (with audit safeguards)
-   */
   async clearAll(): Promise<void> {
     await db.biometricPunches.clear()
     await db.dailyAttendance.clear()

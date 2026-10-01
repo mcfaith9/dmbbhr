@@ -1,5 +1,6 @@
 import { db, type EmployeeRecord } from '@/db'
 import type { Employee, EmployeeLocation } from '@/types'
+import { workGroupRepository } from './workGroupRepository'
 
 export const VALID_LOCATIONS: EmployeeLocation[] = [
   'DMBB CEBU',
@@ -8,13 +9,14 @@ export const VALID_LOCATIONS: EmployeeLocation[] = [
   'DBB ILOILO'
 ]
 
-// Seed employees for initial lookup
+// Seed employees with assigned Work Groups
 const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
   {
     bioId: '50044',
     employeeNumber: 'EMP-50044',
     fullName: 'B Basalo, Randy',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-a', // GROUP A: 6:00 AM - 3:00 PM
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -26,6 +28,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-5007',
     fullName: 'A Abella, Jebjeb',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-b', // GROUP B: 7:00 AM - 4:00 PM
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -37,6 +40,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50113',
     fullName: 'A Aligway, Nicasio',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-c', // GROUP C: 8:00 AM - 5:00 PM
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -48,6 +52,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50062',
     fullName: 'B Baricuatro, Tonton',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -59,6 +64,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50059',
     fullName: 'C Repompo, Raffy',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -70,6 +76,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50039',
     fullName: 'D Baclaan Jr, Victoriano',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -81,6 +88,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50052',
     fullName: 'D Canceran, Eduard',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -92,6 +100,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50071',
     fullName: 'D Catampatan, Edgardo',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -103,6 +112,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-10001',
     fullName: 'D Cuizon, Roberto',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -114,6 +124,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50065',
     fullName: 'D Villarta Melquiades',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-a',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -125,6 +136,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50060',
     fullName: 'E Basalo, Juniemar',
     location: 'DBB CEBU',
+    workGroupId: 'wg-group-b',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -133,7 +145,6 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
   }
 ]
 
-// In-memory cache for fast O(1) Bio ID lookups during processing
 let employeeCache: Map<string, EmployeeRecord> | null = null
 const changeListeners = new Set<() => void>()
 
@@ -142,51 +153,30 @@ async function ensureInitialized() {
 
   const count = await db.employees.count()
   if (count === 0) {
-    // Check old localStorage migration
-    try {
-      const oldRaw = localStorage.getItem('dmbbhr_master_employees_v2')
-      if (oldRaw) {
-        const parsed = JSON.parse(oldRaw)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const records: EmployeeRecord[] = parsed.map(e => ({
-            bioId: String(e.biometric_user_id || e.bioId).trim(),
-            employeeNumber: e.employee_number || `EMP-${e.biometric_user_id || e.bioId}`,
-            fullName: e.full_name || e.fullName || `User ${e.biometric_user_id || e.bioId}`,
-            location: e.location || 'DBB CEBU',
-            department: e.department || 'Operations',
-            position: e.position || 'Staff',
-            status: e.status || 'active',
-            createdAt: e.created_at || new Date().toISOString(),
-            updatedAt: e.updated_at || new Date().toISOString()
-          }))
-          await db.employees.bulkPut(records)
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    const currentCount = await db.employees.count()
-    if (currentCount === 0) {
-      await db.employees.bulkPut(DEFAULT_INITIAL_EMPLOYEES)
-    }
+    await db.employees.bulkPut(DEFAULT_INITIAL_EMPLOYEES)
   }
 
   const all = await db.employees.toArray()
   employeeCache = new Map<string, EmployeeRecord>()
   for (const emp of all) {
+    if (!emp.workGroupId) {
+      emp.workGroupId = 'wg-group-c'
+    }
     employeeCache.set(emp.bioId, emp)
   }
 }
 
 export const employeeRepository = {
-  toEmployee(rec: EmployeeRecord): Employee {
+  async toEmployee(rec: EmployeeRecord): Promise<Employee> {
+    const wg = await workGroupRepository.getById(rec.workGroupId || 'wg-group-c')
     return {
       id: `emp-${rec.bioId}`,
       employee_number: rec.employeeNumber,
       biometric_user_id: rec.bioId,
       full_name: rec.fullName,
       location: rec.location,
+      work_group_id: rec.workGroupId || 'wg-group-c',
+      work_group_name: wg?.name || 'GROUP C',
       department: rec.department,
       position: rec.position,
       status: rec.status,
@@ -196,9 +186,9 @@ export const employeeRepository = {
   },
 
   /**
-   * Retrieves all employees with optional location & search filters
+   * Retrieves all employees with optional location, work group, & search filters
    */
-  async getEmployees(params: { location?: string; search?: string } = {}): Promise<Employee[]> {
+  async getEmployees(params: { location?: string; workGroupId?: string; search?: string } = {}): Promise<Employee[]> {
     await ensureInitialized()
     let records = Array.from(employeeCache!.values())
 
@@ -216,6 +206,10 @@ export const employeeRepository = {
       })
     }
 
+    if (params.workGroupId && params.workGroupId !== 'all') {
+      records = records.filter(e => (e.workGroupId || 'wg-group-c') === params.workGroupId)
+    }
+
     if (params.search && params.search.trim()) {
       const q = params.search.trim().toLowerCase()
       records = records.filter(e =>
@@ -227,7 +221,7 @@ export const employeeRepository = {
     }
 
     records.sort((a, b) => a.fullName.localeCompare(b.fullName))
-    return records.map(this.toEmployee)
+    return Promise.all(records.map(r => this.toEmployee(r)))
   },
 
   /**
@@ -249,10 +243,11 @@ export const employeeRepository = {
 
   /**
    * Edits an employee. Bio ID is strictly permanent and read-only.
+   * Updates Employee Name, Location, and Work Group.
    */
   async updateEmployee(
     bioId: string,
-    updates: { fullName: string; location: EmployeeLocation; department?: string; position?: string }
+    updates: { fullName: string; location: EmployeeLocation; workGroupId?: string; department?: string; position?: string }
   ): Promise<Employee> {
     await ensureInitialized()
     const cleanBioId = String(bioId).trim()
@@ -264,6 +259,7 @@ export const employeeRepository = {
         employeeNumber: `EMP-${cleanBioId}`,
         fullName: updates.fullName.trim() || `User ${cleanBioId}`,
         location: updates.location || 'DBB CEBU',
+        workGroupId: updates.workGroupId || 'wg-group-c',
         department: updates.department?.trim() || 'Operations',
         position: updates.position?.trim() || 'Staff',
         status: 'active',
@@ -275,6 +271,7 @@ export const employeeRepository = {
         ...record,
         fullName: updates.fullName.trim() || record.fullName,
         location: updates.location || record.location,
+        workGroupId: updates.workGroupId || record.workGroupId || 'wg-group-c',
         department: updates.department !== undefined ? updates.department.trim() : record.department,
         position: updates.position !== undefined ? updates.position.trim() : record.position,
         updatedAt: new Date().toISOString()
@@ -291,7 +288,12 @@ export const employeeRepository = {
   /**
    * Registers or updates an employee discovered during biometric import/scan
    */
-  async registerFromPunch(bioId: string, name?: string, location: EmployeeLocation = 'DBB CEBU'): Promise<EmployeeRecord> {
+  async registerFromPunch(
+    bioId: string,
+    name?: string,
+    location: EmployeeLocation = 'DBB CEBU',
+    workGroupId: string = 'wg-group-c'
+  ): Promise<EmployeeRecord> {
     await ensureInitialized()
     const cleanBioId = String(bioId).trim()
     let record = employeeCache!.get(cleanBioId)
@@ -302,6 +304,7 @@ export const employeeRepository = {
         employeeNumber: `EMP-${cleanBioId}`,
         fullName: name && name.trim() ? name.trim() : `User ${cleanBioId}`,
         location,
+        workGroupId,
         department: 'Operations',
         position: 'Staff',
         status: 'active',
@@ -325,7 +328,9 @@ export const employeeRepository = {
   /**
    * Bulk register employees
    */
-  async bulkRegisterEmployees(employees: { bioId: string; name: string; location?: EmployeeLocation }[]): Promise<void> {
+  async bulkRegisterEmployees(
+    employees: { bioId: string; name: string; location?: EmployeeLocation; workGroupId?: string }[]
+  ): Promise<void> {
     await ensureInitialized()
     const recordsToPut: EmployeeRecord[] = []
 
@@ -339,6 +344,7 @@ export const employeeRepository = {
           employeeNumber: `EMP-${cleanBioId}`,
           fullName: emp.name && emp.name.trim() ? emp.name.trim() : `User ${cleanBioId}`,
           location: emp.location || 'DBB CEBU',
+          workGroupId: emp.workGroupId || 'wg-group-c',
           department: 'Operations',
           position: 'Staff',
           status: 'active',

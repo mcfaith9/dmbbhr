@@ -1,6 +1,20 @@
 import Dexie, { type Table } from 'dexie'
 import type { EmployeeLocation } from '@/types'
 
+export interface WorkGroupRecord {
+  id: string // "wg-group-a", "wg-group-b", "wg-group-c"
+  name: string // "GROUP A", "GROUP B", "GROUP C"
+  standardIn: string // "06:00", "07:00", "08:00"
+  requiredWorkMinutes: number // 480 (8 hours)
+  lunchStart: string // "12:00"
+  lunchEnd: string // "13:00"
+  expectedOut: string // Automatically calculated (e.g. "15:00")
+  gracePeriodMinutes: number // 15
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface BiometricPunchRecord {
   id: string // Unique identifier (or composite key)
   bioId: string // Biometric User ID (e.g. 50044)
@@ -16,6 +30,7 @@ export interface BiometricPunchRecord {
   locationId: string
   locationName?: string
   employeeName?: string
+  workGroupId?: string
   isDuplicate: boolean
   importedAt: string
 }
@@ -25,6 +40,7 @@ export interface EmployeeRecord {
   employeeNumber: string
   fullName: string
   location: EmployeeLocation
+  workGroupId: string // "wg-group-a" | "wg-group-b" | "wg-group-c"
   department: string
   position: string
   status: 'active' | 'inactive' | 'on_leave'
@@ -37,18 +53,24 @@ export interface DailyAttendanceRecordDB {
   bioId: string
   employeeName: string
   location: string
+  workGroupId: string
+  workGroupName: string
   date: string // YYYY-MM-DD
   displayDate: string
-  timeIn: string
+  expectedIn: string
+  actualIn: string
+  expectedOut: string
+  actualOut: string
   breakOut: string
   breakIn: string
-  timeOut: string
   totalHours: string
   totalHoursDecimal: number
+  workedMinutes: number
+  lateMinutes: number
+  earlyOutMinutes: number
+  undertimeMinutes: number
   status: string
   statusVariant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary'
-  lateMinutes: number
-  undertimeMinutes: number
   rawPunchesCount: number
   validPunchesCount: number
   hasValidOut: boolean
@@ -114,6 +136,7 @@ export interface ImportJobRecord {
 }
 
 export class DMBBHRDatabase extends Dexie {
+  workGroups!: Table<WorkGroupRecord, string>
   biometricPunches!: Table<BiometricPunchRecord, string>
   employees!: Table<EmployeeRecord, string>
   dailyAttendance!: Table<DailyAttendanceRecordDB, string>
@@ -127,10 +150,11 @@ export class DMBBHRDatabase extends Dexie {
     super('DMBBHR_LocalDB')
 
     // Schema definition with targeted high-performance indices
-    this.version(1).stores({
+    this.version(2).stores({
+      workGroups: 'id, name, isDefault',
       biometricPunches: 'id, bioId, date, timestampMs, deviceId, isDuplicate, [date+bioId], [bioId+timestampMs]',
-      employees: 'bioId, fullName, location, status',
-      dailyAttendance: 'id, bioId, date, status, location, [date+location]',
+      employees: 'bioId, fullName, location, workGroupId, status',
+      dailyAttendance: 'id, bioId, date, status, location, workGroupId, [date+location]',
       dailySummaries: 'date',
       schedules: 'id, code, location',
       leaveRecords: 'id, bioId, startDate, endDate, status',

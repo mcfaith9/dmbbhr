@@ -10,13 +10,14 @@ import {
   CheckCircle2,
   Radio,
   Fingerprint,
-  Trash2
+  Trash2,
+  Layers
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import { attendanceService } from '@/services/attendance'
 import { deviceService } from '@/services/devices'
 import { liveAttendanceService } from '@/services/liveAttendance'
-import type { AttendanceLog, AttendanceFilterParams, PaginationMeta, Location, BiometricDevice } from '@/types'
+import type { AttendanceLog, AttendanceFilterParams, PaginationMeta, Location, BiometricDevice, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +36,7 @@ const logs = ref<AttendanceLog[]>([])
 const loading = ref(false)
 const locations = ref<Location[]>([])
 const devices = ref<BiometricDevice[]>([])
+const workGroups = ref<WorkGroup[]>([])
 
 // Helper to get local date string YYYY-MM-DD in Asia/Manila (Philippine Standard Time)
 function getTodayManilaDateString(): string {
@@ -50,6 +52,7 @@ function getTodayManilaDateString(): string {
 const filters = ref<AttendanceFilterParams>({
   search: '',
   locationId: 'all',
+  workGroupId: 'all',
   deviceId: 'all',
   quickRange: 'all',
   startDate: '',
@@ -94,8 +97,14 @@ async function loadData() {
 }
 
 async function loadLookups() {
-  locations.value = await deviceService.getLocations()
-  devices.value = await deviceService.getDevices()
+  const [locs, devs, wgs] = await Promise.all([
+    deviceService.getLocations(),
+    deviceService.getDevices(),
+    attendanceService.getWorkGroups()
+  ])
+  locations.value = locs
+  devices.value = devs
+  workGroups.value = wgs
 }
 
 function handleSearch() {
@@ -105,7 +114,7 @@ function handleSearch() {
 
 // Watch filters for instant pagination / dropdown updates
 watch(
-  () => [filters.value.locationId, filters.value.deviceId, filters.value.type, filters.value.state],
+  () => [filters.value.locationId, filters.value.workGroupId, filters.value.deviceId, filters.value.type, filters.value.state],
   () => {
     filters.value.page = 1
     loadData()
@@ -163,6 +172,7 @@ function resetFilters() {
   filters.value = {
     search: '',
     locationId: 'all',
+    workGroupId: 'all',
     deviceId: 'all',
     quickRange: 'all',
     startDate: '',
@@ -225,6 +235,7 @@ async function exportLogs(format: 'xlsx' | 'csv') {
   const exportRows = allFiltered.map(log => ({
     'User ID': log.user_id,
     'Employee Name': log.employee_name || 'Unassigned',
+    'Work Group': log.work_group_name || 'GROUP C',
     'Date': formatDate(log.attendance_time),
     'Time': formatTime(log.attendance_time),
     'Full Timestamp': log.attendance_time,
@@ -563,7 +574,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Main Input Filters with Shadcn Select -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
         <div class="relative lg:col-span-2">
           <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
           <Input
@@ -593,16 +604,16 @@ onUnmounted(() => {
         </div>
 
         <div>
-          <!-- Shadcn Device Select -->
-          <Select v-model="filters.deviceId">
+          <!-- Shadcn Work Group Select -->
+          <Select v-model="filters.workGroupId">
             <SelectTrigger class="h-8 text-xs w-full bg-background">
-              <SelectValue placeholder="All Devices" />
+              <SelectValue placeholder="All Groups" />
             </SelectTrigger>
             <SelectContent>
               <SelectGroup>
-                <SelectItem value="all">All Devices</SelectItem>
-                <SelectItem v-for="dev in devices" :key="dev.id" :value="dev.id">
-                  {{ dev.name }}
+                <SelectItem value="all">All Work Groups</SelectItem>
+                <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
+                  {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
                 </SelectItem>
               </SelectGroup>
             </SelectContent>
@@ -697,12 +708,12 @@ onUnmounted(() => {
           <TableRow class="bg-muted/40">
             <TableHead class="w-[100px] font-semibold">User ID</TableHead>
             <TableHead class="font-semibold">Employee</TableHead>
+            <TableHead class="font-semibold">Work Group</TableHead>
             <TableHead class="font-semibold">Date</TableHead>
             <TableHead class="font-semibold">Time</TableHead>
             <TableHead class="font-semibold text-center w-[70px]">Type</TableHead>
             <TableHead class="font-semibold text-center w-[70px]">State</TableHead>
             <TableHead class="font-semibold text-center w-[80px]">Serial</TableHead>
-            <TableHead class="font-semibold">Device</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
             <TableHead class="font-semibold text-right">Audit</TableHead>
           </TableRow>
@@ -767,6 +778,13 @@ onUnmounted(() => {
                 </div>
               </TableCell>
 
+              <TableCell>
+                <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40">
+                  <Layers class="size-2.5 text-primary" />
+                  {{ log.work_group_name || 'GROUP C' }}
+                </Badge>
+              </TableCell>
+
               <TableCell class="whitespace-nowrap text-xs">
                 {{ formatDate(log.attendance_time) }}
               </TableCell>
@@ -789,13 +807,6 @@ onUnmounted(() => {
 
               <TableCell class="text-center font-mono text-xs text-muted-foreground">
                 {{ log.serial_number }}
-              </TableCell>
-
-              <TableCell class="text-xs">
-                <div class="flex flex-col">
-                  <span class="font-medium text-foreground">{{ log.device_name || 'BISBIO B-29b' }}</span>
-                  <span class="font-mono text-[10px] text-muted-foreground">{{ log.device_ip }}</span>
-                </div>
               </TableCell>
 
               <TableCell class="text-xs">

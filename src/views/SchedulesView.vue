@@ -5,18 +5,25 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  ArrowRight
+  ArrowRight,
+  Clock,
+  Coffee,
+  CheckCircle2,
+  Layers,
+  Sparkles
 } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { attendanceRepository } from '@/repositories/attendanceRepository'
 import { scheduleRepository } from '@/repositories/scheduleRepository'
-import type { DailySummaryRecord, ShiftScheduleRecord, HolidayRecord } from '@/db'
+import { workGroupRepository } from '@/repositories/workGroupRepository'
+import type { DailySummaryRecord, HolidayRecord } from '@/db'
+import type { WorkGroup } from '@/types'
 import { getManilaDateString } from '@/services/attendanceEngine'
 
 const router = useRouter()
 
-const activeTab = ref<'calendar' | 'schedules'>('calendar')
+const activeTab = ref<'calendar' | 'workgroups'>('calendar')
 
 // Calendar State
 const now = new Date()
@@ -26,7 +33,7 @@ const loadingCalendar = ref(false)
 
 const monthSummaries = ref<Map<string, DailySummaryRecord>>(new Map())
 const holidays = ref<HolidayRecord[]>([])
-const schedules = ref<ShiftScheduleRecord[]>([])
+const workGroups = ref<WorkGroup[]>([])
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -40,14 +47,14 @@ const currentMonthLabel = computed(() => {
 async function loadCalendarData() {
   loadingCalendar.value = true
   try {
-    const [summaries, holidayList, scheduleList] = await Promise.all([
+    const [summaries, holidayList, wgList] = await Promise.all([
       attendanceRepository.getMonthSummaries(currentYear.value, currentMonth.value),
       scheduleRepository.getHolidays(currentYear.value),
-      scheduleRepository.getSchedules()
+      workGroupRepository.getAll()
     ])
     monthSummaries.value = summaries
     holidays.value = holidayList
-    schedules.value = scheduleList
+    workGroups.value = wgList
   } finally {
     loadingCalendar.value = false
   }
@@ -137,10 +144,10 @@ const calendarGrid = computed(() => {
     })
   }
 
-  // Trailing days from next month to complete 35 or 42 cells
+  // Trailing days
   const remaining = 42 - days.length
   if (remaining < 7 && days.length === 35) {
-    // 35 is fine
+    // 35 cells
   } else {
     for (let d = 1; d <= remaining; d++) {
       const nextM = month === 12 ? 1 : month + 1
@@ -205,7 +212,7 @@ onMounted(() => {
           <span>Time Management</span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Visual monthly attendance calendar and shift configuration. Click any date to view individual employee punches.
+          Work Group schedules (6am–3pm, 7am–4pm, 8am–5pm) with automatic lunch break exclusion and monthly attendance calendar.
         </p>
       </div>
 
@@ -227,13 +234,13 @@ onMounted(() => {
           type="button"
           :class="[
             'px-3 py-1 text-xs font-medium rounded-md transition-colors',
-            activeTab === 'schedules'
+            activeTab === 'workgroups'
               ? 'bg-card text-foreground shadow-xs'
               : 'text-muted-foreground hover:text-foreground'
           ]"
-          @click="activeTab = 'schedules'"
+          @click="activeTab = 'workgroups'"
         >
-          Shift Schedules
+          Work Groups & Schedules
         </button>
       </div>
     </div>
@@ -386,41 +393,80 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- TAB 2: SHIFT SCHEDULES -->
-    <div v-if="activeTab === 'schedules'" class="space-y-4">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <!-- TAB 2: WORK GROUPS & SCHEDULE LOGIC -->
+    <div v-if="activeTab === 'workgroups'" class="space-y-4">
+      <div class="rounded-xl border bg-card p-4 shadow-xs space-y-2">
+        <div class="flex items-center gap-2">
+          <Sparkles class="size-4 text-primary" />
+          <h2 class="font-semibold text-sm text-foreground">Dynamic Work Group Schedule Rules</h2>
+        </div>
+        <p class="text-xs text-muted-foreground leading-relaxed">
+          Expected OUT is <strong>automatically calculated</strong> based on Standard IN + 8 Required Working Hours, while <strong>strictly excluding</strong> the configured 1-hour unpaid lunch break (<code class="font-mono font-semibold">12:00 PM – 1:00 PM</code>).
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div
-          v-for="s in schedules"
-          :key="s.id"
-          class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-3"
+          v-for="wg in workGroups"
+          :key="wg.id"
+          class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-4 flex flex-col justify-between"
         >
-          <div class="flex items-center justify-between">
-            <h3 class="font-semibold text-base text-foreground">{{ s.name }}</h3>
-            <Badge variant="outline" class="font-mono text-xs">{{ s.code }}</Badge>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <Layers class="size-4 text-primary" />
+                <h3 class="font-bold text-base text-foreground">{{ wg.name }}</h3>
+              </div>
+              <Badge variant="outline" class="font-mono text-xs">8.0 hrs Work</Badge>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2.5 text-xs border-t pt-3">
+              <div>
+                <span class="text-muted-foreground text-[10px] uppercase font-semibold">STANDARD IN</span>
+                <div class="font-bold text-foreground mt-0.5 text-sm flex items-center gap-1">
+                  <Clock class="size-3.5 text-emerald-600" />
+                  {{ wg.standard_in }}
+                </div>
+              </div>
+              <div>
+                <span class="text-muted-foreground text-[10px] uppercase font-semibold">CALCULATED OUT</span>
+                <div class="font-bold text-primary mt-0.5 text-sm flex items-center gap-1">
+                  <Clock class="size-3.5 text-blue-600" />
+                  {{ wg.expected_out }}
+                </div>
+              </div>
+              <div>
+                <span class="text-muted-foreground text-[10px] uppercase font-semibold">UNPAID LUNCH</span>
+                <div class="font-medium text-foreground mt-0.5 flex items-center gap-1">
+                  <Coffee class="size-3 text-amber-600" />
+                  {{ wg.lunch_start }} – {{ wg.lunch_end }}
+                </div>
+              </div>
+              <div>
+                <span class="text-muted-foreground text-[10px] uppercase font-semibold">GRACE PERIOD</span>
+                <div class="font-medium text-foreground mt-0.5">
+                  {{ wg.grace_period_minutes }} minutes
+                </div>
+              </div>
+            </div>
+
+            <!-- Mathematical Breakdown of the 8 Working Hours -->
+            <div class="p-2.5 rounded-lg bg-muted/40 text-[11px] text-muted-foreground space-y-1 font-mono">
+              <div class="font-sans font-semibold text-foreground text-[10px] uppercase">Working Hours Breakdown:</div>
+              <div>• Morning: {{ wg.standard_in }} → {{ wg.lunch_start }} = {{ wg.standard_in === '06:00' ? '6.0' : (wg.standard_in === '07:00' ? '5.0' : '4.0') }} hrs</div>
+              <div>• Lunch: {{ wg.lunch_start }} → {{ wg.lunch_end }} = 1.0 hr (Unpaid)</div>
+              <div>• Afternoon: {{ wg.lunch_end }} → {{ wg.expected_out }} = {{ wg.standard_in === '06:00' ? '2.0' : (wg.standard_in === '07:00' ? '3.0' : '4.0') }} hrs</div>
+              <div class="text-emerald-600 dark:text-emerald-400 font-bold font-sans pt-0.5">
+                Total Rendered Work: 8.0 Hours
+              </div>
+            </div>
           </div>
 
-          <div class="grid grid-cols-2 gap-3 text-xs border-t pt-3">
-            <div>
-              <span class="text-muted-foreground text-[11px]">WORKING HOURS</span>
-              <div class="font-medium text-foreground mt-0.5">{{ s.startTime }} – {{ s.endTime }}</div>
-            </div>
-            <div>
-              <span class="text-muted-foreground text-[11px]">GRACE PERIOD</span>
-              <div class="font-medium text-foreground mt-0.5">{{ s.gracePeriodMins }} minutes</div>
-            </div>
-            <div>
-              <span class="text-muted-foreground text-[11px]">LUNCH BREAK</span>
-              <div class="font-medium text-foreground mt-0.5">{{ s.breakHours }} hour (Unpaid)</div>
-            </div>
-            <div>
-              <span class="text-muted-foreground text-[11px]">BRANCH</span>
-              <div class="font-medium text-foreground mt-0.5">{{ s.location }}</div>
-            </div>
-          </div>
-
-          <div class="text-[11px] text-muted-foreground pt-1 flex items-center justify-between border-t">
-            <span>Assigned Employees: <strong class="text-foreground">{{ s.assignedCount }}</strong></span>
-            <span class="text-emerald-600 font-medium">Active Policy</span>
+          <div class="text-[11px] text-muted-foreground pt-2 flex items-center justify-between border-t">
+            <span class="inline-flex items-center gap-1 text-emerald-600 font-medium">
+              <CheckCircle2 class="size-3.5" />
+              Active System Schedule
+            </span>
           </div>
         </div>
       </div>

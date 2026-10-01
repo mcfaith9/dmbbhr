@@ -27,12 +27,29 @@ export interface BiometricDevice {
 
 export type EmployeeLocation = 'DMBB CEBU' | 'DBB CEBU' | 'DBB NEGROS' | 'DBB ILOILO'
 
+export interface WorkGroup {
+  id: string // e.g. "wg-group-a", "wg-group-b", "wg-group-c"
+  name: string // "GROUP A", "GROUP B", "GROUP C"
+  standard_in: string // "06:00", "07:00", "08:00" (24h format HH:mm)
+  required_work_minutes: number // 480 (8 hours)
+  lunch_start: string // "12:00"
+  lunch_end: string // "13:00" (1 hour unpaid lunch)
+  expected_out: string // Calculated automatically (e.g. "15:00" / "3:00 PM")
+  grace_period_minutes: number // 15
+  is_default: boolean
+  description?: string
+  created_at?: string
+  updated_at?: string
+}
+
 export interface Employee {
   id: string
   employee_number: string
   biometric_user_id: string
   full_name: string
   location: EmployeeLocation
+  work_group_id: string // References WorkGroup.id
+  work_group_name?: string
   first_name?: string
   last_name?: string
   middle_name?: string
@@ -50,6 +67,8 @@ export interface AttendanceLog {
   user_id: string // Biometric User ID, e.g. 5009, 25013
   employee_id?: string
   employee_name?: string
+  work_group_id?: string
+  work_group_name?: string
   attendance_time: string // ISO string or format "Jun 18, 2026, 2:26 PM"
   raw_time?: string
   type: number // raw biometric type value
@@ -78,6 +97,7 @@ export interface AttendanceFilterParams {
   search?: string
   userId?: string
   locationId?: string
+  workGroupId?: string
   deviceId?: string
   date?: string
   startDate?: string

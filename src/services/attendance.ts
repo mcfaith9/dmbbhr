@@ -2,12 +2,12 @@
  * Attendance Data Layer & Service
  *
  * Implements:
- * - Direct delegation to PunchRepository and AttendanceRepository
+ * - Direct delegation to PunchRepository, AttendanceRepository, and WorkGroupRepository
  * - Persistent storage in IndexedDB via Dexie
  * - Fast single-date O(log N) indexed queries for Daily Attendance
  * - Paginated queries for Attendance Logs without loading 100k+ records into Vue reactivity
- * - Clean status & late minutes processing
- * - Live real-time biometric scan integration
+ * - Dynamic Work Group schedule evaluation (GROUP A: 6am-3pm, GROUP B: 7am-4pm, GROUP C: 8am-5pm)
+ * - Clean status, late minutes, and early out processing
  */
 
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta } from '@/types'
@@ -19,7 +19,8 @@ import {
 } from './attendanceEngine'
 import {
   punchRepository,
-  attendanceRepository
+  attendanceRepository,
+  workGroupRepository
 } from '@/repositories'
 
 export { getManilaDateString, formatManilaTime, type DailyAttendanceRecord, type AttendanceEngineConfig }
@@ -33,15 +34,15 @@ export const attendanceService = {
   },
 
   /**
-   * Generates Daily Attendance for a given date.
-   * Accesses ONLY that date's indexed partition in IndexedDB.
+   * Generates Daily Attendance for a given date with Location & Work Group filters.
    */
   async getDailyAttendance(
     targetDate?: string,
     locationFilter: string = 'all',
+    workGroupFilter: string = 'all',
     customConfig: Partial<AttendanceEngineConfig> = {}
   ): Promise<DailyAttendanceRecord[]> {
-    return attendanceRepository.getDailyAttendance(targetDate, locationFilter, customConfig)
+    return attendanceRepository.getDailyAttendance(targetDate, locationFilter, workGroupFilter, customConfig)
   },
 
   /**
@@ -89,6 +90,13 @@ export const attendanceService = {
       invalidCount: res.invalidCount,
       chunkCount: res.batchCount
     }
+  },
+
+  /**
+   * Gets available Work Groups for filtering & schedules
+   */
+  async getWorkGroups() {
+    return workGroupRepository.getAll()
   },
 
   /**

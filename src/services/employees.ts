@@ -3,21 +3,22 @@
  *
  * Implements:
  * - Bio ID (biometric_user_id) as permanent, immutable identifier
- * - Editable Employee Name and Location (DMBB CEBU, DBB CEBU, DBB NEGROS, DBB ILOILO)
+ * - Editable Employee Name, Location, and Work Group
  * - Persistent storage in IndexedDB (survives browser refresh and dev restarts)
- * - High-speed lookups and reactivity
+ * - Work Group integration (GROUP A: 6am-3pm, GROUP B: 7am-4pm, GROUP C: 8am-5pm)
  */
 
 import type { Employee, EmployeeLocation } from '@/types'
 import { employeeRepository, VALID_LOCATIONS } from '@/repositories/employeeRepository'
+import { workGroupRepository } from '@/repositories/workGroupRepository'
 
 export { VALID_LOCATIONS }
 
 export const employeeService = {
   /**
-   * Returns all employees, with optional location and search filtering
+   * Returns all employees, with optional location, work group, and search filtering
    */
-  async getEmployees(params: { location?: string; search?: string } = {}): Promise<Employee[]> {
+  async getEmployees(params: { location?: string; workGroupId?: string; search?: string } = {}): Promise<Employee[]> {
     return employeeRepository.getEmployees(params)
   },
 
@@ -36,16 +37,24 @@ export const employeeService = {
   },
 
   /**
+   * Gets all available Work Groups
+   */
+  async getWorkGroups() {
+    return workGroupRepository.getAll()
+  },
+
+  /**
    * Edits an employee. Bio ID is strictly permanent and read-only.
-   * Updates Employee Name and Location.
+   * Updates Employee Name, Location, and Work Group.
    */
   async updateEmployee(
     bioId: string,
-    updates: { full_name: string; location: EmployeeLocation; department?: string; position?: string }
+    updates: { full_name: string; location: EmployeeLocation; work_group_id?: string; department?: string; position?: string }
   ): Promise<Employee> {
     return employeeRepository.updateEmployee(bioId, {
       fullName: updates.full_name,
       location: updates.location,
+      workGroupId: updates.work_group_id,
       department: updates.department,
       position: updates.position
     })
@@ -54,8 +63,8 @@ export const employeeService = {
   /**
    * Automatically registers or updates a user from biometric sync/registry
    */
-  async registerFromBiometric(bioId: string, name?: string, location: EmployeeLocation = 'DBB CEBU') {
-    return employeeRepository.registerFromPunch(bioId, name, location)
+  async registerFromBiometric(bioId: string, name?: string, location: EmployeeLocation = 'DBB CEBU', workGroupId: string = 'wg-group-c') {
+    return employeeRepository.registerFromPunch(bioId, name, location, workGroupId)
   },
 
   onEmployeesChanged(callback: () => void) {

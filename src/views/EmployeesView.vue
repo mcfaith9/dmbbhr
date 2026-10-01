@@ -9,10 +9,11 @@ import {
   CheckCircle2,
   MapPin,
   Building,
-  Save
+  Save,
+  Layers
 } from '@lucide/vue'
 import { employeeService, VALID_LOCATIONS } from '@/services/employees'
-import type { Employee, EmployeeLocation } from '@/types'
+import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,9 +29,11 @@ import {
 } from '@/components/ui/select'
 
 const employees = ref<Employee[]>([])
+const workGroups = ref<WorkGroup[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const selectedLocation = ref<string>('all')
+const selectedWorkGroup = ref<string>('all')
 
 // Pagination state
 const currentPage = ref(1)
@@ -41,11 +44,16 @@ const showEditModal = ref(false)
 const editBioId = ref('')
 const editName = ref('')
 const editLocation = ref<EmployeeLocation>('DBB CEBU')
+const editWorkGroupId = ref<string>('wg-group-c')
 const editDepartment = ref('')
 const editPosition = ref('')
 const editSaving = ref(false)
 const editSuccessMsg = ref('')
 const editErrorMsg = ref('')
+
+async function loadLookups() {
+  workGroups.value = await employeeService.getWorkGroups()
+}
 
 async function loadEmployees() {
   loading.value = true
@@ -56,7 +64,7 @@ async function loadEmployees() {
   }
 }
 
-watch(selectedLocation, () => {
+watch([selectedLocation, selectedWorkGroup], () => {
   currentPage.value = 1
 })
 
@@ -68,12 +76,17 @@ const filteredEmployees = computed(() => {
     list = list.filter(e => e.location === selectedLocation.value)
   }
 
+  if (selectedWorkGroup.value && selectedWorkGroup.value !== 'all') {
+    list = list.filter(e => (e.work_group_id || 'wg-group-c') === selectedWorkGroup.value)
+  }
+
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.trim().toLowerCase()
     list = list.filter(e =>
       e.full_name.toLowerCase().includes(q) ||
       e.biometric_user_id.toLowerCase().includes(q) ||
       e.employee_number.toLowerCase().includes(q) ||
+      (e.work_group_name && e.work_group_name.toLowerCase().includes(q)) ||
       (e.department && e.department.toLowerCase().includes(q))
     )
   }
@@ -96,6 +109,7 @@ function openEditModal(emp: Employee) {
   editBioId.value = emp.biometric_user_id
   editName.value = emp.full_name
   editLocation.value = emp.location || 'DBB CEBU'
+  editWorkGroupId.value = emp.work_group_id || 'wg-group-c'
   editDepartment.value = emp.department || 'Operations'
   editPosition.value = emp.position || 'Staff'
   editSuccessMsg.value = ''
@@ -115,6 +129,7 @@ async function saveEmployee() {
     await employeeService.updateEmployee(editBioId.value, {
       full_name: editName.value.trim(),
       location: editLocation.value,
+      work_group_id: editWorkGroupId.value,
       department: editDepartment.value.trim(),
       position: editPosition.value.trim()
     })
@@ -136,6 +151,7 @@ async function saveEmployee() {
 let unSubChange: (() => void) | null = null
 
 onMounted(async () => {
+  await loadLookups()
   await loadEmployees()
   unSubChange = employeeService.onEmployeesChanged(() => {
     loadEmployees()
@@ -159,28 +175,28 @@ onUnmounted(() => {
           </span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Master employee records linked by permanent biometric Bio ID. Name and Location are editable.
+          Master employee records linked by permanent Bio ID. Editable Name, Location, and Work Group schedule.
         </p>
       </div>
     </div>
 
     <!-- Filter and Search Bar -->
-    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-      <div class="flex items-center gap-2 flex-1 max-w-lg">
-        <div class="relative w-full max-w-xs">
-          <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-          <Input
-            v-model="searchQuery"
-            type="text"
-            placeholder="Search by Bio ID, name, or role..."
-            class="pl-8 h-8 text-xs"
-            @input="currentPage = 1"
-          />
-        </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-2 items-center">
+      <div class="relative sm:col-span-2">
+        <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+        <Input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Search by Bio ID, name, or role..."
+          class="pl-8 h-8 text-xs"
+          @input="currentPage = 1"
+        />
+      </div>
 
-        <!-- Shadcn Select Location Filter -->
+      <!-- Location Filter -->
+      <div>
         <Select v-model="selectedLocation">
-          <SelectTrigger class="h-8 text-xs w-[160px] bg-card">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
             <SelectValue placeholder="All Locations" />
           </SelectTrigger>
           <SelectContent>
@@ -194,19 +210,21 @@ onUnmounted(() => {
         </Select>
       </div>
 
-      <!-- Quick Location Badge summary -->
-      <div class="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
-        <span class="text-[11px] font-medium mr-1">Locations:</span>
-        <button
-          v-for="loc in VALID_LOCATIONS"
-          :key="loc"
-          type="button"
-          class="px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
-          :class="selectedLocation === loc ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80 text-muted-foreground'"
-          @click="selectedLocation = selectedLocation === loc ? 'all' : loc; currentPage = 1"
-        >
-          {{ loc }}
-        </button>
+      <!-- Work Group Filter -->
+      <div>
+        <Select v-model="selectedWorkGroup">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
+            <SelectValue placeholder="All Work Groups" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Work Groups</SelectItem>
+              <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
+                {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
+              </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
     </div>
 
@@ -218,6 +236,7 @@ onUnmounted(() => {
             <TableHead class="font-semibold w-[130px]">Bio ID (Permanent)</TableHead>
             <TableHead class="font-semibold">Employee Name</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
+            <TableHead class="font-semibold">Work Group</TableHead>
             <TableHead class="font-semibold">Department</TableHead>
             <TableHead class="font-semibold">Position</TableHead>
             <TableHead class="font-semibold">Status</TableHead>
@@ -228,7 +247,7 @@ onUnmounted(() => {
         <TableBody>
           <template v-if="loading">
             <TableRow>
-              <TableCell colspan="7" class="h-32 text-center text-xs text-muted-foreground">
+              <TableCell colspan="8" class="h-32 text-center text-xs text-muted-foreground">
                 Loading employee records...
               </TableCell>
             </TableRow>
@@ -236,12 +255,12 @@ onUnmounted(() => {
 
           <template v-else-if="filteredEmployees.length === 0">
             <TableRow>
-              <TableCell colspan="7" class="h-32 text-center text-muted-foreground">
+              <TableCell colspan="8" class="h-32 text-center text-muted-foreground">
                 <div class="flex flex-col items-center justify-center gap-1.5">
                   <Users class="size-6 text-muted-foreground/40" />
                   <span class="font-medium text-foreground text-sm">No employees found</span>
                   <p class="text-xs text-muted-foreground">
-                    Try adjusting your search query or location filter.
+                    Try adjusting your search query or filters.
                   </p>
                 </div>
               </TableCell>
@@ -265,6 +284,15 @@ onUnmounted(() => {
                   {{ emp.location }}
                 </span>
               </TableCell>
+
+              <!-- Work Group Badge -->
+              <TableCell class="text-xs">
+                <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40">
+                  <Layers class="size-2.5 text-primary" />
+                  {{ emp.work_group_name || 'GROUP C' }}
+                </Badge>
+              </TableCell>
+
               <TableCell class="text-xs text-muted-foreground">
                 {{ emp.department || 'Operations' }}
               </TableCell>
@@ -329,7 +357,7 @@ onUnmounted(() => {
           <div class="space-y-1.5">
             <label class="font-medium text-foreground flex items-center justify-between">
               <span>Bio ID (Permanent Biometric Identifier)</span>
-              <span class="text-[10px] font-mono text-muted-foreground">Read-only / Hardware Fixed</span>
+              <span class="text-[10px] font-mono text-muted-foreground">Read-only / Fixed</span>
             </label>
             <Input
               :value="editBioId"
@@ -338,7 +366,7 @@ onUnmounted(() => {
               class="h-8 text-xs font-mono font-bold bg-muted/70 cursor-not-allowed text-muted-foreground"
             />
             <p class="text-[10px] text-muted-foreground">
-              Bio ID is assigned by the hardware scanner and cannot be altered.
+              Bio ID connects hardware scans to this employee and cannot be altered.
             </p>
           </div>
 
@@ -372,6 +400,28 @@ onUnmounted(() => {
                 </SelectGroup>
               </SelectContent>
             </Select>
+          </div>
+
+          <!-- Work Group (Editable with Shadcn Select) -->
+          <div class="space-y-1.5">
+            <label class="font-medium text-foreground">
+              Work Group Schedule <span class="text-destructive">*</span>
+            </label>
+            <Select v-model="editWorkGroupId">
+              <SelectTrigger class="h-8 text-xs w-full bg-background">
+                <SelectValue placeholder="Select Work Group" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
+                    {{ wg.name }} ({{ wg.standard_in }} IN → {{ wg.expected_out }} OUT)
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <p class="text-[10px] text-muted-foreground">
+              Determines Standard IN, 8 required working hours, and unpaid lunch window (12pm-1pm).
+            </p>
           </div>
 
           <!-- Department & Position -->

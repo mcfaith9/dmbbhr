@@ -10,11 +10,13 @@ import {
   Users,
   Search,
   X,
-  MapPin
+  MapPin,
+  Layers
 } from '@lucide/vue'
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService, VALID_LOCATIONS } from '@/services/employees'
+import type { WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -37,21 +39,31 @@ const syncProgress = liveAttendanceService.syncProgress
 const todayDateStr = getManilaDateString(new Date())
 const selectedDate = ref<string>(todayDateStr)
 const selectedLocation = ref<string>('all')
+const selectedWorkGroup = ref<string>('all')
 const searchQuery = ref<string>('')
 const loading = ref<boolean>(false)
 const dailyRecords = ref<DailyAttendanceRecord[]>([])
+const workGroups = ref<WorkGroup[]>([])
+
+async function loadLookups() {
+  workGroups.value = await attendanceService.getWorkGroups()
+}
 
 async function loadDailyAttendance() {
   loading.value = true
   try {
-    const records = await attendanceService.getDailyAttendance(selectedDate.value, selectedLocation.value)
+    const records = await attendanceService.getDailyAttendance(
+      selectedDate.value,
+      selectedLocation.value,
+      selectedWorkGroup.value
+    )
     dailyRecords.value = records
   } finally {
     loading.value = false
   }
 }
 
-watch(selectedLocation, () => {
+watch([selectedLocation, selectedWorkGroup], () => {
   loadDailyAttendance()
 })
 
@@ -73,14 +85,12 @@ function setDateQuick(range: 'today' | 'yesterday') {
 
 const filteredRecords = computed(() => {
   let list = dailyRecords.value
-  if (selectedLocation.value && selectedLocation.value !== 'all') {
-    list = list.filter(r => r.location === selectedLocation.value)
-  }
   if (!searchQuery.value.trim()) return list
   const q = searchQuery.value.trim().toLowerCase()
   return list.filter(r =>
     r.biometric_user_id.toLowerCase().includes(q) ||
-    r.employee_name.toLowerCase().includes(q)
+    r.employee_name.toLowerCase().includes(q) ||
+    (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
   )
 })
 
@@ -109,8 +119,9 @@ let unSubLogs: (() => void) | null = null
 let unSubScan: (() => void) | null = null
 let unSubEmployees: (() => void) | null = null
 
-onMounted(() => {
-  loadDailyAttendance()
+onMounted(async () => {
+  await loadLookups()
+  await loadDailyAttendance()
   liveAttendanceService.connect()
 
   unSubLogs = liveAttendanceService.onLogs(() => {
@@ -158,7 +169,7 @@ onUnmounted(() => {
           </Badge>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Processed from persistent biometric scans in Philippine Standard Time. Lateness is measured cleanly against schedule.
+          Dynamic Work Group evaluation (6am-3pm, 7am-4pm, 8am-5pm) with automatic lunch exclusion (12pm-1pm).
         </p>
       </div>
 
@@ -268,7 +279,7 @@ onUnmounted(() => {
       </div>
 
       <div class="rounded-xl border bg-card p-3 shadow-xs flex flex-col justify-center">
-        <span class="text-[11px] text-muted-foreground font-medium">Employees Recorded</span>
+        <span class="text-[11px] text-muted-foreground font-medium">Employees Present</span>
         <div class="text-xl font-bold text-foreground mt-0.5 flex items-center gap-1.5">
           <Users class="size-4 text-primary" />
           <span>{{ stats.total }}</span>
@@ -276,7 +287,7 @@ onUnmounted(() => {
       </div>
 
       <div class="rounded-xl border bg-card p-3 shadow-xs flex flex-col justify-center">
-        <span class="text-[11px] text-muted-foreground font-medium">Attendance Breakdown</span>
+        <span class="text-[11px] text-muted-foreground font-medium">Daily Breakdown</span>
         <div class="text-xs text-foreground mt-1 flex items-center gap-1.5 font-mono flex-wrap">
           <span class="text-emerald-600 font-semibold">{{ stats.onTime }} on time</span>
           <span>•</span>
@@ -294,21 +305,21 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Search and Shadcn Location Filters -->
-    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-      <div class="flex items-center gap-2 flex-1 max-w-lg">
-        <div class="relative w-full max-w-xs">
-          <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-          <Input
-            v-model="searchQuery"
-            placeholder="Filter by User ID or Employee Name..."
-            class="pl-8 text-xs h-8"
-          />
-        </div>
+    <!-- Search, Location, and Work Group Filters with Shadcn Select -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-2 items-center">
+      <div class="relative sm:col-span-2">
+        <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+        <Input
+          v-model="searchQuery"
+          placeholder="Filter by User ID, name, or group..."
+          class="pl-8 text-xs h-8"
+        />
+      </div>
 
-        <!-- Shadcn-Vue Select Location Filter -->
+      <!-- Location Filter -->
+      <div>
         <Select v-model="selectedLocation">
-          <SelectTrigger class="h-8 text-xs w-[160px] bg-card">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
             <SelectValue placeholder="All Locations" />
           </SelectTrigger>
           <SelectContent>
@@ -322,28 +333,30 @@ onUnmounted(() => {
         </Select>
       </div>
 
-      <!-- Quick Location Badge summary buttons -->
-      <div class="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
-        <span class="text-[11px] font-medium mr-1">Location:</span>
-        <button
-          v-for="loc in VALID_LOCATIONS"
-          :key="loc"
-          type="button"
-          class="px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
-          :class="selectedLocation === loc ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80 text-muted-foreground'"
-          @click="selectedLocation = selectedLocation === loc ? 'all' : loc"
-        >
-          {{ loc }}
-        </button>
+      <!-- Work Group Filter -->
+      <div>
+        <Select v-model="selectedWorkGroup">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
+            <SelectValue placeholder="All Work Groups" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Work Groups</SelectItem>
+              <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
+                {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
+              </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
     </div>
 
-    <!-- Daily Attendance Records Table -->
+    <!-- Daily Attendance Records Table with Work Group Schedule Context -->
     <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
       <!-- Loading State -->
       <div v-if="loading" class="p-8 text-center text-xs text-muted-foreground space-y-2">
         <RefreshCw class="size-5 animate-spin mx-auto text-primary" />
-        <p>Loading attendance records for {{ selectedDate }}...</p>
+        <p>Calculating attendance records for {{ selectedDate }}...</p>
       </div>
 
       <!-- Empty State -->
@@ -357,26 +370,26 @@ onUnmounted(() => {
         <div class="space-y-1">
           <p class="font-semibold text-foreground text-sm">No attendance records available for {{ displayDateTitle }}.</p>
           <p class="text-muted-foreground max-w-md mx-auto">
-            Import historical Excel scans or click <strong>Sync Attendance</strong> to retrieve records from the biometric device.
+            Import Excel scans or click <strong>Sync Attendance</strong> to retrieve records from the biometric device.
           </p>
         </div>
       </div>
 
-      <!-- Data Table with Clean Separated Status and Late Metric -->
+      <!-- Data Table -->
       <Table v-else>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="font-semibold">Bio ID</TableHead>
+            <TableHead class="font-semibold w-[80px]">Bio ID</TableHead>
             <TableHead class="font-semibold">Employee Name</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
-            <TableHead class="font-semibold">First IN</TableHead>
-            <TableHead class="font-semibold">Break OUT</TableHead>
-            <TableHead class="font-semibold">Break IN</TableHead>
-            <TableHead class="font-semibold">Final OUT</TableHead>
-            <TableHead class="font-semibold text-center">Total Hours</TableHead>
-            <TableHead class="font-semibold text-center">Late (mins)</TableHead>
-            <TableHead class="font-semibold text-center">Punches</TableHead>
-            <TableHead class="font-semibold text-right">Attendance Status</TableHead>
+            <TableHead class="font-semibold">Work Group</TableHead>
+            <TableHead class="font-semibold">Expected IN / OUT</TableHead>
+            <TableHead class="font-semibold">Actual IN</TableHead>
+            <TableHead class="font-semibold">Actual OUT</TableHead>
+            <TableHead class="font-semibold text-center">Hours</TableHead>
+            <TableHead class="font-semibold text-center">Late</TableHead>
+            <TableHead class="font-semibold text-center">Early Out</TableHead>
+            <TableHead class="font-semibold text-right">Status</TableHead>
           </TableRow>
         </TableHeader>
 
@@ -390,21 +403,41 @@ onUnmounted(() => {
                 {{ row.location }}
               </span>
             </TableCell>
+
+            <!-- Work Group Badge -->
+            <TableCell class="text-xs">
+              <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/30">
+                <Layers class="size-2.5 text-primary" />
+                {{ row.work_group_name }}
+              </Badge>
+            </TableCell>
+
+            <!-- Expected IN & Expected OUT (Calculated excluding lunch) -->
+            <TableCell class="text-xs font-mono text-muted-foreground">
+              <span class="font-medium text-foreground">{{ row.expected_in }}</span>
+              <span> → </span>
+              <span class="font-medium text-foreground">{{ row.expected_out }}</span>
+            </TableCell>
+
+            <!-- Actual IN -->
             <TableCell class="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-              {{ row.time_in }}
+              {{ row.actual_in }}
             </TableCell>
-            <TableCell class="font-mono text-xs text-muted-foreground">{{ row.break_out }}</TableCell>
-            <TableCell class="font-mono text-xs text-muted-foreground">{{ row.break_in }}</TableCell>
+
+            <!-- Actual OUT -->
             <TableCell class="font-mono text-xs font-semibold text-blue-600 dark:text-blue-400">
-              {{ row.time_out }}
+              {{ row.actual_out }}
             </TableCell>
+
+            <!-- Total Rendered Hours -->
             <TableCell class="text-center font-mono font-semibold text-xs">{{ row.total_hours }}</TableCell>
             
-            <!-- Dedicated Late Minutes Column -->
+            <!-- Late Minutes against Work Group Standard IN -->
             <TableCell class="text-center font-mono text-xs">
               <span
                 v-if="row.late_minutes > 0"
                 class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold"
+                :title="`Late by ${row.late_minutes} minutes past ${row.expected_in}`"
               >
                 {{ row.late_minutes }}m
               </span>
@@ -413,9 +446,17 @@ onUnmounted(() => {
               </span>
             </TableCell>
 
-            <TableCell class="text-center font-mono text-xs text-muted-foreground">
-              <span class="px-1.5 py-0.5 rounded bg-muted text-[11px]" :title="row.punches_summary">
-                {{ row.total_punches }}
+            <!-- Early Out Minutes against Work Group Expected OUT -->
+            <TableCell class="text-center font-mono text-xs">
+              <span
+                v-if="row.early_out_minutes > 0"
+                class="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold"
+                :title="`Left ${row.early_out_minutes} minutes before expected ${row.expected_out}`"
+              >
+                {{ row.early_out_minutes }}m
+              </span>
+              <span v-else class="text-muted-foreground text-[11px]">
+                0m
               </span>
             </TableCell>
 
@@ -424,7 +465,7 @@ onUnmounted(() => {
               <Badge
                 :variant="
                   row.status === 'Regular Day'
-                    ? (row.late_minutes > 0 ? 'warning' : 'success')
+                    ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
                     : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline')
                 "
                 class="text-[10px]"

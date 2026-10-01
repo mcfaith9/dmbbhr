@@ -4,10 +4,12 @@ import {
   processEmployeeDayPunches,
   getManilaDateString,
   type DailyAttendanceRecord,
-  type AttendanceEngineConfig
+  type AttendanceEngineConfig,
+  type EmployeeScheduleContext
 } from '@/services/attendanceEngine'
 import { punchRepository } from './punchRepository'
 import { employeeRepository } from './employeeRepository'
+import { workGroupRepository } from './workGroupRepository'
 
 export const attendanceRepository = {
   /**
@@ -18,6 +20,7 @@ export const attendanceRepository = {
   async getDailyAttendance(
     targetDate?: string,
     locationFilter: string = 'all',
+    workGroupFilter: string = 'all',
     customConfig: Partial<AttendanceEngineConfig> = {}
   ): Promise<DailyAttendanceRecord[]> {
     const selectedDate = targetDate || getManilaDateString(new Date())
@@ -40,12 +43,15 @@ export const attendanceRepository = {
     }
 
     const employeeMap = await employeeRepository.getEmployeeMap()
+    const workGroupMap = await workGroupRepository.getMap()
     const records: DailyAttendanceRecord[] = []
 
-    // 3. Process each employee's daily punches
+    // 3. Process each employee's daily punches with Work Group context
     for (const [bioId, punches] of userGroups.entries()) {
       const emp = employeeMap.get(bioId)
       const empLocation = emp?.location || punches[0].location_name || 'DBB CEBU'
+      const empWgId = emp?.workGroupId || 'wg-group-c'
+      const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
 
       // Location filter
       if (locationFilter && locationFilter !== 'all') {
@@ -62,12 +68,27 @@ export const attendanceRepository = {
         }
       }
 
-      const empInfo = {
-        name: emp?.fullName || punches[0].employee_name || `User ${bioId}`,
-        location: empLocation
+      // Work Group filter
+      if (workGroupFilter && workGroupFilter !== 'all') {
+        if (empWgId !== workGroupFilter) {
+          continue
+        }
       }
 
-      const dailyRecord = processEmployeeDayPunches(bioId, punches, selectedDate, empInfo, customConfig)
+      const empContext: EmployeeScheduleContext = {
+        bioId,
+        name: emp?.fullName || punches[0].employee_name || `User ${bioId}`,
+        location: empLocation,
+        workGroupId: empWgId,
+        workGroupName: wg?.name || 'GROUP C',
+        standardIn: wg?.standardIn || '08:00',
+        requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
+        lunchStart: wg?.lunchStart || '12:00',
+        lunchEnd: wg?.lunchEnd || '13:00',
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 15
+      }
+
+      const dailyRecord = processEmployeeDayPunches(bioId, punches, selectedDate, empContext, customConfig)
       if (dailyRecord) {
         records.push(dailyRecord)
       }
