@@ -572,19 +572,19 @@ onUnmounted(() => {
       </div>
 
       <!-- Main Input Filters with Shadcn Select -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-        <div class="relative lg:col-span-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="relative flex-1 min-w-[220px]">
           <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
           <Input
             v-model="filters.search"
             type="text"
             placeholder="Search employee or User ID..."
-            class="pl-8 h-8 text-xs"
+            class="pl-8 h-8 text-xs w-full"
             @keyup.enter="handleSearch"
           />
         </div>
 
-        <div>
+        <div class="w-full sm:w-[150px]">
           <!-- Shadcn Location Select -->
           <Select v-model="filters.locationId">
             <SelectTrigger class="h-8 text-xs w-full bg-background">
@@ -601,7 +601,7 @@ onUnmounted(() => {
           </Select>
         </div>
 
-        <div>
+        <div class="w-full sm:w-[170px]">
           <!-- Shadcn Work Group Select -->
           <Select v-model="filters.workGroupId">
             <SelectTrigger class="h-8 text-xs w-full bg-background">
@@ -618,20 +618,17 @@ onUnmounted(() => {
           </Select>
         </div>
 
-        <div>
+        <div class="flex items-center gap-2 shrink-0">
           <DatePicker
             v-model="filters.startDate"
             placeholder="Start Date"
-            class="h-8 text-xs w-full font-normal"
+            class="w-[220px]"
             @change="handleSearch"
           />
-        </div>
-
-        <div>
           <DatePicker
             v-model="filters.endDate"
             placeholder="End Date"
-            class="h-8 text-xs w-full font-normal"
+            class="w-[220px]"
             @change="handleSearch"
           />
         </div>

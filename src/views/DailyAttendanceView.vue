@@ -288,10 +288,10 @@ onUnmounted(() => {
             </Button>
           </div>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 shrink-0">
           <DatePicker
             v-model="selectedDate"
-            class="w-full text-xs h-8 font-normal"
+            class="w-[220px]"
             @change="loadDailyAttendance"
           />
         </div>

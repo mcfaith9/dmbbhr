@@ -76,7 +76,7 @@ const df = new DateFormatter('en-US', {
         variant="outline"
         :disabled="disabled"
         :class="cn(
-          'w-full sm:w-[240px] justify-start text-left font-normal h-8 text-xs',
+          'w-[220px] max-w-full justify-start text-left font-normal h-8 text-xs shrink-0',
           !date && 'text-muted-foreground',
           props.class
         )"

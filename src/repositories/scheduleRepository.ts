@@ -40,6 +40,42 @@ const DEFAULT_HOLIDAYS: HolidayRecord[] = [
   { id: 'hol-10', name: 'Rizal Day', date: '2026-12-30', type: 'Regular', isNationwide: true }
 ]
 
+const DEFAULT_LEAVES: LeaveRecord[] = [
+  {
+    id: 'lv-1',
+    bioId: '50366',
+    employeeName: 'Santos, Roberto',
+    leaveType: 'Vacation',
+    startDate: '2026-07-15',
+    endDate: '2026-07-17',
+    status: 'Approved',
+    days: 3,
+    reason: 'Family event'
+  },
+  {
+    id: 'lv-2',
+    bioId: '10244',
+    employeeName: 'Cruz, Maria Elena',
+    leaveType: 'Sick',
+    startDate: '2026-06-22',
+    endDate: '2026-06-22',
+    status: 'Approved',
+    days: 1,
+    reason: 'Medical checkup'
+  },
+  {
+    id: 'lv-3',
+    bioId: '31088',
+    employeeName: 'Villanueva, John Paul',
+    leaveType: 'Vacation',
+    startDate: '2026-09-30',
+    endDate: '2026-09-30',
+    status: 'Approved',
+    days: 1,
+    reason: 'Approved annual vacation leave'
+  }
+]
+
 async function ensureSchedulesInitialized() {
   const count = await db.schedules.count()
   if (count === 0) {
@@ -48,6 +84,10 @@ async function ensureSchedulesInitialized() {
   const holCount = await db.holidays.count()
   if (holCount === 0) {
     await db.holidays.bulkPut(DEFAULT_HOLIDAYS)
+  }
+  const leaveCount = await db.leaveRecords.count()
+  if (leaveCount === 0) {
+    await db.leaveRecords.bulkPut(DEFAULT_LEAVES)
   }
 }
 
