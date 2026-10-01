@@ -4,7 +4,7 @@ import {
   Search,
   Fingerprint,
   Users,
-  Edit2,
+  UserRoundPen,
   X,
   CheckCircle2,
   AlertTriangle,
@@ -482,8 +482,10 @@ onUnmounted(() => {
             <TableRow v-for="emp in paginatedEmployees" :key="emp.biometric_user_id">
               <TableCell class="font-mono font-semibold text-primary">
                 <span class="inline-flex items-center gap-1.5" :title="`Permanent Biometric Identifier: ${emp.biometric_user_id}`">
-                  <Fingerprint class="size-3.5 text-muted-foreground" />
-                  {{ emp.biometric_user_id }}
+                  <Fingerprint class="size-3.5 text-muted-foreground" />                  
+                  <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
+                    {{ emp.biometric_user_id }}
+                  </span>
                 </span>
               </TableCell>
               <TableCell class="font-medium text-foreground text-xs">
@@ -529,7 +531,7 @@ onUnmounted(() => {
                   class="h-7 px-2 text-xs gap-1"
                   @click="openEditModal(emp)"
                 >
-                  <Edit2 class="size-3 text-primary" />
+                  <UserRoundPen class="size-3 text-primary" />
                   <span>Edit</span>
                 </Button>
               </TableCell>

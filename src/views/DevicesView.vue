@@ -80,22 +80,35 @@ onMounted(() => {
         <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <span>Biometric Device Management</span>
           <Badge
-            :variant="deviceStatus.status === 'online' ? 'success' : (deviceStatus.status === 'connecting' ? 'warning' : 'destructive')"
-            class="text-[11px] gap-1"
+            :variant="
+              deviceStatus.status === 'online'
+                ? 'success'
+                : (deviceStatus.status === 'connecting' ? 'warning' : 'destructive')
+            "
+            :class="[
+              'text-[11px] gap-1',
+              deviceStatus.status === 'offline' ? 'text-white' : ''
+            ]"
           >
             <Radio
               class="size-3"
               :class="[
-                deviceStatus.status === 'online' ? 'animate-pulse' : (deviceStatus.status === 'connecting' ? 'animate-spin' : '')
+                deviceStatus.status === 'online'
+                  ? 'animate-pulse'
+                  : (deviceStatus.status === 'connecting' ? 'animate-spin' : '')
               ]"
             />
             <span>
-              {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Offline') }}
+              {{
+                deviceStatus.status === 'online'
+                  ? 'Online'
+                  : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Offline')
+              }}
             </span>
           </Badge>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Real hardware socket state from the local Node.js biometric agent (<code class="font-mono">zkteco-js</code>).
+          Real hardware socket state from the local Node.js biometric agent.
         </p>
       </div>
 
@@ -153,9 +166,9 @@ onMounted(() => {
             <Badge
               v-else
               variant="destructive"
-              class="text-xs"
+              class="text-xs text-white"
             >
-              <span class="size-1.5 rounded-full bg-destructive mr-1.5" />
+              <span class="size-1.5 rounded-full bg-white mr-1.5" />
               Offline
             </Badge>
           </div>

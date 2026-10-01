@@ -11,7 +11,8 @@ import {
   Radio,
   Fingerprint,
   Trash2,
-  Layers
+  Boxes,
+  MapPin
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import { attendanceService } from '@/services/attendance'
@@ -699,7 +700,7 @@ onUnmounted(() => {
       <Table>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="w-[100px] font-semibold">User ID</TableHead>
+            <TableHead class="w-[100px] font-semibold">BIO ID</TableHead>
             <TableHead class="font-semibold">Employee</TableHead>
             <TableHead class="font-semibold">Work Group</TableHead>
             <TableHead class="font-semibold">Date</TableHead>
@@ -759,8 +760,10 @@ onUnmounted(() => {
               :key="log.id"
               :class="log.is_duplicate ? 'bg-amber-500/5' : ''"
             >
-              <TableCell class="font-mono font-medium text-foreground">
-                {{ log.user_id }}
+              <TableCell class="font-mono font-medium text-foreground">                
+                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
+                  {{ log.user_id }}
+                </span>
               </TableCell>
 
               <TableCell>
@@ -773,7 +776,7 @@ onUnmounted(() => {
 
               <TableCell>
                 <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40">
-                  <Layers class="size-2.5 text-primary" />
+                  <Boxes class="size-2.5 text-primary" />
                   {{ log.work_group_name || 'GROUP C' }}
                 </Badge>
               </TableCell>
@@ -782,7 +785,7 @@ onUnmounted(() => {
                 {{ formatDate(log.attendance_time) }}
               </TableCell>
 
-              <TableCell class="whitespace-nowrap font-mono text-xs font-medium">
+              <TableCell class="whitespace-nowrap text-xs">
                 {{ formatTime(log.attendance_time) }}
               </TableCell>
 
@@ -804,7 +807,7 @@ onUnmounted(() => {
 
               <TableCell class="text-xs">
                 <span class="inline-flex items-center gap-1 font-medium text-foreground">
-                  <span class="size-1.5 rounded-full bg-emerald-500" />
+                  <MapPin class="size-3 text-emerald-600 dark:text-emerald-400" />
                   {{ log.location_name || 'DBB Cebu' }}
                 </span>
               </TableCell>

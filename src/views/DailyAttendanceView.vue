@@ -1,170 +1,174 @@
-<script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import {
-  Clock,
-  RefreshCw,
-  Calendar as CalendarIcon,
-  CheckCircle2,
-  AlertCircle,
-  Radio,
-  Users,
-  Search,
-  X,
-  MapPin,
-  Layers,
-  ArrowDownUp
-} from '@lucide/vue'
-import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
-import { liveAttendanceService } from '@/services/liveAttendance'
-import { employeeService, VALID_LOCATIONS } from '@/services/employees'
-import type { WorkGroup } from '@/types'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
-import { DatePicker } from '@/components/ui/date-picker'
+  <script setup lang="ts">
+  import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+  import {
+    Clock,
+    RefreshCw,
+    Calendar as CalendarIcon,
+    CheckCircle2,
+    AlertCircle,
+    Radio,
+    Users,
+    Search,
+    X,
+    MapPin,
+    Boxes,
+    ArrowDownUp
+  } from '@lucide/vue'
+  import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
+  import { liveAttendanceService } from '@/services/liveAttendance'
+  import { employeeService, VALID_LOCATIONS } from '@/services/employees'
+  import type { WorkGroup } from '@/types'
+  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+  import { Badge } from '@/components/ui/badge'
+  import { Button } from '@/components/ui/button'
+  import { Input } from '@/components/ui/input'
+  import {
+    Select,
+    SelectContent,
+    SelectGroup,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+  } from '@/components/ui/select'
+  import { DatePicker } from '@/components/ui/date-picker'
 
-// Real device status and sync state
-const deviceStatus = liveAttendanceService.deviceStatus
-const isSyncing = liveAttendanceService.isSyncing
-const syncProgress = liveAttendanceService.syncProgress
+  // Real device status and sync state
+  const deviceStatus = liveAttendanceService.deviceStatus
+  const isSyncing = liveAttendanceService.isSyncing
+  const syncProgress = liveAttendanceService.syncProgress
 
-// Default to Today in Philippine Standard Time
-const todayDateStr = getManilaDateString(new Date())
-const selectedDate = ref<string>(todayDateStr)
-const selectedLocation = ref<string>('all')
-const selectedWorkGroup = ref<string>('all')
-const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
-const searchQuery = ref<string>('')
-const loading = ref<boolean>(false)
-const dailyRecords = ref<DailyAttendanceRecord[]>([])
-const workGroups = ref<WorkGroup[]>([])
-
-async function loadLookups() {
-  workGroups.value = await attendanceService.getWorkGroups()
-}
-
-async function loadDailyAttendance() {
-  loading.value = true
-  try {
-    const records = await attendanceService.getDailyAttendance(
-      selectedDate.value,
-      selectedLocation.value,
-      selectedWorkGroup.value
-    )
-    dailyRecords.value = records
-  } finally {
-    loading.value = false
-  }
-}
-
-watch([selectedLocation, selectedWorkGroup], () => {
-  loadDailyAttendance()
-})
-
-async function handleManualSync() {
-  await liveAttendanceService.triggerManualSync()
-  loadDailyAttendance()
-}
-
-function setDateQuick(range: 'today' | 'yesterday') {
-  if (range === 'today') {
-    selectedDate.value = todayDateStr
-  } else if (range === 'yesterday') {
+  // Default to Today in Philippine Standard Time
+  const todayDateStr = getManilaDateString(new Date())
+  const yesterdayDateStr = computed(() => {
     const y = new Date()
     y.setDate(y.getDate() - 1)
-    selectedDate.value = getManilaDateString(y)
-  }
-  loadDailyAttendance()
-}
+    return getManilaDateString(y)
+  })
+  const selectedDate = ref<string>(todayDateStr)
+  const selectedLocation = ref<string>('all')
+  const selectedWorkGroup = ref<string>('all')
+  const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
+  const searchQuery = ref<string>('')
+  const loading = ref<boolean>(false)
+  const dailyRecords = ref<DailyAttendanceRecord[]>([])
+  const workGroups = ref<WorkGroup[]>([])
 
-const filteredRecords = computed(() => {
-  let list = dailyRecords.value
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.trim().toLowerCase()
-    list = list.filter(r =>
-      r.biometric_user_id.toLowerCase().includes(q) ||
-      r.employee_name.toLowerCase().includes(q) ||
-      (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
-    )
+  async function loadLookups() {
+    workGroups.value = await attendanceService.getWorkGroups()
   }
 
-  const sorted = [...list]
-  if (selectedSort.value === 'newest') {
-    sorted.sort((a, b) => {
-      const diff = (b.latest_punch_time_ms || 0) - (a.latest_punch_time_ms || 0)
-      if (diff !== 0) return diff
-      return a.employee_name.localeCompare(b.employee_name)
+  async function loadDailyAttendance() {
+    loading.value = true
+    try {
+      const records = await attendanceService.getDailyAttendance(
+        selectedDate.value,
+        selectedLocation.value,
+        selectedWorkGroup.value
+      )
+      dailyRecords.value = records
+    } finally {
+      loading.value = false
+    }
+  }
+
+  watch([selectedLocation, selectedWorkGroup], () => {
+    loadDailyAttendance()
+  })
+
+  async function handleManualSync() {
+    await liveAttendanceService.triggerManualSync()
+    loadDailyAttendance()
+  }
+
+  function setDateQuick(range: 'today' | 'yesterday') {
+    if (range === 'today') {
+      selectedDate.value = todayDateStr
+    } else {
+      selectedDate.value = yesterdayDateStr.value
+    }
+
+    loadDailyAttendance()
+  }
+
+  const filteredRecords = computed(() => {
+    let list = dailyRecords.value
+    if (searchQuery.value.trim()) {
+      const q = searchQuery.value.trim().toLowerCase()
+      list = list.filter(r =>
+        r.biometric_user_id.toLowerCase().includes(q) ||
+        r.employee_name.toLowerCase().includes(q) ||
+        (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
+      )
+    }
+
+    const sorted = [...list]
+    if (selectedSort.value === 'newest') {
+      sorted.sort((a, b) => {
+        const diff = (b.latest_punch_time_ms || 0) - (a.latest_punch_time_ms || 0)
+        if (diff !== 0) return diff
+        return a.employee_name.localeCompare(b.employee_name)
+      })
+    } else if (selectedSort.value === 'earliest') {
+      sorted.sort((a, b) => {
+        const diff = (a.first_punch_time_ms || 0) - (b.first_punch_time_ms || 0)
+        if (diff !== 0) return diff
+        return a.employee_name.localeCompare(b.employee_name)
+      })
+    } else if (selectedSort.value === 'name') {
+      sorted.sort((a, b) => a.employee_name.localeCompare(b.employee_name))
+    } else if (selectedSort.value === 'late') {
+      sorted.sort((a, b) => b.late_minutes - a.late_minutes)
+    }
+    return sorted
+  })
+
+  const stats = computed(() => {
+    const total = filteredRecords.value.length
+    const late = filteredRecords.value.filter(r => r.late_minutes > 0).length
+    const onTime = filteredRecords.value.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+    const awaitingOut = filteredRecords.value.filter(r => r.status === 'Awaiting OUT').length
+    const singlePunchNoOut = filteredRecords.value.filter(r => r.status === 'Single Punch (No OUT)').length
+    return { total, late, onTime, awaitingOut, singlePunchNoOut }
+  })
+
+  const displayDateTitle = computed(() => {
+    if (selectedDate.value === todayDateStr) {
+      return 'Today'
+    }
+    const y = new Date()
+    y.setDate(y.getDate() - 1)
+    if (selectedDate.value === getManilaDateString(y)) {
+      return 'Yesterday'
+    }
+    return selectedDate.value
+  })
+
+  let unSubLogs: (() => void) | null = null
+  let unSubScan: (() => void) | null = null
+  let unSubEmployees: (() => void) | null = null
+
+  onMounted(async () => {
+    await loadLookups()
+    await loadDailyAttendance()
+    liveAttendanceService.connect()
+
+    unSubLogs = liveAttendanceService.onLogs(() => {
+      loadDailyAttendance()
     })
-  } else if (selectedSort.value === 'earliest') {
-    sorted.sort((a, b) => {
-      const diff = (a.first_punch_time_ms || 0) - (b.first_punch_time_ms || 0)
-      if (diff !== 0) return diff
-      return a.employee_name.localeCompare(b.employee_name)
+    unSubScan = liveAttendanceService.onScan(() => {
+      loadDailyAttendance()
     })
-  } else if (selectedSort.value === 'name') {
-    sorted.sort((a, b) => a.employee_name.localeCompare(b.employee_name))
-  } else if (selectedSort.value === 'late') {
-    sorted.sort((a, b) => b.late_minutes - a.late_minutes)
-  }
-  return sorted
-})
-
-const stats = computed(() => {
-  const total = filteredRecords.value.length
-  const late = filteredRecords.value.filter(r => r.late_minutes > 0).length
-  const onTime = filteredRecords.value.filter(r => r.late_minutes === 0 && r.has_valid_out).length
-  const awaitingOut = filteredRecords.value.filter(r => r.status === 'Awaiting OUT').length
-  const singlePunchNoOut = filteredRecords.value.filter(r => r.status === 'Single Punch (No OUT)').length
-  return { total, late, onTime, awaitingOut, singlePunchNoOut }
-})
-
-const displayDateTitle = computed(() => {
-  if (selectedDate.value === todayDateStr) {
-    return 'Today'
-  }
-  const y = new Date()
-  y.setDate(y.getDate() - 1)
-  if (selectedDate.value === getManilaDateString(y)) {
-    return 'Yesterday'
-  }
-  return selectedDate.value
-})
-
-let unSubLogs: (() => void) | null = null
-let unSubScan: (() => void) | null = null
-let unSubEmployees: (() => void) | null = null
-
-onMounted(async () => {
-  await loadLookups()
-  await loadDailyAttendance()
-  liveAttendanceService.connect()
-
-  unSubLogs = liveAttendanceService.onLogs(() => {
-    loadDailyAttendance()
+    unSubEmployees = employeeService.onEmployeesChanged(() => {
+      loadDailyAttendance()
+    })
   })
-  unSubScan = liveAttendanceService.onScan(() => {
-    loadDailyAttendance()
-  })
-  unSubEmployees = employeeService.onEmployeesChanged(() => {
-    loadDailyAttendance()
-  })
-})
 
-onUnmounted(() => {
-  if (unSubLogs) unSubLogs()
-  if (unSubScan) unSubScan()
-  if (unSubEmployees) unSubEmployees()
-})
-</script>
+  onUnmounted(() => {
+    if (unSubLogs) unSubLogs()
+    if (unSubScan) unSubScan()
+    if (unSubEmployees) unSubEmployees()
+  })
+  </script>
 
 <template>
   <div class="space-y-4">
@@ -273,15 +277,21 @@ onUnmounted(() => {
               variant="outline"
               size="sm"
               class="h-7 px-2 text-xs"
-              :class="selectedDate === todayDateStr ? 'bg-primary/10 border-primary text-primary font-medium' : ''"
+              :class="selectedDate === todayDateStr
+                ? 'bg-primary/10 border-primary text-primary font-medium'
+                : ''"
               @click="setDateQuick('today')"
             >
               Today
             </Button>
+
             <Button
               variant="outline"
               size="sm"
               class="h-7 px-2 text-xs"
+              :class="selectedDate === yesterdayDateStr
+                ? 'bg-primary/10 border-primary text-primary font-medium'
+                : ''"
               @click="setDateQuick('yesterday')"
             >
               Yesterday
@@ -418,8 +428,8 @@ onUnmounted(() => {
       <Table v-else>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="font-semibold w-[80px]">Bio ID</TableHead>
-            <TableHead class="font-semibold">Employee Name</TableHead>
+            <TableHead class="font-semibold w-[80px]">BIO ID</TableHead>
+            <TableHead class="font-semibold">Employee</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
             <TableHead class="font-semibold">Work Group</TableHead>
             <TableHead class="font-semibold">Expected IN / OUT</TableHead>
@@ -434,7 +444,11 @@ onUnmounted(() => {
 
         <TableBody>
           <TableRow v-for="row in filteredRecords" :key="row.id">
-            <TableCell class="font-mono font-medium text-xs">{{ row.biometric_user_id }}</TableCell>
+            <TableCell class="font-mono font-medium text-foreground">                
+              <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
+                {{ row.biometric_user_id }}
+              </span>
+            </TableCell>
             <TableCell class="font-medium text-foreground text-xs">{{ row.employee_name }}</TableCell>
             <TableCell class="text-xs">
               <span class="inline-flex items-center gap-1 font-medium text-foreground">
@@ -446,7 +460,7 @@ onUnmounted(() => {
             <!-- Work Group Badge -->
             <TableCell class="text-xs">
               <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/30">
-                <Layers class="size-2.5 text-primary" />
+                <Boxes class="size-2.5 text-primary" />
                 {{ row.work_group_name }}
               </Badge>
             </TableCell>

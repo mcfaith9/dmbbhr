@@ -82,7 +82,7 @@ const navSections: NavItem[] = [
     title: "Biometric Devices",
     url: "/devices",
     icon: Fingerprint,
-    badge: "1 Online",
+    badge: "",
   },
   {
     id: "time_management",
@@ -305,8 +305,7 @@ function isPathActive(url: string): boolean {
         <div class="flex items-center justify-between">
           <span>BISBIO B-29b</span>
           <span class="flex items-center gap-1 text-emerald-600 font-medium">
-            <span class="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            192.168.1.201
+            app v.0.0.1
           </span>
         </div>
       </SidebarFooter>

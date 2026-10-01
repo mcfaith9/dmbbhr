@@ -1061,7 +1061,7 @@ onMounted(() => {
                     </div>
                   </div>
 
-                  <Badge variant="destructive" class="text-[10px] shrink-0">
+                  <Badge variant="destructive" class="text-[10px] shrink-0 text-white">
                     Absent
                   </Badge>
                 </div>
