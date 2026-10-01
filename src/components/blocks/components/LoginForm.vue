@@ -19,7 +19,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
-const username = ref('dmbbhr')
+const username = ref('Admin')
 const password = ref('password')
 const errorMessage = ref('')
 const isLoading = ref(false)
@@ -42,7 +42,7 @@ async function handleSubmit(e: Event) {
   }
 }
 
-function fillDemo(user: 'dmbbhr' | 'admin') {
+function fillDemo(user: 'Admin' | 'HR' | 'dmbbhr') {
   username.value = user
   password.value = 'password'
 }
@@ -72,7 +72,7 @@ function fillDemo(user: 'dmbbhr' | 'admin') {
           id="username"
           v-model="username"
           type="text"
-          placeholder="dmbbhr or admin"
+          placeholder="Admin or HR"
           required
         />
       </Field>
@@ -106,24 +106,24 @@ function fillDemo(user: 'dmbbhr' | 'admin') {
         </Button>
       </Field>
 
-      <FieldSeparator>Default Admin Accounts</FieldSeparator>
+      <FieldSeparator>Default Application Accounts</FieldSeparator>
 
       <div class="grid grid-cols-2 gap-2 text-xs">
         <button
           type="button"
           class="rounded border bg-muted/40 p-2 text-left hover:bg-muted transition-colors"
-          @click="fillDemo('dmbbhr')"
+          @click="fillDemo('Admin')"
         >
-          <div class="font-semibold text-foreground">dmbbhr</div>
-          <div class="text-[11px] text-muted-foreground">Admin Account</div>
+          <div class="font-semibold text-foreground">Admin</div>
+          <div class="text-[11px] text-muted-foreground">Administrator</div>
         </button>
         <button
           type="button"
           class="rounded border bg-muted/40 p-2 text-left hover:bg-muted transition-colors"
-          @click="fillDemo('admin')"
+          @click="fillDemo('HR')"
         >
-          <div class="font-semibold text-foreground">admin</div>
-          <div class="text-[11px] text-muted-foreground">System Admin</div>
+          <div class="font-semibold text-foreground">HR</div>
+          <div class="text-[11px] text-muted-foreground">Human Resources</div>
         </button>
       </div>
 

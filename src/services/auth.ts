@@ -4,11 +4,27 @@ import { SEED_USERS } from './seedData'
 
 const AUTH_USER_KEY = 'dmbbhr_auth_user'
 const AUTH_TOKEN_KEY = 'dmbbhr_auth_token'
+const AUTH_ACCOUNTS_KEY = 'dmbbhr_accounts'
 
 export interface LoginCredentials {
   username?: string
   email?: string
   password?: string
+}
+
+export interface StoredAccount {
+  user: User
+  salt: string
+  passwordHash: string
+}
+
+export function getRoleDisplayName(role?: string): string {
+  if (!role) return 'Administrator'
+  const r = role.toLowerCase().trim()
+  if (r === 'admin') return 'Administrator'
+  if (r === 'hr') return 'Human Resources'
+  if (r === 'viewer') return 'Viewer'
+  return role.charAt(0).toUpperCase() + role.slice(1)
 }
 
 // Reactive user state
@@ -27,43 +43,200 @@ function loadInitialUser(): User | null {
   return null
 }
 
+async function hashPassword(password: string, salt: string): Promise<string> {
+  const enc = new TextEncoder()
+  const data = enc.encode(`${salt}:${password}`)
+  const buf = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function generateSalt(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return Math.random().toString(36).substring(2) + Date.now().toString(36)
+}
+
+async function getStoredAccounts(): Promise<Record<string, StoredAccount>> {
+  try {
+    const raw = localStorage.getItem(AUTH_ACCOUNTS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Initialize default application accounts if none exist
+  const accounts: Record<string, StoredAccount> = {}
+  const defaultPassword = 'password'
+
+  for (const u of SEED_USERS) {
+    const salt = generateSalt()
+    const passwordHash = await hashPassword(defaultPassword, salt)
+    accounts[u.username.toLowerCase()] = {
+      user: { ...u },
+      salt,
+      passwordHash
+    }
+  }
+
+  try {
+    localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts))
+  } catch {
+    // ignore
+  }
+
+  return accounts
+}
+
+async function saveStoredAccounts(accounts: Record<string, StoredAccount>): Promise<void> {
+  localStorage.setItem(AUTH_ACCOUNTS_KEY, JSON.stringify(accounts))
+}
+
 export const authService = {
   // Reactive getters
   currentUser: computed(() => currentUserState.value),
   isAuthenticatedUser: computed(() => !!tokenState.value && !!currentUserState.value),
 
   /**
-   * Authenticate with username/email and password against administrators
+   * Authenticate with username/email and password against stored application accounts
    */
   async login(credentials: LoginCredentials): Promise<{ user: User; token: string }> {
     const idOrEmail = (credentials.username || credentials.email || '').trim().toLowerCase()
-    
-    // Find matching admin or user
-    const matched = SEED_USERS.find(
-      u => u.username.toLowerCase() === idOrEmail || u.email.toLowerCase() === idOrEmail
-    )
+    const enteredPassword = credentials.password || ''
 
-    // Allowed accounts: dmbbhr, admin (or matching seed users)
-    if (matched || idOrEmail === 'dmbbhr' || idOrEmail === 'admin') {
-      const user: User = matched || {
-        id: idOrEmail === 'admin' ? 'u-2' : 'u-1',
-        username: idOrEmail,
-        name: idOrEmail === 'dmbbhr' ? 'DMBB HR Administrator' : 'System Administrator',
-        email: `${idOrEmail}@dmbb.com`,
-        role: 'admin',
-        accessible_location_ids: ['loc-cebu', 'loc-negros', 'loc-iloilo']
+    if (!idOrEmail) {
+      throw new Error('Username or email is required.')
+    }
+    if (!enteredPassword) {
+      throw new Error('Password is required.')
+    }
+
+    const accounts = await getStoredAccounts()
+
+    // Find account by username or email
+    let matchedKey: string | null = null
+    for (const [key, acc] of Object.entries(accounts)) {
+      if (key === idOrEmail || acc.user.email.toLowerCase() === idOrEmail) {
+        matchedKey = key
+        break
       }
+    }
 
-      const token = `bearer-dmbbhr-jwt-${Date.now()}`
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user))
-      localStorage.setItem(AUTH_TOKEN_KEY, token)
+    // Fallback migration if an account from SEED_USERS isn't initialized yet
+    if (!matchedKey) {
+      const seedMatch = SEED_USERS.find(
+        u => u.username.toLowerCase() === idOrEmail || u.email.toLowerCase() === idOrEmail
+      )
+      if (seedMatch) {
+        const salt = generateSalt()
+        const passwordHash = await hashPassword('password', salt)
+        const newAcc: StoredAccount = {
+          user: { ...seedMatch },
+          salt,
+          passwordHash
+        }
+        accounts[seedMatch.username.toLowerCase()] = newAcc
+        await saveStoredAccounts(accounts)
+        matchedKey = seedMatch.username.toLowerCase()
+      }
+    }
 
-      currentUserState.value = user
-      tokenState.value = token
+    if (!matchedKey) {
+      throw new Error('Invalid credentials. Use "Admin" or "HR" account.')
+    }
 
-      return { user, token }
-    } else {
-      throw new Error('Invalid credentials. Use administrator username "dmbbhr" or "admin".')
+    const targetAccount = accounts[matchedKey]
+    const testHash = await hashPassword(enteredPassword, targetAccount.salt)
+
+    if (testHash !== targetAccount.passwordHash) {
+      throw new Error('Incorrect password. Please verify your credentials.')
+    }
+
+    const token = `bearer-dmbbhr-jwt-${Date.now()}`
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(targetAccount.user))
+    localStorage.setItem(AUTH_TOKEN_KEY, token)
+
+    currentUserState.value = targetAccount.user
+    tokenState.value = token
+
+    return { user: targetAccount.user, token }
+  },
+
+  /**
+   * Change password for the current logged-in account
+   */
+  async changePassword(params: {
+    currentPassword?: string
+    newPassword?: string
+    confirmPassword?: string
+  }): Promise<{ success: boolean; message: string }> {
+    const user = currentUserState.value
+    if (!user) {
+      throw new Error('No logged-in user session found. Please log in again.')
+    }
+
+    const currentPwd = (params.currentPassword || '').trim()
+    const newPwd = (params.newPassword || '').trim()
+    const confirmPwd = (params.confirmPassword || '').trim()
+
+    // Input validations
+    if (!currentPwd) {
+      throw new Error('Current password is required.')
+    }
+    if (!newPwd) {
+      throw new Error('New password is required.')
+    }
+    if (!confirmPwd) {
+      throw new Error('Confirm new password is required.')
+    }
+    if (newPwd !== confirmPwd) {
+      throw new Error('New password and confirmation do not match.')
+    }
+    if (newPwd.length < 4) {
+      throw new Error('New password must be at least 4 characters long.')
+    }
+    if (currentPwd === newPwd) {
+      throw new Error('New password must be different from current password.')
+    }
+
+    const accounts = await getStoredAccounts()
+    const accountKey = user.username.toLowerCase()
+    const account = accounts[accountKey]
+
+    if (!account) {
+      throw new Error('Account record could not be found.')
+    }
+
+    // Verify current password against stored hash
+    const testCurrentHash = await hashPassword(currentPwd, account.salt)
+    if (testCurrentHash !== account.passwordHash) {
+      throw new Error('Current password is incorrect.')
+    }
+
+    // Generate new salt and compute hash
+    const newSalt = generateSalt()
+    const newPasswordHash = await hashPassword(newPwd, newSalt)
+
+    account.salt = newSalt
+    account.passwordHash = newPasswordHash
+
+    // Persist updated credentials in accounts store
+    await saveStoredAccounts(accounts)
+
+    // Ensure session maintains same user and role
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(account.user))
+    currentUserState.value = { ...account.user }
+
+    return {
+      success: true,
+      message: 'Password changed successfully.'
     }
   },
 

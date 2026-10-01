@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { ref } from "vue"
 import {
   BadgeCheck,
   ChevronsUpDown,
   LogOut,
   ShieldCheck,
+  Settings,
 } from "@lucide/vue"
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
+import ProfileSettingsDialog from '@/components/ProfileSettingsDialog.vue'
 
 import {
   Avatar,
@@ -35,11 +38,13 @@ defineProps<{
     email: string
     avatar: string
     role?: string
+    username?: string
   }
 }>()
 
 const router = useRouter()
 const { isMobile } = useSidebar()
+const showProfileDialog = ref(false)
 
 function handleLogout() {
   authService.logout()
@@ -91,13 +96,17 @@ function handleLogout() {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
-            <DropdownMenuItem @click="router.push('/settings')">
+            <DropdownMenuItem @click="showProfileDialog = true">
               <BadgeCheck class="mr-2 size-4" />
               Profile Settings
             </DropdownMenuItem>
             <DropdownMenuItem @click="router.push('/devices')">
               <ShieldCheck class="mr-2 size-4" />
               Device Status
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="router.push('/settings')">
+              <Settings class="mr-2 size-4" />
+              Settings
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
@@ -109,4 +118,7 @@ function handleLogout() {
       </DropdownMenu>
     </SidebarMenuItem>
   </SidebarMenu>
+
+  <!-- Profile Settings Dialog -->
+  <ProfileSettingsDialog v-model:open="showProfileDialog" />
 </template>

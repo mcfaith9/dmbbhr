@@ -36,8 +36,9 @@ const router = useRouter()
 const currentUser = authService.currentUser
 
 const userData = computed(() => ({
-  name: currentUser.value?.name || "DMBB HR Admin",
-  email: currentUser.value?.email || "hr@dmbb.com",
+  name: currentUser.value?.name || (currentUser.value?.username === 'HR' ? 'Human Resources' : 'Administrator'),
+  username: currentUser.value?.username || 'Admin',
+  email: currentUser.value?.email || (currentUser.value?.username === 'HR' ? 'hr@dmbb.com' : 'admin@dmbb.com'),
   avatar: currentUser.value?.avatar || "",
   role: currentUser.value?.role || "admin",
 }))

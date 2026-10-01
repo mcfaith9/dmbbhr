@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { SEED_USERS } from '@/services/seedData'
 import { Badge } from '@/components/ui/badge'
+import { getRoleDisplayName } from '@/services/auth'
 
 const users = SEED_USERS
 </script>
@@ -35,8 +36,8 @@ const users = SEED_USERS
               </div>
             </div>
           </div>
-          <Badge variant="default" class="text-xs uppercase font-mono">
-            {{ u.role }}
+          <Badge :variant="u.role === 'admin' ? 'default' : 'secondary'" class="text-xs font-mono">
+            {{ getRoleDisplayName(u.role) }}
           </Badge>
         </div>
       </div>

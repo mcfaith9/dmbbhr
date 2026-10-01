@@ -38,19 +38,28 @@ export const SEED_DEVICES: BiometricDevice[] = [
  */
 export const SEED_USERS: User[] = [
   {
-    id: 'u-1',
-    username: 'dmbbhr',
-    name: 'DMBB HR Administrator',
-    email: 'hr@dmbb.com',
+    id: 'u-admin',
+    username: 'Admin',
+    name: 'Administrator',
+    email: 'admin@dmbb.com',
     role: 'admin',
     avatar: '',
     accessible_location_ids: ['loc-dmbb-cebu', 'loc-dbb-cebu', 'loc-dbb-negros', 'loc-dbb-iloilo']
   },
   {
-    id: 'u-2',
-    username: 'admin',
-    name: 'System Administrator',
-    email: 'admin@dmbb.com',
+    id: 'u-hr',
+    username: 'HR',
+    name: 'Human Resources',
+    email: 'hr@dmbb.com',
+    role: 'hr',
+    avatar: '',
+    accessible_location_ids: ['loc-dmbb-cebu', 'loc-dbb-cebu', 'loc-dbb-negros', 'loc-dbb-iloilo']
+  },
+  {
+    id: 'u-dmbbhr',
+    username: 'dmbbhr',
+    name: 'DMBB HR Administrator',
+    email: 'hr@dmbb.com',
     role: 'admin',
     avatar: '',
     accessible_location_ids: ['loc-dmbb-cebu', 'loc-dbb-cebu', 'loc-dbb-negros', 'loc-dbb-iloilo']
