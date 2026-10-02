@@ -22,7 +22,14 @@ export const manualAttendanceRepository = {
   },
 
   /**
-   * Saves or updates a manual adjustment record (e.g. Paper Slip approval)
+   * Retrieves all adjustments with 'Pending' status across dates
+   */
+  async getPendingAdjustments(): Promise<ManualAttendanceRecord[]> {
+    return db.manualAdjustments.where('status').equals('Pending').toArray()
+  },
+
+  /**
+   * Saves or updates a manual adjustment record (e.g. Paper Slip approval or pending request)
    */
   async saveAdjustment(data: {
     bioId: string
@@ -30,6 +37,7 @@ export const manualAttendanceRepository = {
     manualIn?: string
     manualOut?: string
     reason: string
+    status?: 'Approved' | 'Pending'
     approvedBy?: string
   }): Promise<ManualAttendanceRecord> {
     const id = `${data.bioId}_${data.date}`
@@ -43,14 +51,29 @@ export const manualAttendanceRepository = {
       manualIn: data.manualIn,
       manualOut: data.manualOut,
       reason: data.reason || 'Paper Slip / Manual Time-In Request',
-      status: 'Approved',
-      approvedBy: data.approvedBy || 'Admin',
+      status: data.status || 'Approved',
+      approvedBy: data.status === 'Pending' ? 'Awaiting HR Approval' : (data.approvedBy || 'Admin'),
       createdAt: existing?.createdAt || now,
       updatedAt: now
     }
 
     await db.manualAdjustments.put(record)
     return record
+  },
+
+  /**
+   * Approves a pending manual adjustment
+   */
+  async approveAdjustment(bioId: string, date: string, approver = 'Admin'): Promise<ManualAttendanceRecord | undefined> {
+    const id = `${bioId}_${date}`
+    const existing = await db.manualAdjustments.get(id)
+    if (!existing) return undefined
+
+    existing.status = 'Approved'
+    existing.approvedBy = approver
+    existing.updatedAt = new Date().toISOString()
+    await db.manualAdjustments.put(existing)
+    return existing
   },
 
   /**

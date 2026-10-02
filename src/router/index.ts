@@ -45,19 +45,19 @@ export const router = createRouter({
         },
         {
           path: 'attendance',
-          redirect: '/attendance/logs'
-        },
-        {
-          path: 'attendance/logs',
-          name: 'attendance-logs',
-          component: AttendanceLogsView,
-          meta: { title: 'Attendance Logs', breadcrumb: ['Attendance', 'Attendance Logs'] }
+          redirect: '/attendance/daily'
         },
         {
           path: 'attendance/daily',
           name: 'attendance-daily',
           component: DailyAttendanceView,
           meta: { title: 'Daily Attendance', breadcrumb: ['Attendance', 'Daily Attendance'] }
+        },
+        {
+          path: 'attendance/logs',
+          name: 'attendance-logs',
+          component: AttendanceLogsView,
+          meta: { title: 'Attendance Logs', breadcrumb: ['Attendance', 'Attendance Logs'] }
         },
         {
           path: 'employees',

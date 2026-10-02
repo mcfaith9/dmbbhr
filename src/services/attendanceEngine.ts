@@ -58,6 +58,8 @@ export interface ScanItem {
   state: number
   deviceName?: string
   deviceIp?: string
+  windowRole?: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'EXTRA'
+  windowRoleLabel?: string // e.g. "This is for IN", "This is for OUT"
 }
 
 export interface DailyAttendanceRecord {
@@ -82,7 +84,7 @@ export interface DailyAttendanceRecord {
   late_minutes: number // Clean integer against Work Group Standard IN
   early_out_minutes: number // Clean integer against Work Group Expected OUT
   undertime_minutes: number
-  status: string // "Regular Day" | "Awaiting OUT" | "Single Punch — No OUT" | "Likely OUT — Missing IN" | "Manual / Paper IN" | "Ambiguous — Review Required"
+  status: string // "Regular Day" | "Awaiting OUT" | "Single Punch — No OUT" | "Likely OUT — Missing IN" | "Manual / Paper IN" | "Pending Approval" | "Ambiguous — Review Required"
   status_variant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary'
   raw_punches_count: number
   valid_punches_count: number
@@ -94,7 +96,10 @@ export interface DailyAttendanceRecord {
   is_likely_out?: boolean
   is_missing_in?: boolean
   is_manual_adjustment?: boolean
+  is_pending_adjustment?: boolean
   manual_adjustment_reason?: string
+  manual_adjustment_ref?: string
+  manual_adjustment_status?: 'Approved' | 'Pending'
   first_punch_time_ms: number
   latest_punch_time_ms: number
   latest_punch_time: string
@@ -547,50 +552,101 @@ export function processEmployeeDayPunches(
     statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
   }
 
-  // Check for Approved Manual / Paper Request Adjustment
+  // Check for Manual / Paper Request Adjustment (Approved or Pending)
   let isManualAdjustment = false
+  let isPendingAdjustment = false
   let manualAdjustmentReason = ''
+  let manualAdjustmentRef = ''
+  let manualAdjustmentStatus: 'Approved' | 'Pending' | undefined = undefined
   const manual = employeeContext?.manualAdjustment
 
   if (manual) {
-    if (manual.manualIn) {
-      actualInStr = `${manual.manualIn} (Manual)`
-      isManualAdjustment = true
-      manualAdjustmentReason = manual.reason
-      isMissingIn = false
-      isLikelyOut = false
+    manualAdjustmentReason = manual.reason
+    manualAdjustmentStatus = manual.status || 'Approved'
 
-      // If we have an actual biometric OUT, calculate worked hours with manual IN
-      if (hasValidOut && actualOutStr !== '-' && !actualOutStr.includes('Missing')) {
-        const manualInMins = parseHHMMOr12hToMinutes(manual.manualIn)
-        const lastPunch = validPunches[validCount - 1]
-        const actualOutMins = getManilaMinutesFromMidnight(lastPunch.attendance_time)
+    if (manual.status === 'Pending') {
+      isPendingAdjustment = true
+      status = 'Pending Approval'
+      statusVariant = 'warning'
+    } else {
+      // Approved
+      if (manual.manualIn) {
+        actualInStr = `${manual.manualIn} (Manual)`
+        isManualAdjustment = true
+        isMissingIn = false
+        isLikelyOut = false
 
-        lateMinutes = Math.max(0, manualInMins - expectedInMinutes)
-        earlyOutMinutes = Math.max(0, expectedOutMinutes - actualOutMins)
-        undertimeMinutes = earlyOutMinutes
+        // If we have an actual biometric OUT, calculate worked hours with manual IN
+        if (hasValidOut && actualOutStr !== '-' && !actualOutStr.includes('Missing')) {
+          const manualInMins = parseHHMMOr12hToMinutes(manual.manualIn)
+          const lastPunch = validPunches[validCount - 1]
+          const actualOutMins = getManilaMinutesFromMidnight(lastPunch.attendance_time)
 
-        let grossMins = Math.max(0, actualOutMins - manualInMins)
-        if (manualInMins < lunchStartMins && actualOutMins > lunchEndMins) {
-          grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
+          lateMinutes = Math.max(0, manualInMins - expectedInMinutes)
+          earlyOutMinutes = Math.max(0, expectedOutMinutes - actualOutMins)
+          undertimeMinutes = earlyOutMinutes
+
+          let grossMins = Math.max(0, actualOutMins - manualInMins)
+          if (manualInMins < lunchStartMins && actualOutMins > lunchEndMins) {
+            grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
+          }
+
+          workedMinutes = grossMins
+          const netHours = workedMinutes / 60
+          totalHoursDecimal = Number(netHours.toFixed(2))
+          totalHoursStr = `${netHours.toFixed(1)} hrs`
         }
 
-        workedMinutes = grossMins
-        const netHours = workedMinutes / 60
-        totalHoursDecimal = Number(netHours.toFixed(2))
-        totalHoursStr = `${netHours.toFixed(1)} hrs`
+        status = 'Manual / Paper IN'
+        statusVariant = 'secondary'
       }
 
-      status = 'Manual / Paper IN'
-      statusVariant = 'secondary'
+      if (manual.manualOut) {
+        actualOutStr = `${manual.manualOut} (Manual)`
+        isManualAdjustment = true
+        hasValidOut = true
+        isAwaitingOut = false
+      }
     }
+  }
 
-    if (manual.manualOut) {
-      actualOutStr = `${manual.manualOut} (Manual)`
-      isManualAdjustment = true
-      manualAdjustmentReason = manual.reason
-      hasValidOut = true
-      isAwaitingOut = false
+  // 4. Assign window roles (IN, OUT, BREAK) to scan breakdown items for clear auditing
+  for (const scan of scanBreakdown) {
+    const scanMins = getManilaMinutesFromMidnight(scan.timestampMs)
+    if (validCount === 1) {
+      if (isLikelyOut) {
+        scan.windowRole = 'OUT'
+        scan.windowRoleLabel = 'This is for OUT'
+      } else {
+        scan.windowRole = 'IN'
+        scan.windowRoleLabel = 'This is for IN'
+      }
+    } else if (validCount === 2) {
+      if (isLikelyOut) {
+        scan.windowRole = 'OUT'
+        scan.windowRoleLabel = 'This is for OUT'
+      } else if (scanMins < midpointMinutes) {
+        scan.windowRole = 'IN'
+        scan.windowRoleLabel = 'This is for IN'
+      } else {
+        scan.windowRole = 'OUT'
+        scan.windowRoleLabel = 'This is for OUT'
+      }
+    } else {
+      // 3+ punches
+      if (scanMins < lunchStartMins - 30) {
+        scan.windowRole = 'IN'
+        scan.windowRoleLabel = 'This is for IN'
+      } else if (scanMins >= expectedOutMinutes - 90 || scanMins >= midpointMinutes + 60) {
+        scan.windowRole = 'OUT'
+        scan.windowRoleLabel = 'This is for OUT'
+      } else if (scanMins < lunchEndMins + 15) {
+        scan.windowRole = 'BREAK_OUT'
+        scan.windowRoleLabel = 'This is for Lunch/Break'
+      } else {
+        scan.windowRole = 'EXTRA'
+        scan.windowRoleLabel = 'Midday Scan'
+      }
     }
   }
 
@@ -639,7 +695,10 @@ export function processEmployeeDayPunches(
     is_likely_out: isLikelyOut,
     is_missing_in: isMissingIn,
     is_manual_adjustment: isManualAdjustment,
+    is_pending_adjustment: isPendingAdjustment,
     manual_adjustment_reason: manualAdjustmentReason,
+    manual_adjustment_ref: manualAdjustmentRef,
+    manual_adjustment_status: manualAdjustmentStatus,
     first_punch_time_ms: firstPunchMs,
     latest_punch_time_ms: latestPunchMs,
     latest_punch_time: latestPunchTimeStr,

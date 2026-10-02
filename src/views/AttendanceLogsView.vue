@@ -456,17 +456,26 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-4">
-    <!-- Header with Actions -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-      <div>
-        <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-          <span>Attendance Logs</span>
-          <span class="text-xs px-2 py-0.5 rounded-full bg-muted font-normal text-muted-foreground font-mono">
-            {{ meta.totalItems.toLocaleString() }} Stored Records
+    <!-- Modern SaaS Header with Actions -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+      <div class="space-y-1">
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <h1 class="text-2xl font-bold tracking-tight text-foreground font-sans">
+            Attendance Logs
+          </h1>
+          <span class="text-xs px-2.5 py-0.5 rounded-md border bg-muted/50 font-mono font-medium text-foreground">
+            {{ meta.totalItems.toLocaleString() }} Stored Captures
           </span>
-          <Badge
-            :variant="deviceStatus.status === 'online' ? 'success' : (deviceStatus.status === 'connecting' ? 'warning' : 'outline')"
-            class="text-[11px] gap-1 cursor-pointer transition-colors"
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-xs font-medium transition-colors cursor-pointer"
+            :class="[
+              deviceStatus.status === 'online'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                : (deviceStatus.status === 'connecting'
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+                  : 'bg-muted border-border text-muted-foreground')
+            ]"
             :title="`Status: ${deviceStatus.status.toUpperCase()} - Target: ${deviceStatus.ip}:${deviceStatus.port}`"
             @click="liveAttendanceService.connect()"
           >
@@ -476,33 +485,38 @@ onUnmounted(() => {
                 deviceStatus.status === 'online' ? 'animate-pulse text-emerald-600' : (deviceStatus.status === 'connecting' ? 'animate-spin text-amber-500' : 'text-muted-foreground')
               ]"
             />
-            <span class="font-medium">
-              Device: {{ deviceStatus.status === 'online' ? 'Online' : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Offline') }}
-            </span>
-          </Badge>
-        </h1>
+            <span>BISBIO B-29b ({{ deviceStatus.status.toUpperCase() }})</span>
+          </button>
+        </div>
         <p class="text-xs text-muted-foreground">
-          Historical and live biometric attendance records. Persisted locally in IndexedDB across browser refreshes and restarts.
+          Immutable, auditable log of all raw biometric fingerprint capture events persisted in client storage.
         </p>
       </div>
 
       <!-- Action buttons -->
       <div class="flex items-center gap-2 flex-wrap">
+        <router-link to="/attendance/daily">
+          <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs">
+            <Clock class="size-3.5 text-primary" />
+            <span>Daily Attendance</span>
+          </Button>
+        </router-link>
+
         <Button
           variant="default"
           size="sm"
-          class="h-8 gap-1.5 font-medium shadow-xs"
+          class="h-8 gap-1.5 font-medium shadow-xs text-xs"
           :disabled="isSyncing"
           @click="handleManualSync"
         >
           <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
-          <span class="text-xs">{{ isSyncing ? 'Syncing...' : 'Sync Device' }}</span>
+          <span>{{ isSyncing ? 'Syncing...' : 'Sync Device' }}</span>
         </Button>
-        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="showImportModal = true">
+        <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs" @click="showImportModal = true">
           <Upload class="size-3.5" />
-          <span class="text-xs">Import Biometric</span>
+          <span>Import Excel</span>
         </Button>
-        <div class="flex items-center rounded-md border bg-card">
+        <div class="flex items-center rounded-md border bg-card shadow-2xs">
           <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-r-none border-r" @click="exportLogs('xlsx')">
             <Download class="size-3.5" />
             Excel

@@ -47,7 +47,7 @@ export const attendanceService = {
   },
 
   /**
-   * Saves an approved manual / paper request adjustment
+   * Saves an approved or pending manual / paper request adjustment
    */
   async saveManualAdjustment(data: {
     bioId: string
@@ -55,9 +55,24 @@ export const attendanceService = {
     manualIn?: string
     manualOut?: string
     reason: string
+    status?: 'Approved' | 'Pending'
     approvedBy?: string
   }) {
     return manualAttendanceRepository.saveAdjustment(data)
+  },
+
+  /**
+   * Approves a pending manual adjustment
+   */
+  async approveManualAdjustment(bioId: string, date: string, approver = 'Admin') {
+    return manualAttendanceRepository.approveAdjustment(bioId, date, approver)
+  },
+
+  /**
+   * Gets all pending manual attendance adjustments
+   */
+  async getPendingAdjustments() {
+    return manualAttendanceRepository.getPendingAdjustments()
   },
 
   /**

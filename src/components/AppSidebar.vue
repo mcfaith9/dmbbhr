@@ -68,8 +68,8 @@ const navSections: NavItem[] = [
     title: "Attendance",
     icon: Clock,
     children: [
-      { title: "Attendance Logs", url: "/attendance/logs", description: "Raw biometric scans & auditable logs" },
       { title: "Daily Attendance", url: "/attendance/daily", description: "Aggregated daily in/out entries" },
+      { title: "Attendance Logs", url: "/attendance/logs", description: "Raw biometric scans & auditable logs" },
     ],
   },
   {
