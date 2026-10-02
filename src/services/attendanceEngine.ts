@@ -1,19 +1,20 @@
 /**
  * Biometric Attendance Interpretation Engine
  *
- * Implements:
+ * Implements schedule-aware HR attendance evaluation:
  * - Dynamic Work Group standard schedules (GROUP A: 6am-3pm, GROUP B: 7am-4pm, GROUP C: 8am-5pm)
- * - Automatic Expected OUT calculation excluding configured unpaid lunch break (default 12:00 PM - 1:00 PM)
- * - Exact Late Minutes calculation against employee's Work Group Standard IN (never negative)
- * - Exact Early Out Minutes calculation against employee's Work Group Expected OUT
- * - Clean separation between Raw Biometric Logs and Daily Attendance Interpretation
+ * - Lunch break evaluation (default 12:00 PM - 1:00 PM) without guessing employee intent
+ * - Multi-punch window clustering: Morning IN, Lunch OUT/IN, and Afternoon/Shift OUT
+ * - Correct Quimada scenario handling (IN + Lunch scans != Early departure; correctly identifies Awaiting OUT)
+ * - Exact Late Minutes calculation against employee's Work Group Standard IN
+ * - Exact Early Out Minutes calculation only on qualifying final OUT
  * - Preservation of ALL raw punch records for auditability (no deletion of duplicates)
- * - First valid punch in a cluster treated as primary; subsequent close scans classified as duplicate/repeated scans
- * - Shift-start single punch (e.g. 8:07 AM on 8am-5pm) -> IN = 8:07 AM, OUT = missing, Status = Single Punch — No OUT
- * - Shift-end single punch (e.g. 5:20 PM on 8am-5pm) -> IN = Missing (Manual Request Required), OUT = 5:20 PM, Status = Likely OUT — Missing IN
- * - Zero automatic fabrication of fake biometric data
- * - Integration with Manual / Paper Request adjustments
- * - Strict Philippine Standard Time handling (Asia/Manila UTC+8)
+ * - First valid punch in each cluster is primary; subsequent scans within threshold are duplicates
+ * - Compact status strings:
+ *   Regular Day, Awaiting OUT, Single Punch — No OUT, Likely OUT — Missing IN,
+ *   Half Day, Half Day — PM, Late, Early OUT, Incomplete / Review, Leave,
+ *   Field Work, Manual Time, Duplicate Scan
+ * - Seamless integration with approved Leave, Manual Time, and HR context
  */
 
 import type { AttendanceLog } from '@/types'
@@ -45,6 +46,17 @@ export interface EmployeeScheduleContext {
   lunchEnd?: string // "13:00"
   gracePeriodMinutes?: number
   manualAdjustment?: ManualAttendanceRecord
+  approvedLeave?: {
+    id: string
+    leaveType: string
+    startDate: string
+    endDate: string
+    status: string
+    reason?: string
+  }
+  isHalfDayApproved?: boolean
+  isHalfDayPMApproved?: boolean
+  isFieldWorkApproved?: boolean
 }
 
 export interface ScanItem {
@@ -59,7 +71,7 @@ export interface ScanItem {
   deviceName?: string
   deviceIp?: string
   windowRole?: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'EXTRA'
-  windowRoleLabel?: string // e.g. "This is for IN", "This is for OUT"
+  windowRoleLabel?: string
 }
 
 export interface DailyAttendanceRecord {
@@ -72,19 +84,19 @@ export interface DailyAttendanceRecord {
   work_group_name: string
   date: string // Display date e.g. "Sep 30, 2026"
   raw_date: string // YYYY-MM-DD
-  expected_in: string // e.g. "6:00 AM", "7:00 AM", "8:00 AM"
-  actual_in: string // e.g. "6:10 AM" or "Missing (Manual Request Required)"
-  expected_out: string // e.g. "3:00 PM", "4:00 PM", "5:00 PM"
-  actual_out: string // e.g. "3:08 PM" or "-"
+  expected_in: string // e.g. "8:00 AM"
+  actual_in: string // e.g. "7:53 AM" or "Missing (Manual Request Required)"
+  expected_out: string // e.g. "5:00 PM"
+  actual_out: string // e.g. "5:03 PM" or "-"
   break_out: string
   break_in: string
-  total_hours: string // e.g. "8.1 hrs"
+  total_hours: string // e.g. "8.0 hrs"
   total_hours_decimal: number
   worked_minutes: number
   late_minutes: number // Clean integer against Work Group Standard IN
   early_out_minutes: number // Clean integer against Work Group Expected OUT
   undertime_minutes: number
-  status: string // "Regular Day" | "Awaiting OUT" | "Single Punch — No OUT" | "Likely OUT — Missing IN" | "Manual / Paper IN" | "Pending Approval" | "Ambiguous — Review Required"
+  status: string // Compact HR Status
   status_variant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary'
   raw_punches_count: number
   valid_punches_count: number
@@ -237,17 +249,6 @@ export function getManilaMinutesFromMidnight(dateInput: string | Date | number):
 
 /**
  * Processes raw biometric punches for an employee on a single day.
- *
- * Adheres strictly to the following rules:
- * 1. RAW DATA INTACT: Preserves all original biometric punch records for auditing.
- * 2. FIRST VALID PUNCH: When multiple punches occur close together, the FIRST punch is primary;
- *    subsequent punches within the threshold (e.g. 60s) are recorded as duplicate/repeated scans.
- * 3. WORK GROUP SCHEDULE AWARENESS: Evaluates morning IN, expected OUT, and lunch break dynamically.
- * 4. SINGLE PUNCH INTELLIGENCE:
- *    - Morning punch (e.g. 8:07 AM on 8am-5pm schedule): IN = 8:07 AM, OUT = missing, Status = "Single Punch — No OUT".
- *    - Shift-end punch (e.g. 5:20 PM on 8am-5pm schedule): Does NOT fabricate an IN. Identifies as OUT = 5:20 PM,
- *      IN = "Missing (Manual Request Required)", Status = "Likely OUT — Missing IN".
- * 5. MANUAL ADJUSTMENTS: Uses approved manual/paper records when provided without fabricating fake biometric data.
  */
 export function processEmployeeDayPunches(
   bioId: string,
@@ -256,8 +257,6 @@ export function processEmployeeDayPunches(
   employeeContext?: EmployeeScheduleContext,
   customConfig: Partial<AttendanceEngineConfig> = {}
 ): DailyAttendanceRecord | null {
-  if (!rawLogs || rawLogs.length === 0) return null
-
   const config: AttendanceEngineConfig = { ...DEFAULT_ATTENDANCE_CONFIG, ...customConfig }
 
   // 1. Resolve Work Group parameters
@@ -268,7 +267,6 @@ export function processEmployeeDayPunches(
   const workGroupId = employeeContext?.workGroupId || 'wg-group-c'
   const workGroupName = employeeContext?.workGroupName || (workGroupId === 'wg-group-a' ? 'GROUP A' : (workGroupId === 'wg-group-b' ? 'GROUP B' : 'GROUP C'))
 
-  // Calculate Expected OUT dynamically based on standard IN and lunch window
   const outCalc = calculateExpectedOutMinutes(standardInHHMM, requiredWorkMins, lunchStartHHMM, lunchEndHHMM)
   const expectedInFormatted = formatTime12h(standardInHHMM)
   const expectedOutFormatted = outCalc.outFormatted12h
@@ -281,8 +279,103 @@ export function processEmployeeDayPunches(
   const lunchStartMins = (lStartH || 12) * 60 + (lStartM || 0)
   const lunchEndMins = (lEndH || 13) * 60 + (lEndM || 0)
 
-  // Midpoint of shift window (e.g. 12:30 PM for 8am-5pm; 10:30 AM for 6am-3pm)
-  const midpointMinutes = Math.floor((expectedInMinutes + expectedOutMinutes) / 2)
+  const employeeName = employeeContext?.name || rawLogs?.[0]?.employee_name || `User ${bioId}`
+  const employeeLocation = employeeContext?.location || rawLogs?.[0]?.location_name || 'DBB CEBU'
+
+  // CHECK A: Approved Leave (0 punches or overriding)
+  if (employeeContext?.approvedLeave && (!rawLogs || rawLogs.length === 0)) {
+    const leave = employeeContext.approvedLeave
+    return {
+      id: `daily-${bioId}-${selectedDate}`,
+      biometric_user_id: bioId,
+      employee_name: employeeName,
+      department: employeeContext.department || '',
+      location: employeeLocation,
+      work_group_id: workGroupId,
+      work_group_name: workGroupName,
+      date: selectedDate,
+      raw_date: selectedDate,
+      expected_in: expectedInFormatted,
+      actual_in: '-',
+      expected_out: expectedOutFormatted,
+      actual_out: '-',
+      break_out: '-',
+      break_in: '-',
+      total_hours: '8.0 hrs',
+      total_hours_decimal: 8.0,
+      worked_minutes: 480,
+      late_minutes: 0,
+      early_out_minutes: 0,
+      undertime_minutes: 0,
+      status: 'Leave',
+      status_variant: 'outline',
+      raw_punches_count: 0,
+      valid_punches_count: 0,
+      duplicate_punches_count: 0,
+      total_punches: 0,
+      punches_summary: '0',
+      has_valid_out: false,
+      is_awaiting_out: false,
+      first_punch_time_ms: 0,
+      latest_punch_time_ms: 0,
+      latest_punch_time: '-',
+      raw_punches: [],
+      valid_punches: [],
+      scan_breakdown: [],
+      notes: `Approved ${leave.leaveType} Leave`
+    }
+  }
+
+  // CHECK B: Approved Field Work / OB with 0 biometric punches
+  const manual = employeeContext?.manualAdjustment
+  const isFieldWorkContext = employeeContext?.isFieldWorkApproved ||
+    (manual && (manual.reason?.toLowerCase().includes('field work') || manual.reason?.toLowerCase().includes('official business') || manual.notes?.toLowerCase().includes('field work') || manual.notes?.toLowerCase().includes('ob')))
+
+  if (isFieldWorkContext && manual?.status === 'Approved' && (!rawLogs || rawLogs.length === 0)) {
+    return {
+      id: `daily-${bioId}-${selectedDate}`,
+      biometric_user_id: bioId,
+      employee_name: employeeName,
+      department: employeeContext?.department || '',
+      location: employeeLocation,
+      work_group_id: workGroupId,
+      work_group_name: workGroupName,
+      date: selectedDate,
+      raw_date: selectedDate,
+      expected_in: expectedInFormatted,
+      actual_in: manual.manualIn ? `${manual.manualIn} (Manual)` : expectedInFormatted,
+      expected_out: expectedOutFormatted,
+      actual_out: manual.manualOut ? `${manual.manualOut} (Manual)` : expectedOutFormatted,
+      break_out: '-',
+      break_in: '-',
+      total_hours: '8.0 hrs',
+      total_hours_decimal: 8.0,
+      worked_minutes: 480,
+      late_minutes: 0,
+      early_out_minutes: 0,
+      undertime_minutes: 0,
+      status: 'Field Work',
+      status_variant: 'secondary',
+      raw_punches_count: 0,
+      valid_punches_count: 0,
+      duplicate_punches_count: 0,
+      total_punches: 0,
+      punches_summary: '0',
+      has_valid_out: true,
+      is_awaiting_out: false,
+      is_manual_adjustment: true,
+      manual_adjustment_reason: manual.reason || 'Field Work / Official Business',
+      first_punch_time_ms: 0,
+      latest_punch_time_ms: 0,
+      latest_punch_time: '-',
+      raw_punches: [],
+      valid_punches: [],
+      scan_breakdown: [],
+      notes: 'Approved Field Work / Official Business'
+    }
+  }
+
+  if (!rawLogs || rawLogs.length === 0) return null
 
   // 2. Sort raw logs chronologically ascending (earliest first)
   const sortedLogs = [...rawLogs].sort(
@@ -290,8 +383,6 @@ export function processEmployeeDayPunches(
   )
 
   // 3. Duplicate scan clustering (consecutive scans within duplicatePunchThresholdSeconds e.g. 60s)
-  // FIRST valid punch in each cluster is the primary attendance punch.
-  // Subsequent close punches are recognized as duplicate/repeated scans.
   const thresholdMs = (config.duplicatePunchThresholdSeconds || 60) * 1000
   const validPunches: AttendanceLog[] = []
   const scanBreakdown: ScanItem[] = []
@@ -307,7 +398,6 @@ export function processEmployeeDayPunches(
     const diffFromLast = ms - lastPunchMs
 
     if (currentClusterPrimary && diffFromLast <= thresholdMs && diffFromLast >= 0) {
-      // Duplicate / repeated scan of the ongoing cluster
       const diffSec = Math.max(1, Math.round(diffFromPrimary / 1000))
       scanBreakdown.push({
         id: log.id || `scan-${bioId}-${ms}-${i}`,
@@ -322,7 +412,6 @@ export function processEmployeeDayPunches(
         deviceIp: log.device_ip || '192.168.1.201'
       })
     } else {
-      // New primary punch (starts new cluster)
       currentClusterPrimary = log
       currentClusterPrimaryMs = ms
       validPunches.push(log)
@@ -344,9 +433,6 @@ export function processEmployeeDayPunches(
   const validCount = validPunches.length
   const duplicateCount = rawCount - validCount
   const punchesSummary = validCount === rawCount ? `${validCount}` : `${validCount} primary (${duplicateCount} duplicate)`
-
-  const employeeName = employeeContext?.name || sortedLogs[0].employee_name || `User ${bioId}`
-  const employeeLocation = employeeContext?.location || sortedLogs[0].location_name || 'DBB CEBU'
 
   const firstPunch = validPunches[0]
   const firstPunchMs = new Date(firstPunch.attendance_time).getTime()
@@ -374,103 +460,106 @@ export function processEmployeeDayPunches(
   let status = 'Regular Day'
   let statusVariant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary' = 'success'
 
-  // CASE 1: Single valid primary punch
-  if (validCount === 1) {
-    const punch = validPunches[0]
-    const punchMins = getManilaMinutesFromMidnight(punch.attendance_time)
-    const punchTimeFormatted = formatManilaTime(punch.attendance_time)
+  // Schedule Window Boundaries
+  // Morning Arrival window: before lunch start minus 15 mins (e.g. < 11:45 AM for 12:00 lunch)
+  const morningArrivalCutoffMins = lunchStartMins - 15
+  // Afternoon Departure window: at least lunchEndMins + 35 (e.g. >= 1:35 PM) AND >= expectedInMinutes + 210
+  const afternoonDepartureMinMins = Math.max(lunchEndMins + 35, expectedInMinutes + 210)
 
-    // Check whether the single punch is morning/shift-start OR shift-end/afternoon
-    // Paner, Regner at 8:07 AM on 8am-5pm schedule: punchMins (487) < midpointMinutes (750) -> Morning IN
-    if (punchMins < midpointMinutes && punchMins <= lunchStartMins + 30) {
-      actualInStr = punchTimeFormatted
-      actualOutStr = '-'
-      lateMinutes = Math.max(0, punchMins - expectedInMinutes)
-      earlyOutMinutes = 0
+  // Check Approved HR Context
+  const isApprovedHalfDayAM = employeeContext?.isHalfDayApproved ||
+    (manual?.status === 'Approved' && (manual.reason?.toLowerCase().includes('half day') || manual.notes?.toLowerCase().includes('half day')) && !manual.reason?.toLowerCase().includes('pm'))
+  const isApprovedHalfDayPM = employeeContext?.isHalfDayPMApproved ||
+    (manual?.status === 'Approved' && (manual.reason?.toLowerCase().includes('half day - pm') || manual.notes?.toLowerCase().includes('half day - pm') || manual.reason?.toLowerCase().includes('half day pm')))
 
-      if (isToday && !isPastCutoff) {
-        status = 'Awaiting OUT'
-        statusVariant = 'secondary'
-        isAwaitingOut = true
-        hasValidOut = false
-      } else {
-        status = 'Single Punch — No OUT'
-        statusVariant = 'outline'
-        isAwaitingOut = false
-        hasValidOut = false
-      }
-    }
-    // Eredia, Alfredo at 5:20 PM on 8am-5pm schedule: punchMins (1040) near/after expected OUT (1020)
-    // -> Shift-End / Likely OUT, Missing morning IN
-    else if (punchMins >= expectedOutMinutes - 90 || punchMins >= lunchEndMins + 60) {
-      actualInStr = 'Missing (Manual Request Required)'
-      actualOutStr = punchTimeFormatted
-      status = 'Likely OUT — Missing IN'
-      statusVariant = 'warning'
-      lateMinutes = 0
-      earlyOutMinutes = Math.max(0, expectedOutMinutes - punchMins)
-      workedMinutes = 0
-      totalHoursStr = '-'
-      hasValidOut = true
-      isAwaitingOut = false
-      isLikelyOut = true
-      isMissingIn = true
-      notes = `Single punch recorded at shift end (${punchTimeFormatted}). Morning biometric IN missing; time-in / paper request required.`
-    }
-    // Ambiguous midday punch
-    else {
-      actualInStr = punchTimeFormatted
-      actualOutStr = '-'
-      status = 'Ambiguous — Review Required'
-      statusVariant = 'outline'
-      isAwaitingOut = false
-      hasValidOut = false
-      notes = `Single punch occurred at ${punchTimeFormatted}. Unable to determine whether IN or OUT; HR review required.`
+  // 4. Punch Classification
+  // Classify valid punches into candidates
+  const morningPunches: AttendanceLog[] = []
+  const lunchOutPunches: AttendanceLog[] = []
+  const lunchInPunches: AttendanceLog[] = []
+  const afternoonOutPunches: AttendanceLog[] = []
+  const otherPunches: AttendanceLog[] = []
+
+  for (const p of validPunches) {
+    const mins = getManilaMinutesFromMidnight(p.attendance_time)
+    if (mins < morningArrivalCutoffMins) {
+      morningPunches.push(p)
+    } else if (mins >= lunchStartMins - 30 && mins <= lunchStartMins + 30) {
+      lunchOutPunches.push(p)
+    } else if (mins > lunchStartMins + 30 && mins <= lunchEndMins + 35) {
+      lunchInPunches.push(p)
+    } else if (mins >= afternoonDepartureMinMins) {
+      afternoonOutPunches.push(p)
+    } else {
+      otherPunches.push(p)
     }
   }
-  // CASE 2: Exactly 2 valid primary punches
-  else if (validCount === 2) {
-    const punch1 = validPunches[0]
-    const punch2 = validPunches[1]
-    const p1Mins = getManilaMinutesFromMidnight(punch1.attendance_time)
-    const p2Mins = getManilaMinutesFromMidnight(punch2.attendance_time)
-    const sessionMins = p2Mins - p1Mins
 
-    // Subcase 2.1: Both punches are morning/shift-start and very close together (< 30 minutes)
-    if (p1Mins < midpointMinutes && p2Mins < midpointMinutes && sessionMins < config.minSessionDurationMinutes) {
-      actualInStr = formatManilaTime(punch1.attendance_time)
+  // -------------------------------------------------------------
+  // EVALUATION SCENARIOS
+  // -------------------------------------------------------------
+
+  // CASE 1: Single primary valid punch
+  if (validCount === 1) {
+    const punch = validPunches[0]
+    const pMins = getManilaMinutesFromMidnight(punch.attendance_time)
+    const pTime = formatManilaTime(punch.attendance_time)
+
+    // Subcase 1.1: Morning arrival punch (e.g. 8:07 AM on 8am-5pm)
+    if (pMins < morningArrivalCutoffMins) {
+      actualInStr = pTime
       actualOutStr = '-'
-      lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
+      lateMinutes = Math.max(0, pMins - expectedInMinutes)
+      earlyOutMinutes = 0
+      hasValidOut = false
 
       if (isToday && !isPastCutoff) {
         status = 'Awaiting OUT'
         statusVariant = 'secondary'
         isAwaitingOut = true
-        hasValidOut = false
       } else {
         status = 'Single Punch — No OUT'
         statusVariant = 'outline'
         isAwaitingOut = false
-        hasValidOut = false
       }
     }
-    // Subcase 2.2: Both punches are in afternoon near shift end (e.g. 5:05 PM and 5:20 PM with no morning IN)
-    else if (p1Mins >= midpointMinutes && sessionMins < 60) {
+    // Subcase 1.2: Afternoon shift-end punch (e.g. 5:20 PM on 8am-5pm)
+    else if (pMins >= afternoonDepartureMinMins) {
       actualInStr = 'Missing (Manual Request Required)'
-      actualOutStr = formatManilaTime(punch2.attendance_time)
-      status = 'Likely OUT — Missing IN'
-      statusVariant = 'warning'
-      lateMinutes = 0
-      earlyOutMinutes = Math.max(0, expectedOutMinutes - p2Mins)
+      actualOutStr = pTime
       hasValidOut = true
+      isAwaitingOut = false
       isLikelyOut = true
       isMissingIn = true
-      notes = `Multiple scans at shift end (${formatManilaTime(punch1.attendance_time)} & ${formatManilaTime(punch2.attendance_time)}). Morning biometric IN missing.`
+      lateMinutes = 0
+      earlyOutMinutes = Math.max(0, expectedOutMinutes - pMins)
+      status = 'Likely OUT — Missing IN'
+      statusVariant = 'destructive'
+      notes = `Single punch recorded at departure (${pTime}). Morning biometric IN missing.`
     }
-    // Subcase 2.3: Standard valid IN and OUT (spanning work session)
+    // Subcase 1.3: Ambiguous midday / lunch scan only
     else {
-      actualInStr = formatManilaTime(punch1.attendance_time)
-      actualOutStr = formatManilaTime(punch2.attendance_time)
+      actualInStr = pTime
+      actualOutStr = '-'
+      hasValidOut = false
+      status = 'Incomplete / Review'
+      statusVariant = 'destructive'
+      notes = `Single punch occurred at ${pTime}. Incomplete attendance.`
+    }
+  }
+
+  // CASE 2: Exactly 2 primary valid punches
+  else if (validCount === 2) {
+    const p1 = validPunches[0]
+    const p2 = validPunches[1]
+    const p1Mins = getManilaMinutesFromMidnight(p1.attendance_time)
+    const p2Mins = getManilaMinutesFromMidnight(p2.attendance_time)
+    const sessionMins = p2Mins - p1Mins
+
+    // Subcase 2.1: Morning arrival IN + Afternoon departure OUT (Standard Day / Late / Early OUT)
+    if (p1Mins < morningArrivalCutoffMins && p2Mins >= afternoonDepartureMinMins) {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      actualOutStr = formatManilaTime(p2.attendance_time)
       hasValidOut = true
       isAwaitingOut = false
 
@@ -479,176 +568,377 @@ export function processEmployeeDayPunches(
       undertimeMinutes = earlyOutMinutes
 
       let grossMins = Math.max(0, p2Mins - p1Mins)
-      // Subtract unpaid lunch if shift spans across lunch window
       if (p1Mins < lunchStartMins && p2Mins > lunchEndMins) {
         grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
       }
-
-      workedMinutes = grossMins
-      const grossHours = grossMins / 60
-      totalHoursDecimal = Number(grossHours.toFixed(2))
-      totalHoursStr = `${grossHours.toFixed(1)} hrs`
-
-      status = 'Regular Day'
-      statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
-    }
-  }
-  // CASE 3: 3 valid primary punches (e.g. IN, Lunch scan, OUT)
-  else if (validCount === 3) {
-    const p1 = validPunches[0]
-    const p2 = validPunches[1]
-    const p3 = validPunches[2]
-    const p1Mins = getManilaMinutesFromMidnight(p1.attendance_time)
-    const p3Mins = getManilaMinutesFromMidnight(p3.attendance_time)
-
-    actualInStr = formatManilaTime(p1.attendance_time)
-    breakOutStr = formatManilaTime(p2.attendance_time)
-    actualOutStr = formatManilaTime(p3.attendance_time)
-    hasValidOut = true
-    isAwaitingOut = false
-
-    lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
-    earlyOutMinutes = Math.max(0, expectedOutMinutes - p3Mins)
-    undertimeMinutes = earlyOutMinutes
-
-    const grossMins = Math.max(0, p3Mins - p1Mins)
-    workedMinutes = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
-    const netHours = workedMinutes / 60
-    totalHoursDecimal = Number(netHours.toFixed(2))
-    totalHoursStr = `${netHours.toFixed(1)} hrs`
-
-    status = 'Regular Day'
-    statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
-  }
-  // CASE 4: 4 or more valid primary punches (IN, Break OUT, Break IN, Shift OUT)
-  else {
-    const pFirst = validPunches[0]
-    const pLast = validPunches[validCount - 1]
-    const pFirstMins = getManilaMinutesFromMidnight(pFirst.attendance_time)
-    const pLastMins = getManilaMinutesFromMidnight(pLast.attendance_time)
-
-    actualInStr = formatManilaTime(pFirst.attendance_time)
-    breakOutStr = formatManilaTime(validPunches[1].attendance_time)
-    breakInStr = formatManilaTime(validPunches[2].attendance_time)
-    actualOutStr = formatManilaTime(pLast.attendance_time)
-    hasValidOut = true
-    isAwaitingOut = false
-
-    lateMinutes = Math.max(0, pFirstMins - expectedInMinutes)
-    earlyOutMinutes = Math.max(0, expectedOutMinutes - pLastMins)
-    undertimeMinutes = earlyOutMinutes
-
-    const grossMins = Math.max(0, pLastMins - pFirstMins)
-    const bOutMins = getManilaMinutesFromMidnight(validPunches[1].attendance_time)
-    const bInMins = getManilaMinutesFromMidnight(validPunches[2].attendance_time)
-    const actualBreakMins = Math.max(0, bInMins - bOutMins)
-
-    workedMinutes = Math.max(0, grossMins - actualBreakMins)
-    const netHours = workedMinutes / 60
-    totalHoursDecimal = Number(netHours.toFixed(2))
-    totalHoursStr = `${netHours.toFixed(1)} hrs`
-
-    status = 'Regular Day'
-    statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
-  }
-
-  // Check for Approved Manual / Paper Request Adjustment
-  let isManualAdjustment = false
-  let manualAdjustmentReason = ''
-  const manual = employeeContext?.manualAdjustment
-
-  if (manual && manual.status === 'Approved') {
-    manualAdjustmentReason = manual.reason || manual.notes || 'Approved Manual Adjustment'
-
-    let effectiveInMins = -1
-    let effectiveOutMins = -1
-
-    if (manual.manualIn) {
-      actualInStr = `${manual.manualIn} (Manual)`
-      isManualAdjustment = true
-      isMissingIn = false
-      isLikelyOut = false
-      effectiveInMins = parseHHMMOr12hToMinutes(manual.manualIn)
-    }
-
-    if (manual.manualOut) {
-      actualOutStr = `${manual.manualOut} (Manual)`
-      isManualAdjustment = true
-      hasValidOut = true
-      isAwaitingOut = false
-      effectiveOutMins = parseHHMMOr12hToMinutes(manual.manualOut)
-    }
-
-    // Recalculate working session if either or both are manual
-    if (manual.manualIn && !manual.manualOut && hasValidOut && actualOutStr !== '-' && !actualOutStr.includes('Missing')) {
-      const lastPunch = validPunches[validCount - 1]
-      effectiveOutMins = getManilaMinutesFromMidnight(lastPunch.attendance_time)
-    } else if (manual.manualOut && !manual.manualIn && actualInStr !== '-' && !actualInStr.includes('Missing')) {
-      const firstPunch = validPunches[0]
-      effectiveInMins = getManilaMinutesFromMidnight(firstPunch.attendance_time)
-    }
-
-    if (effectiveInMins >= 0 && effectiveOutMins >= 0 && effectiveOutMins >= effectiveInMins) {
-      lateMinutes = Math.max(0, effectiveInMins - expectedInMinutes)
-      earlyOutMinutes = Math.max(0, expectedOutMinutes - effectiveOutMins)
-      undertimeMinutes = earlyOutMinutes
-
-      let grossMins = Math.max(0, effectiveOutMins - effectiveInMins)
-      if (effectiveInMins < lunchStartMins && effectiveOutMins > lunchEndMins) {
-        grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
-      }
-
       workedMinutes = grossMins
       const netHours = workedMinutes / 60
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      status = 'Regular Day'
-      statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
-    } else if (manual.manualIn && (actualOutStr === '-' || actualOutStr.includes('Missing'))) {
-      lateMinutes = Math.max(0, (effectiveInMins >= 0 ? effectiveInMins : expectedInMinutes) - expectedInMinutes)
-      status = 'Single Punch — No OUT'
-      statusVariant = 'outline'
+      if (lateMinutes > 0) {
+        status = 'Late'
+        statusVariant = 'warning'
+      } else if (earlyOutMinutes > 0) {
+        status = 'Early OUT'
+        statusVariant = 'warning'
+      } else {
+        status = 'Regular Day'
+        statusVariant = 'success'
+      }
+    }
+
+    // Subcase 2.2: Morning IN + Lunch-time punch (e.g. 7:53 AM + 12:00 PM or 7:53 AM + 12:57 PM)
+    else if (p1Mins < morningArrivalCutoffMins && p2Mins < afternoonDepartureMinMins) {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
+
+      if (isApprovedHalfDayAM) {
+        actualOutStr = formatManilaTime(p2.attendance_time)
+        hasValidOut = true
+        workedMinutes = Math.max(0, p2Mins - p1Mins)
+        totalHoursStr = `${(workedMinutes / 60).toFixed(1)} hrs`
+        totalHoursDecimal = Number((workedMinutes / 60).toFixed(2))
+        status = 'Half Day'
+        statusVariant = 'secondary'
+      } else {
+        // Without approved half day, 12:00-12:57 is a lunch scan, NOT final OUT
+        if (p2Mins <= lunchStartMins + 25) {
+          breakOutStr = formatManilaTime(p2.attendance_time)
+        } else {
+          breakInStr = formatManilaTime(p2.attendance_time)
+        }
+        actualOutStr = '-'
+        hasValidOut = false
+        earlyOutMinutes = 0 // Do not calculate early out on lunch punch
+
+        if (isToday && !isPastCutoff) {
+          status = 'Awaiting OUT'
+          statusVariant = 'secondary'
+          isAwaitingOut = true
+        } else {
+          status = 'Incomplete / Review'
+          statusVariant = 'destructive'
+        }
+      }
+    }
+
+    // Subcase 2.3: Midday/Lunch IN + Afternoon OUT (e.g. 12:55 PM + 5:03 PM)
+    else if (p1Mins >= lunchStartMins - 30 && p1Mins <= lunchEndMins + 35 && p2Mins >= afternoonDepartureMinMins) {
+      if (isApprovedHalfDayPM) {
+        actualInStr = formatManilaTime(p1.attendance_time)
+        actualOutStr = formatManilaTime(p2.attendance_time)
+        hasValidOut = true
+        workedMinutes = Math.max(0, p2Mins - p1Mins)
+        totalHoursStr = `${(workedMinutes / 60).toFixed(1)} hrs`
+        totalHoursDecimal = Number((workedMinutes / 60).toFixed(2))
+        status = 'Half Day — PM'
+        statusVariant = 'secondary'
+      } else {
+        actualInStr = 'Missing (Manual Request Required)'
+        breakInStr = formatManilaTime(p1.attendance_time)
+        actualOutStr = formatManilaTime(p2.attendance_time)
+        hasValidOut = true
+        isLikelyOut = true
+        isMissingIn = true
+        status = 'Likely OUT — Missing IN'
+        statusVariant = 'destructive'
+      }
+    }
+
+    // Subcase 2.4: Both punches within lunch window (e.g. 11:57 AM + 12:57 PM)
+    else if (p1Mins >= lunchStartMins - 30 && p2Mins <= lunchEndMins + 35) {
+      actualInStr = '-'
+      breakOutStr = formatManilaTime(p1.attendance_time)
+      breakInStr = formatManilaTime(p2.attendance_time)
+      actualOutStr = '-'
+      hasValidOut = false
+      status = 'Incomplete / Review'
+      statusVariant = 'destructive'
+      notes = 'Only lunch break punches recorded. Morning IN and shift OUT missing.'
+    }
+
+    // Subcase 2.5: Both punches in morning close together (< 30 mins)
+    else if (p1Mins < morningArrivalCutoffMins && p2Mins < morningArrivalCutoffMins && sessionMins < config.minSessionDurationMinutes) {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      actualOutStr = '-'
+      lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
+      hasValidOut = false
+      if (isToday && !isPastCutoff) {
+        status = 'Awaiting OUT'
+        statusVariant = 'secondary'
+        isAwaitingOut = true
+      } else {
+        status = 'Single Punch — No OUT'
+        statusVariant = 'outline'
+      }
+    }
+
+    // Subcase 2.6: Both punches near shift end (< 60 mins)
+    else if (p1Mins >= afternoonDepartureMinMins && sessionMins < 60) {
+      actualInStr = 'Missing (Manual Request Required)'
+      actualOutStr = formatManilaTime(p2.attendance_time)
+      hasValidOut = true
+      isLikelyOut = true
+      isMissingIn = true
+      status = 'Likely OUT — Missing IN'
+      statusVariant = 'destructive'
+    }
+
+    else {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      actualOutStr = formatManilaTime(p2.attendance_time)
+      hasValidOut = true
+      status = 'Incomplete / Review'
+      statusVariant = 'destructive'
     }
   }
 
-  // 4. Assign window roles (IN, OUT, BREAK) to scan breakdown items for clear auditing
+  // CASE 3: Exactly 3 primary valid punches (e.g. Quimada: 7:53 AM, 11:57 AM, 12:57 PM)
+  else if (validCount === 3) {
+    const p1 = validPunches[0]
+    const p2 = validPunches[1]
+    const p3 = validPunches[2]
+    const p1Mins = getManilaMinutesFromMidnight(p1.attendance_time)
+    const p2Mins = getManilaMinutesFromMidnight(p2.attendance_time)
+    const p3Mins = getManilaMinutesFromMidnight(p3.attendance_time)
+
+    // Subcase 3.1: QUIMADA SCENARIO — Morning IN + Lunch OUT + Lunch IN (P3 is within lunch return, NO departure punch yet)
+    if (p1Mins < morningArrivalCutoffMins && p2Mins <= lunchStartMins + 30 && p3Mins <= lunchEndMins + 35) {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      breakOutStr = formatManilaTime(p2.attendance_time)
+      breakInStr = formatManilaTime(p3.attendance_time)
+      actualOutStr = '-'
+      hasValidOut = false
+      isAwaitingOut = true
+      lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
+      earlyOutMinutes = 0 // CRITICAL: 12:57 PM is lunch return, NOT final OUT! Zero early out minutes.
+      workedMinutes = 0
+      totalHoursStr = '-'
+      status = 'Awaiting OUT'
+      statusVariant = 'secondary'
+    }
+
+    // Subcase 3.2: Morning IN + 1 Lunch scan + Afternoon Departure OUT (e.g. 7:53 AM, 12:00 PM, 5:03 PM)
+    else if (p1Mins < morningArrivalCutoffMins && p3Mins >= afternoonDepartureMinMins) {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      if (p2Mins <= lunchStartMins + 30) {
+        breakOutStr = formatManilaTime(p2.attendance_time)
+      } else {
+        breakInStr = formatManilaTime(p2.attendance_time)
+      }
+      actualOutStr = formatManilaTime(p3.attendance_time)
+      hasValidOut = true
+      isAwaitingOut = false
+
+      lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
+      earlyOutMinutes = Math.max(0, expectedOutMinutes - p3Mins)
+      undertimeMinutes = earlyOutMinutes
+
+      const grossMins = Math.max(0, p3Mins - p1Mins)
+      workedMinutes = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
+      const netHours = workedMinutes / 60
+      totalHoursDecimal = Number(netHours.toFixed(2))
+      totalHoursStr = `${netHours.toFixed(1)} hrs`
+
+      if (lateMinutes > 0) {
+        status = 'Late'
+        statusVariant = 'warning'
+      } else if (earlyOutMinutes > 0) {
+        status = 'Early OUT'
+        statusVariant = 'warning'
+      } else {
+        status = 'Regular Day'
+        statusVariant = 'success'
+      }
+    }
+
+    // Subcase 3.3: Lunch scans + Afternoon Departure OUT (Missing Morning IN)
+    else if (p1Mins >= lunchStartMins - 30 && p3Mins >= afternoonDepartureMinMins) {
+      actualInStr = 'Missing (Manual Request Required)'
+      breakOutStr = formatManilaTime(p1.attendance_time)
+      breakInStr = formatManilaTime(p2.attendance_time)
+      actualOutStr = formatManilaTime(p3.attendance_time)
+      hasValidOut = true
+      isLikelyOut = true
+      isMissingIn = true
+      status = 'Likely OUT — Missing IN'
+      statusVariant = 'destructive'
+    }
+
+    else {
+      actualInStr = formatManilaTime(p1.attendance_time)
+      actualOutStr = formatManilaTime(p3.attendance_time)
+      hasValidOut = true
+      status = 'Incomplete / Review'
+      statusVariant = 'destructive'
+    }
+  }
+
+  // CASE 4: 4 or more primary valid punches
+  else {
+    const hasMorning = morningPunches.length > 0
+    const hasDeparture = afternoonOutPunches.length > 0
+
+    if (hasMorning && hasDeparture) {
+      const pIn = morningPunches[0]
+      const pOut = afternoonOutPunches[afternoonOutPunches.length - 1]
+      const inMins = getManilaMinutesFromMidnight(pIn.attendance_time)
+      const outMins = getManilaMinutesFromMidnight(pOut.attendance_time)
+
+      actualInStr = formatManilaTime(pIn.attendance_time)
+      actualOutStr = formatManilaTime(pOut.attendance_time)
+      hasValidOut = true
+      isAwaitingOut = false
+
+      if (lunchOutPunches.length > 0) breakOutStr = formatManilaTime(lunchOutPunches[0].attendance_time)
+      if (lunchInPunches.length > 0) breakInStr = formatManilaTime(lunchInPunches[lunchInPunches.length - 1].attendance_time)
+
+      lateMinutes = Math.max(0, inMins - expectedInMinutes)
+      earlyOutMinutes = Math.max(0, expectedOutMinutes - outMins)
+      undertimeMinutes = earlyOutMinutes
+
+      const grossMins = Math.max(0, outMins - inMins)
+      workedMinutes = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
+      const netHours = workedMinutes / 60
+      totalHoursDecimal = Number(netHours.toFixed(2))
+      totalHoursStr = `${netHours.toFixed(1)} hrs`
+
+      if (lateMinutes > 0) {
+        status = 'Late'
+        statusVariant = 'warning'
+      } else if (earlyOutMinutes > 0) {
+        status = 'Early OUT'
+        statusVariant = 'warning'
+      } else {
+        status = 'Regular Day'
+        statusVariant = 'success'
+      }
+    } else if (hasMorning && !hasDeparture) {
+      actualInStr = formatManilaTime(morningPunches[0].attendance_time)
+      if (lunchOutPunches.length > 0) breakOutStr = formatManilaTime(lunchOutPunches[0].attendance_time)
+      if (lunchInPunches.length > 0) breakInStr = formatManilaTime(lunchInPunches[lunchInPunches.length - 1].attendance_time)
+      actualOutStr = '-'
+      hasValidOut = false
+      isAwaitingOut = true
+      earlyOutMinutes = 0
+      status = 'Awaiting OUT'
+      statusVariant = 'secondary'
+    } else if (!hasMorning && hasDeparture) {
+      actualInStr = 'Missing (Manual Request Required)'
+      if (lunchOutPunches.length > 0) breakOutStr = formatManilaTime(lunchOutPunches[0].attendance_time)
+      if (lunchInPunches.length > 0) breakInStr = formatManilaTime(lunchInPunches[lunchInPunches.length - 1].attendance_time)
+      actualOutStr = formatManilaTime(afternoonOutPunches[afternoonOutPunches.length - 1].attendance_time)
+      hasValidOut = true
+      isLikelyOut = true
+      isMissingIn = true
+      status = 'Likely OUT — Missing IN'
+      statusVariant = 'destructive'
+    } else {
+      status = 'Incomplete / Review'
+      statusVariant = 'destructive'
+    }
+  }
+
+  // -------------------------------------------------------------
+  // HR CONTEXT & MANUAL TIME OVERRIDE
+  // -------------------------------------------------------------
+  let isManualAdjustment = false
+  let isPendingAdjustment = false
+  let manualAdjustmentReason = ''
+  let manualAdjustmentRef = ''
+  let manualAdjustmentStatus: 'Approved' | 'Pending' | undefined
+
+  if (manual) {
+    manualAdjustmentReason = manual.reason || manual.notes || 'Manual Adjustment'
+    manualAdjustmentRef = manual.id
+    manualAdjustmentStatus = manual.status === 'Approved' ? 'Approved' : 'Pending'
+
+    if (manual.status === 'Pending') {
+      isPendingAdjustment = true
+      status = 'Manual Time'
+      statusVariant = 'secondary'
+    } else if (manual.status === 'Approved') {
+      isManualAdjustment = true
+      let effInMins = -1
+      let effOutMins = -1
+
+      if (manual.manualIn) {
+        actualInStr = `${manual.manualIn} (Manual)`
+        isMissingIn = false
+        isLikelyOut = false
+        effInMins = parseHHMMOr12hToMinutes(manual.manualIn)
+      } else if (actualInStr !== '-' && !actualInStr.includes('Missing')) {
+        effInMins = parseHHMMOr12hToMinutes(actualInStr)
+      }
+
+      if (manual.manualOut) {
+        actualOutStr = `${manual.manualOut} (Manual)`
+        hasValidOut = true
+        isAwaitingOut = false
+        effOutMins = parseHHMMOr12hToMinutes(manual.manualOut)
+      } else if (actualOutStr !== '-' && !actualOutStr.includes('Missing') && !actualOutStr.includes('Awaiting')) {
+        effOutMins = parseHHMMOr12hToMinutes(actualOutStr)
+      }
+
+      if (isFieldWorkContext) {
+        status = 'Field Work'
+        statusVariant = 'secondary'
+      } else if (isApprovedHalfDayAM) {
+        status = 'Half Day'
+        statusVariant = 'secondary'
+      } else if (isApprovedHalfDayPM) {
+        status = 'Half Day — PM'
+        statusVariant = 'secondary'
+      } else if (effInMins >= 0 && effOutMins >= 0 && effOutMins >= effInMins) {
+        lateMinutes = Math.max(0, effInMins - expectedInMinutes)
+        earlyOutMinutes = Math.max(0, expectedOutMinutes - effOutMins)
+        undertimeMinutes = earlyOutMinutes
+
+        let grossMins = Math.max(0, effOutMins - effInMins)
+        if (effInMins < lunchStartMins && effOutMins > lunchEndMins) {
+          grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
+        }
+        workedMinutes = grossMins
+        const netHours = workedMinutes / 60
+        totalHoursDecimal = Number(netHours.toFixed(2))
+        totalHoursStr = `${netHours.toFixed(1)} hrs`
+
+        if (lateMinutes > 0) {
+          status = 'Late'
+          statusVariant = 'warning'
+        } else if (earlyOutMinutes > 0) {
+          status = 'Early OUT'
+          statusVariant = 'warning'
+        } else {
+          status = 'Manual Time'
+          statusVariant = 'secondary'
+        }
+      } else {
+        status = 'Manual Time'
+        statusVariant = 'secondary'
+      }
+    }
+  }
+
+  // 5. Assign window roles (IN, OUT, BREAK) to scan breakdown items
   for (const scan of scanBreakdown) {
     const scanMins = getManilaMinutesFromMidnight(scan.timestampMs)
-    if (validCount === 1) {
-      if (isLikelyOut) {
-        scan.windowRole = 'OUT'
-        scan.windowRoleLabel = 'This is for OUT'
-      } else {
-        scan.windowRole = 'IN'
-        scan.windowRoleLabel = 'This is for IN'
-      }
-    } else if (validCount === 2) {
-      if (isLikelyOut) {
-        scan.windowRole = 'OUT'
-        scan.windowRoleLabel = 'This is for OUT'
-      } else if (scanMins < midpointMinutes) {
-        scan.windowRole = 'IN'
-        scan.windowRoleLabel = 'This is for IN'
-      } else {
-        scan.windowRole = 'OUT'
-        scan.windowRoleLabel = 'This is for OUT'
-      }
+    if (scanMins < morningArrivalCutoffMins) {
+      scan.windowRole = 'IN'
+      scan.windowRoleLabel = 'This is for IN (Shift Arrival Window)'
+    } else if (scanMins >= afternoonDepartureMinMins) {
+      scan.windowRole = 'OUT'
+      scan.windowRoleLabel = 'This is for OUT (Shift Departure Window)'
+    } else if (scanMins >= lunchStartMins - 30 && scanMins <= lunchStartMins + 30) {
+      scan.windowRole = 'BREAK_OUT'
+      scan.windowRoleLabel = 'This is for Lunch (Break OUT)'
+    } else if (scanMins > lunchStartMins + 30 && scanMins <= lunchEndMins + 35) {
+      scan.windowRole = 'BREAK_IN'
+      scan.windowRoleLabel = 'This is for Lunch (Break IN / Return)'
     } else {
-      // 3+ punches
-      if (scanMins < lunchStartMins - 30) {
-        scan.windowRole = 'IN'
-        scan.windowRoleLabel = 'This is for IN'
-      } else if (scanMins >= expectedOutMinutes - 90 || scanMins >= midpointMinutes + 60) {
-        scan.windowRole = 'OUT'
-        scan.windowRoleLabel = 'This is for OUT'
-      } else if (scanMins < lunchEndMins + 15) {
-        scan.windowRole = 'BREAK_OUT'
-        scan.windowRoleLabel = 'This is for Lunch/Break'
-      } else {
-        scan.windowRole = 'EXTRA'
-        scan.windowRoleLabel = 'Midday Scan'
-      }
+      scan.windowRole = 'EXTRA'
+      scan.windowRoleLabel = 'Midday Scan'
     }
   }
 
@@ -697,7 +987,10 @@ export function processEmployeeDayPunches(
     is_likely_out: isLikelyOut,
     is_missing_in: isMissingIn,
     is_manual_adjustment: isManualAdjustment,
+    is_pending_adjustment: isPendingAdjustment,
     manual_adjustment_reason: manualAdjustmentReason,
+    manual_adjustment_ref: manualAdjustmentRef,
+    manual_adjustment_status: manualAdjustmentStatus,
     first_punch_time_ms: firstPunchMs,
     latest_punch_time_ms: latestPunchMs,
     latest_punch_time: latestPunchTimeStr,

@@ -160,10 +160,10 @@ function setDateQuick(range: 'today' | 'yesterday') {
 const stats = computed(() => {
   const list = dailyRecords.value
   const total = list.length
-  const late = list.filter(r => r.late_minutes > 0).length
-  const onTime = list.filter(r => r.late_minutes === 0 && r.has_valid_out && !r.is_missing_in).length
+  const late = list.filter(r => r.late_minutes > 0 || r.status === 'Late').length
+  const onTime = list.filter(r => (r.status === 'Regular Day' || (!r.status.includes('Missing') && r.has_valid_out)) && r.late_minutes === 0).length
   const awaitingOut = list.filter(r => r.status === 'Awaiting OUT').length
-  const likelyOutMissingIn = list.filter(r => r.status === 'Likely OUT — Missing IN' || r.is_missing_in).length
+  const likelyOutMissingIn = list.filter(r => r.status === 'Likely OUT — Missing IN' || r.status === 'Incomplete / Review' || r.is_missing_in).length
   const singlePunchNoOut = list.filter(r => r.status === 'Single Punch — No OUT').length
   const duplicateScans = list.filter(r => (r.duplicate_punches_count || 0) > 0).length
   return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, duplicateScans }
@@ -174,11 +174,11 @@ const filteredRecords = computed(() => {
 
   // Status Filter Pill
   if (activeStatusFilter.value === 'on_time') {
-    list = list.filter(r => r.late_minutes === 0 && r.has_valid_out && !r.is_missing_in)
+    list = list.filter(r => r.late_minutes === 0 && r.has_valid_out && !r.is_missing_in && r.status !== 'Incomplete / Review')
   } else if (activeStatusFilter.value === 'late') {
-    list = list.filter(r => r.late_minutes > 0)
+    list = list.filter(r => r.late_minutes > 0 || r.status === 'Late')
   } else if (activeStatusFilter.value === 'discrepancy') {
-    list = list.filter(r => r.is_missing_in || r.status === 'Likely OUT — Missing IN' || r.status === 'Single Punch — No OUT')
+    list = list.filter(r => r.is_missing_in || r.status === 'Likely OUT — Missing IN' || r.status === 'Single Punch — No OUT' || r.status === 'Incomplete / Review')
   } else if (activeStatusFilter.value === 'duplicates') {
     list = list.filter(r => (r.duplicate_punches_count || 0) > 0)
   }
@@ -960,19 +960,19 @@ onUnmounted(() => {
               <TableCell class="py-2.5 text-right">
                 <div class="flex flex-col gap-1 items-end">
                   <div
-                    class="flex items-center justify-end text-[10px] font-medium"
+                    class="flex items-center justify-end text-[10px] font-semibold whitespace-nowrap text-right"
                     :class="
-                      row.status === 'Likely OUT — Missing IN'
-                        ? 'text-destructive'
-                        : row.status === 'Manual / Paper IN'
-                          ? 'text-muted-foreground'
+                      row.status === 'Likely OUT — Missing IN' || row.status === 'Incomplete / Review'
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : row.status === 'Late' || row.status === 'Early OUT'
+                          ? 'text-amber-600 dark:text-amber-400'
                           : row.status === 'Regular Day'
-                            ? (row.late_minutes > 0 || row.early_out_minutes > 0
-                                ? 'text-warning'
-                                : 'text-success')
-                            : row.status === 'Awaiting OUT'
-                              ? 'text-muted-foreground'
-                              : 'text-foreground'
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : row.status === 'Half Day' || row.status === 'Half Day — PM' || row.status === 'Field Work' || row.status === 'Manual Time' || row.status === 'Leave'
+                              ? 'text-sky-600 dark:text-sky-400'
+                              : row.status === 'Awaiting OUT' || row.status === 'Single Punch — No OUT'
+                                ? 'text-muted-foreground'
+                                : 'text-foreground'
                     "
                   >
                     <span>{{ row.status }}</span>

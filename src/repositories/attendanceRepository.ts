@@ -43,20 +43,35 @@ export const attendanceRepository = {
       userGroups.get(uid)!.push(p)
     }
 
-    const [employeeMap, workGroupMap, manualAdjustmentsMap] = await Promise.all([
+    const [employeeMap, workGroupMap, manualAdjustmentsMap, leaves] = await Promise.all([
       employeeRepository.getEmployeeMap(),
       workGroupRepository.getMap(),
-      manualAttendanceRepository.getAdjustmentsMapForDate(selectedDate)
+      manualAttendanceRepository.getAdjustmentsMapForDate(selectedDate),
+      db.leaveRecords
+        .where('status')
+        .equals('Approved')
+        .filter(l => l.startDate <= selectedDate && l.endDate >= selectedDate)
+        .toArray()
+        .catch(() => [])
     ])
+
+    const leaveMap = new Map<string, any>()
+    for (const l of leaves) {
+      leaveMap.set(l.bioId, l)
+    }
+
     const records: DailyAttendanceRecord[] = []
+    const processedBioIds = new Set<string>()
 
     // 3. Process each employee's daily punches with Work Group context
     for (const [bioId, punches] of userGroups.entries()) {
+      processedBioIds.add(bioId)
       const emp = employeeMap.get(bioId)
       const empLocation = emp?.location || punches[0].location_name || 'DBB CEBU'
       const empWgId = emp?.workGroupId || 'wg-group-c'
       const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
       const manualAdj = manualAdjustmentsMap.get(bioId)
+      const leaveRec = leaveMap.get(bioId)
 
       // Location filter
       if (locationFilter && locationFilter !== 'all') {
@@ -92,10 +107,51 @@ export const attendanceRepository = {
         lunchStart: wg?.lunchStart || '12:00',
         lunchEnd: wg?.lunchEnd || '13:00',
         gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
-        manualAdjustment: manualAdj
+        manualAdjustment: manualAdj,
+        approvedLeave: leaveRec
       }
 
       const dailyRecord = processEmployeeDayPunches(bioId, punches, selectedDate, empContext, customConfig)
+      if (dailyRecord) {
+        records.push(dailyRecord)
+      }
+    }
+
+    // Process employees with approved leave who had 0 punches
+    for (const [bioId, leaveRec] of leaveMap.entries()) {
+      if (processedBioIds.has(bioId)) continue
+      const emp = employeeMap.get(bioId)
+      if (!emp) continue
+
+      const empLocation = emp.location || 'DBB CEBU'
+      const empWgId = emp.workGroupId || 'wg-group-c'
+      const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
+
+      if (locationFilter && locationFilter !== 'all') {
+        const target = locationFilter.toLowerCase().trim()
+        const current = empLocation.toLowerCase().trim()
+        if (target !== current) continue
+      }
+      if (workGroupFilter && workGroupFilter !== 'all') {
+        if (empWgId !== workGroupFilter) continue
+      }
+
+      const empContext: EmployeeScheduleContext = {
+        bioId,
+        name: emp.fullName || `User ${bioId}`,
+        department: emp.department || '',
+        location: empLocation,
+        workGroupId: empWgId,
+        workGroupName: wg?.name || 'GROUP C',
+        standardIn: wg?.standardIn || '08:00',
+        requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
+        lunchStart: wg?.lunchStart || '12:00',
+        lunchEnd: wg?.lunchEnd || '13:00',
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
+        approvedLeave: leaveRec
+      }
+
+      const dailyRecord = processEmployeeDayPunches(bioId, [], selectedDate, empContext, customConfig)
       if (dailyRecord) {
         records.push(dailyRecord)
       }
