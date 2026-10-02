@@ -47,39 +47,50 @@ export const attendanceService = {
   },
 
   /**
-   * Saves an approved or pending manual / paper request adjustment
+   * Submits a manual time request (stored as Pending for review)
    */
-  async saveManualAdjustment(data: {
+  async submitManualTimeRequest(data: {
     bioId: string
+    employeeName?: string
     date: string
+    scheduleContext?: string
+    originalIn?: string
+    originalOut?: string
     manualIn?: string
     manualOut?: string
-    reason: string
-    status?: 'Approved' | 'Pending'
-    approvedBy?: string
+    reason?: string
+    notes?: string
+    requestedBy?: string
   }) {
-    return manualAttendanceRepository.saveAdjustment(data)
+    return manualAttendanceRepository.submitRequest(data)
   },
 
   /**
-   * Approves a pending manual adjustment
+   * Retrieves all manual time requests (with optional status filter: 'all', 'Pending', 'Approved', 'Rejected')
    */
-  async approveManualAdjustment(bioId: string, date: string, approver = 'Admin') {
-    return manualAttendanceRepository.approveAdjustment(bioId, date, approver)
+  async getManualTimeRequests(statusFilter = 'all') {
+    return manualAttendanceRepository.getAll(statusFilter)
   },
 
   /**
-   * Gets all pending manual attendance adjustments
+   * Approves a manual time adjustment request
    */
-  async getPendingAdjustments() {
-    return manualAttendanceRepository.getPendingAdjustments()
+  async approveManualTimeRequest(idOrBioId: string, date?: string, approver = 'Admin') {
+    return manualAttendanceRepository.approveAdjustment(idOrBioId, date, approver)
   },
 
   /**
-   * Deletes a manual adjustment
+   * Rejects a manual time adjustment request
    */
-  async deleteManualAdjustment(bioId: string, date: string) {
-    return manualAttendanceRepository.deleteAdjustment(bioId, date)
+  async rejectManualTimeRequest(idOrBioId: string, date?: string, reviewer = 'Admin', reason?: string) {
+    return manualAttendanceRepository.rejectAdjustment(idOrBioId, date, reviewer, reason)
+  },
+
+  /**
+   * Deletes a manual adjustment record
+   */
+  async deleteManualAdjustment(bioIdOrId: string, date?: string) {
+    return manualAttendanceRepository.deleteAdjustment(bioIdOrId, date)
   },
 
   /**

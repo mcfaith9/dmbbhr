@@ -5,6 +5,7 @@ import { authService } from '@/services/auth'
 const DashboardView = () => import('@/views/DashboardView.vue')
 const AttendanceLogsView = () => import('@/views/AttendanceLogsView.vue')
 const DailyAttendanceView = () => import('@/views/DailyAttendanceView.vue')
+const ManualTimeView = () => import('@/views/ManualTimeView.vue')
 const EmployeesView = () => import('@/views/EmployeesView.vue')
 const DevicesView = () => import('@/views/DevicesView.vue')
 const SchedulesView = () => import('@/views/SchedulesView.vue')
@@ -58,6 +59,12 @@ export const router = createRouter({
           name: 'attendance-logs',
           component: AttendanceLogsView,
           meta: { title: 'Attendance Logs', breadcrumb: ['Attendance', 'Attendance Logs'] }
+        },
+        {
+          path: 'attendance/manual',
+          name: 'attendance-manual',
+          component: ManualTimeView,
+          meta: { title: 'Manual Time', breadcrumb: ['Attendance', 'Manual Time'] }
         },
         {
           path: 'employees',

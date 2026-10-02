@@ -13,23 +13,23 @@ import {
   MapPin,
   ArrowDownUp,
   Layers,
-  AlertTriangle,
   FileText,
   Info,
   Trash2,
-  Check,
   Fingerprint,
-  FileCheck,
-  ShieldCheck
+  ShieldCheck,
+  Send
 } from '@lucide/vue'
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { authService } from '@/services/auth'
 import { VALID_LOCATIONS } from '@/services/employees'
 import type { WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -69,34 +69,23 @@ const selectedDate = ref<string>(todayDateStr)
 const selectedLocation = ref<string>('all')
 const selectedWorkGroup = ref<string>('all')
 const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
-const activeStatusFilter = ref<'all' | 'on_time' | 'late' | 'discrepancy' | 'pending' | 'duplicates'>('all')
+const activeStatusFilter = ref<'all' | 'on_time' | 'late' | 'discrepancy' | 'duplicates'>('all')
 const searchQuery = ref<string>('')
 const loading = ref<boolean>(false)
 const dailyRecords = ref<DailyAttendanceRecord[]>([])
 const workGroups = ref<WorkGroup[]>([])
 
-// Manual Adjustment Dialog State
+// Unified "Adjust Attendance" Dialog State
 const isAdjustmentDialogOpen = ref(false)
 const adjustmentRow = ref<DailyAttendanceRecord | null>(null)
-const adjustmentType = ref<'in' | 'out' | 'both'>('in')
-const adjustmentScenario = ref<string>('FORGOT_SCAN')
-const manualInTime = ref('08:00 AM')
-const manualOutTime = ref('05:00 PM')
-const manualReference = ref('HR-SLIP-2026-101')
-const manualApprover = ref('Admin')
-const manualStatus = ref<'Approved' | 'Pending'>('Approved')
-const manualCustomNote = ref('')
+const manualInTime = ref('')
+const manualOutTime = ref('')
+const manualNotes = ref('')
 const isSavingAdjustment = ref(false)
+const adjustmentError = ref('')
+const submitSuccessMsg = ref('')
 
-const SCENARIOS = [
-  { id: 'FORGOT_SCAN', label: 'Forgot to Scan (HR Attendance Adjustment Slip)', defaultRef: 'HR-SLIP-2026-101' },
-  { id: 'OB_SLIP', label: 'Official Business / Client Meeting Outside (OB Slip)', defaultRef: 'OB-2026-042' },
-  { id: 'SENSOR_GLITCH', label: 'Biometric Sensor / Hardware Fingerprint Reader Error', defaultRef: 'BIO-ERR-LOG-22' },
-  { id: 'POWER_LAN_OUTAGE', label: 'Branch Power Interruption / Network Offline', defaultRef: 'INCIDENT-PWR-09' },
-  { id: 'FIELDWORK_DISPATCH', label: 'Field Duty / Delivery Dispatch / Offsite Support', defaultRef: 'DISPATCH-2026-77' },
-  { id: 'AUTHORIZED_ERRAND', label: 'Official Midday Errand / Authorized Emergency', defaultRef: 'ERRAND-AUTH-15' },
-  { id: 'CUSTOM', label: 'Other Authorized Reason (Specify Note)', defaultRef: '' }
-]
+const currentUser = authService.currentUser
 
 async function loadLookups() {
   workGroups.value = await attendanceService.getWorkGroups()
@@ -175,9 +164,8 @@ const stats = computed(() => {
   const awaitingOut = list.filter(r => r.status === 'Awaiting OUT').length
   const likelyOutMissingIn = list.filter(r => r.status === 'Likely OUT — Missing IN' || r.is_missing_in).length
   const singlePunchNoOut = list.filter(r => r.status === 'Single Punch — No OUT').length
-  const pendingApprovals = list.filter(r => r.is_pending_adjustment || r.status === 'Pending Approval').length
   const duplicateScans = list.filter(r => (r.duplicate_punches_count || 0) > 0).length
-  return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, pendingApprovals, duplicateScans }
+  return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, duplicateScans }
 })
 
 const filteredRecords = computed(() => {
@@ -190,8 +178,6 @@ const filteredRecords = computed(() => {
     list = list.filter(r => r.late_minutes > 0)
   } else if (activeStatusFilter.value === 'discrepancy') {
     list = list.filter(r => r.is_missing_in || r.status === 'Likely OUT — Missing IN' || r.status === 'Single Punch — No OUT')
-  } else if (activeStatusFilter.value === 'pending') {
-    list = list.filter(r => r.is_pending_adjustment || r.status === 'Pending Approval')
   } else if (activeStatusFilter.value === 'duplicates') {
     list = list.filter(r => (r.duplicate_punches_count || 0) > 0)
   }
@@ -240,51 +226,72 @@ const displayDateTitle = computed(() => {
   return selectedDate.value
 })
 
+/**
+ * Opens unified Adjust Attendance dialog for both IN and OUT
+ */
 function openAdjustmentModal(row: DailyAttendanceRecord) {
   adjustmentRow.value = row
-  manualInTime.value = row.expected_in || '08:00 AM'
-  manualOutTime.value = row.expected_out || '05:00 PM'
-  adjustmentType.value = row.is_missing_in ? 'in' : (row.has_valid_out ? 'in' : 'both')
-  adjustmentScenario.value = row.is_missing_in ? 'FORGOT_SCAN' : 'OB_SLIP'
-  manualReference.value = `HR-REQ-${row.biometric_user_id}-${selectedDate.value.replace(/-/g, '')}`
-  manualApprover.value = 'Admin'
-  manualStatus.value = 'Approved'
-  manualCustomNote.value = row.manual_adjustment_reason || ''
+  adjustmentError.value = ''
+  submitSuccessMsg.value = ''
+
+  // Pre-fill valid existing values or leave empty for missing
+  if (row.is_missing_in || row.actual_in === '-' || row.actual_in.includes('Missing')) {
+    manualInTime.value = row.expected_in || '08:00 AM'
+  } else {
+    manualInTime.value = row.actual_in.replace(/\s*\(Manual\)/i, '').trim()
+  }
+
+  if (row.actual_out === '-' || row.actual_out.includes('Awaiting') || row.actual_out.includes('Missing')) {
+    manualOutTime.value = row.expected_out || '05:00 PM'
+  } else {
+    manualOutTime.value = row.actual_out.replace(/\s*\(Manual\)/i, '').trim()
+  }
+
+  manualNotes.value = row.manual_adjustment_reason || ''
   isAdjustmentDialogOpen.value = true
 }
 
-async function handleQuickApprove(row: DailyAttendanceRecord) {
-  loading.value = true
-  try {
-    await attendanceService.approveManualAdjustment(row.biometric_user_id, row.raw_date, 'Admin')
-    triggerCoalescedRefresh(true)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleSaveAdjustment() {
+/**
+ * Validates and submits manual time request for approval
+ */
+async function handleSubmitForApproval() {
   if (!adjustmentRow.value) return
+  adjustmentError.value = ''
+
+  const inVal = manualInTime.value.trim()
+  const outVal = manualOutTime.value.trim()
+  const notesVal = manualNotes.value.trim()
+
+  if (!inVal && !outVal) {
+    adjustmentError.value = 'Please provide at least an authorized Time IN or Time OUT.'
+    return
+  }
+
   isSavingAdjustment.value = true
-
-  const scenarioObj = SCENARIOS.find(s => s.id === adjustmentScenario.value)
-  const baseReason = scenarioObj ? scenarioObj.label : 'Authorized Time Adjustment'
-  const fullReason = manualCustomNote.value.trim()
-    ? `${baseReason} [Ref: ${manualReference.value.trim()} - Note: ${manualCustomNote.value.trim()}]`
-    : `${baseReason} [Ref: ${manualReference.value.trim()}]`
-
   try {
-    await attendanceService.saveManualAdjustment({
-      bioId: adjustmentRow.value.biometric_user_id,
-      date: adjustmentRow.value.raw_date,
-      manualIn: adjustmentType.value === 'in' || adjustmentType.value === 'both' ? manualInTime.value.trim() : undefined,
-      manualOut: adjustmentType.value === 'out' || adjustmentType.value === 'both' ? manualOutTime.value.trim() : undefined,
-      reason: fullReason,
-      status: manualStatus.value,
-      approvedBy: manualApprover.value.trim() || 'Admin'
+    const requesterName = currentUser.value?.name || currentUser.value?.username || 'Admin'
+    const row = adjustmentRow.value
+
+    await attendanceService.submitManualTimeRequest({
+      bioId: row.biometric_user_id,
+      employeeName: row.employee_name,
+      date: row.raw_date,
+      scheduleContext: `${row.expected_in} → ${row.expected_out} (${row.work_group_name})`,
+      originalIn: row.actual_in.replace(/\s*\(Manual\)/i, '').trim(),
+      originalOut: row.actual_out.replace(/\s*\(Manual\)/i, '').trim(),
+      manualIn: inVal || undefined,
+      manualOut: outVal || undefined,
+      notes: notesVal || 'Manual attendance adjustment request',
+      requestedBy: requesterName
     })
-    isAdjustmentDialogOpen.value = false
-    triggerCoalescedRefresh(true)
+
+    submitSuccessMsg.value = 'Adjustment request submitted for HR approval. Viewable in Manual Time.'
+    setTimeout(() => {
+      isAdjustmentDialogOpen.value = false
+      triggerCoalescedRefresh(true)
+    }, 900)
+  } catch (err: any) {
+    adjustmentError.value = err?.message || 'Failed to submit adjustment request.'
   } finally {
     isSavingAdjustment.value = false
   }
@@ -507,10 +514,10 @@ onUnmounted(() => {
         </div>
 
         <div class="rounded-xl border bg-card p-3 shadow-xs flex flex-col justify-center">
-          <span class="text-[11px] text-muted-foreground font-medium">Pending Approvals</span>
-          <div class="text-lg font-bold mt-0.5 flex items-center gap-1.5 font-mono" :class="stats.pendingApprovals > 0 ? 'text-sky-600 dark:text-sky-400 font-semibold' : 'text-muted-foreground'">
-            <FileCheck class="size-4" :class="stats.pendingApprovals > 0 ? 'text-sky-600' : 'text-muted-foreground'" />
-            <span>{{ stats.pendingApprovals }}</span>
+          <span class="text-[11px] text-muted-foreground font-medium">Missing IN / Discrepant</span>
+          <div class="text-lg font-bold mt-0.5 flex items-center gap-1.5 font-mono" :class="stats.likelyOutMissingIn > 0 ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-muted-foreground'">
+            <FileText class="size-4" :class="stats.likelyOutMissingIn > 0 ? 'text-rose-600' : 'text-muted-foreground'" />
+            <span>{{ stats.likelyOutMissingIn + stats.singlePunchNoOut }}</span>
           </div>
         </div>
       </div>
@@ -554,17 +561,6 @@ onUnmounted(() => {
           @click="activeStatusFilter = 'discrepancy'"
         >
           Discrepancies / Missing IN ({{ stats.likelyOutMissingIn + stats.singlePunchNoOut }})
-        </button>
-
-        <button
-          v-if="stats.pendingApprovals > 0"
-          type="button"
-          class="px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap flex items-center gap-1"
-          :class="activeStatusFilter === 'pending' ? 'bg-sky-600 text-white shadow-xs' : 'bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20'"
-          @click="activeStatusFilter = 'pending'"
-        >
-          <span>Pending Approvals</span>
-          <span class="px-1.5 py-0.2 rounded-full bg-sky-200 text-sky-900 text-[10px] font-bold">{{ stats.pendingApprovals }}</span>
         </button>
 
         <button
@@ -681,7 +677,7 @@ onUnmounted(() => {
               <TableHead class="font-semibold text-foreground text-center min-w-[100px]">Rendered Hours</TableHead>
               <TableHead class="font-semibold text-foreground text-center min-w-[120px]">Late / Undertime</TableHead>
               <TableHead class="font-semibold text-foreground text-right min-w-[140px]">Status</TableHead>
-              <TableHead class="font-semibold text-foreground text-right w-[100px]">Action</TableHead>
+              <TableHead class="font-semibold text-foreground text-right w-[90px]">Action</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -690,15 +686,15 @@ onUnmounted(() => {
               v-for="row in filteredRecords"
               :key="row.id"
               class="hover:bg-muted/30 transition-colors border-b last:border-b-0"
-              :class="row.is_pending_adjustment ? 'bg-amber-500/5' : ''"
             >
-              <!-- 1. Employee Name & Duplicate Scans Popover (Top & Bottom) -->
+              <!-- 0. BIO ID -->
               <TableCell class="font-mono font-medium text-foreground">                
                 <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
                   {{ row.biometric_user_id }}
                 </span>
               </TableCell>
 
+              <!-- 1. Employee Name & Duplicate Scans Popover (Top & Bottom) -->
               <TableCell class="py-2.5">
                 <div class="flex flex-col gap-1">
                   <div class="flex items-center gap-1.5 flex-wrap">
@@ -885,11 +881,10 @@ onUnmounted(() => {
                   <div class="flex items-center gap-1.5">
                     <span class="text-[10px] font-bold uppercase tracking-wider px-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">IN</span>
                     
-                    <span v-if="row.is_missing_in" class="font-sans font-medium text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
-                      <AlertTriangle class="size-3 text-amber-500" />
-                      Missing (Needs Request)
+                    <span v-if="row.is_missing_in" class="font-sans font-medium text-amber-600 dark:text-amber-400">
+                      Missing (Manual Request)
                     </span>
-                    <span v-else-if="row.is_manual_adjustment" class="font-mono font-semibold text-sky-600 dark:text-sky-400 inline-flex items-center gap-1" :title="row.manual_adjustment_reason">
+                    <span v-else-if="row.is_manual_adjustment && row.actual_in.includes('(Manual)')" class="font-mono font-semibold text-sky-600 dark:text-sky-400 inline-flex items-center gap-1" :title="row.manual_adjustment_reason">
                       <FileText class="size-3 text-sky-500" />
                       {{ row.actual_in }}
                     </span>
@@ -965,26 +960,23 @@ onUnmounted(() => {
                 <div class="flex flex-col gap-1 items-end">
                   <Badge
                     :variant="
-                      row.is_pending_adjustment
-                        ? 'warning'
-                        : (row.status === 'Likely OUT — Missing IN'
-                          ? 'destructive'
-                          : (row.status === 'Manual / Paper IN'
-                            ? 'secondary'
-                            : (row.status === 'Regular Day'
-                              ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
-                              : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline'))))
+                      row.status === 'Likely OUT — Missing IN'
+                        ? 'destructive'
+                        : (row.status === 'Manual / Paper IN'
+                          ? 'secondary'
+                          : (row.status === 'Regular Day'
+                            ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
+                            : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline')))
                     "
                     :class="[
                       'text-[10px] gap-1 font-medium',
                       row.status === 'Likely OUT — Missing IN' ? 'text-white' : ''
                     ]"
                   >
-                    <AlertTriangle v-if="row.status === 'Likely OUT — Missing IN' || row.is_missing_in" class="size-2.5" />
-                    <FileCheck v-else-if="row.is_pending_adjustment" class="size-2.5" />
-                    <FileText v-else-if="row.status === 'Manual / Paper IN'" class="size-2.5" />
+                    <!-- Icon removed from 'Likely OUT — Missing IN' as per user instruction -->
+                    <FileText v-if="row.status === 'Manual / Paper IN'" class="size-2.5" />
                     <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" />
-                    <span>{{ row.is_pending_adjustment ? 'Pending Approval' : row.status }}</span>
+                    <span>{{ row.status }}</span>
                   </Badge>
 
                   <span class="text-[10px] text-muted-foreground truncate max-w-[140px]" :title="row.manual_adjustment_reason || row.notes">
@@ -993,31 +985,18 @@ onUnmounted(() => {
                 </div>
               </TableCell>
 
-              <!-- 7. Action Button (Top & Bottom for Review/Approval) -->
+              <!-- 7. Action Button -->
               <TableCell class="py-2.5 text-right">
-                <div class="flex flex-col gap-1 items-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="h-7 px-2 text-[11px] gap-1 shadow-2xs font-medium"
-                    :class="row.is_manual_adjustment ? 'bg-sky-500/10 border-sky-300 text-sky-700 dark:text-sky-300' : ''"
-                    @click="openAdjustmentModal(row)"
-                  >
-                    <FileText class="size-3" />
-                    <span>{{ row.is_manual_adjustment ? 'Adjusted' : 'Adjust' }}</span>
-                  </Button>
-
-                  <Button
-                    v-if="row.is_pending_adjustment"
-                    variant="default"
-                    size="sm"
-                    class="h-6 px-1.5 text-[10px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
-                    @click="handleQuickApprove(row)"
-                  >
-                    <Check class="size-2.5" />
-                    <span>Approve</span>
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2.5 text-[11px] gap-1 shadow-2xs font-medium"
+                  :class="row.is_manual_adjustment ? 'bg-sky-500/10 border-sky-300 text-sky-700 dark:text-sky-300' : ''"
+                  @click="openAdjustmentModal(row)"
+                >
+                  <FileText class="size-3" />
+                  <span>{{ row.is_manual_adjustment ? 'Adjusted' : 'Adjust' }}</span>
+                </Button>
               </TableCell>
             </TableRow>
           </TableBody>
@@ -1025,66 +1004,55 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Enhanced Real-world Biometric Adjustment Modal -->
+    <!-- Unified "Adjust Attendance" Dialog for Both IN and OUT -->
     <Dialog v-model:open="isAdjustmentDialogOpen">
-      <DialogContent class="sm:max-w-[480px]">
+      <DialogContent class="sm:max-w-[460px]">
         <DialogHeader>
-          <DialogTitle class="flex items-center gap-2">
-            <ShieldCheck class="size-4 text-primary" />
-            <span>Biometric Attendance Adjustment</span>
+          <DialogTitle class="flex items-center gap-2 font-bold text-base">
+            <ShieldCheck class="size-5 text-primary" />
+            <span>Adjust Attendance</span>
           </DialogTitle>
           <DialogDescription class="text-xs">
-            Record or authorize official HR adjustments for <strong>{{ adjustmentRow?.employee_name }}</strong> (#{{ adjustmentRow?.biometric_user_id }}) on {{ adjustmentRow?.date }}.
+            Submit an attendance time adjustment request for HR/Admin approval.
           </DialogDescription>
         </DialogHeader>
 
-        <div class="grid gap-3 py-2 text-xs">
-          <!-- Schedule Context Pill -->
-          <div class="p-2.5 rounded-lg border bg-muted/40 flex items-center justify-between text-[11px]">
-            <div>
-              <span class="text-muted-foreground">Work Group: </span>
-              <strong class="text-foreground">{{ adjustmentRow?.work_group_name }}</strong>
+        <div v-if="adjustmentRow" class="space-y-3.5 py-1 text-xs">
+          <!-- Employee & Schedule Context -->
+          <div class="p-3 rounded-lg border bg-muted/40 space-y-1.5">
+            <div class="flex items-center justify-between font-semibold text-foreground text-sm">
+              <span>{{ adjustmentRow.employee_name }}</span>
+              <span class="font-mono text-xs text-muted-foreground">#{{ adjustmentRow.biometric_user_id }}</span>
             </div>
-            <div class="font-mono text-muted-foreground">
-              {{ adjustmentRow?.expected_in }} → {{ adjustmentRow?.expected_out }}
+            <div class="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Date: <strong class="text-foreground">{{ adjustmentRow.date }}</strong></span>
+              <span>Schedule: <strong class="text-foreground">{{ adjustmentRow.expected_in }} → {{ adjustmentRow.expected_out }}</strong></span>
             </div>
-          </div>
-
-          <!-- Adjustment Scope Selection -->
-          <div class="space-y-1.5">
-            <label class="font-semibold text-foreground text-xs">Adjustment Scope</label>
-            <div class="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                class="px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors"
-                :class="adjustmentType === 'in' ? 'bg-primary text-primary-foreground border-primary font-semibold' : 'bg-muted/40 text-muted-foreground hover:bg-muted'"
-                @click="adjustmentType = 'in'"
-              >
-                Time IN Only
-              </button>
-              <button
-                type="button"
-                class="px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors"
-                :class="adjustmentType === 'out' ? 'bg-primary text-primary-foreground border-primary font-semibold' : 'bg-muted/40 text-muted-foreground hover:bg-muted'"
-                @click="adjustmentType = 'out'"
-              >
-                Time OUT Only
-              </button>
-              <button
-                type="button"
-                class="px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors"
-                :class="adjustmentType === 'both' ? 'bg-primary text-primary-foreground border-primary font-semibold' : 'bg-muted/40 text-muted-foreground hover:bg-muted'"
-                @click="adjustmentType = 'both'"
-              >
-                Both IN & OUT
-              </button>
+            <div class="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-muted/60">
+              <span>Current IN: <strong class="text-foreground font-mono">{{ adjustmentRow.actual_in }}</strong></span>
+              <span>Current OUT: <strong class="text-foreground font-mono">{{ adjustmentRow.actual_out }}</strong></span>
             </div>
           </div>
 
-          <!-- Time Inputs -->
-          <div class="grid grid-cols-2 gap-2">
-            <div v-if="adjustmentType === 'in' || adjustmentType === 'both'" class="space-y-1">
-              <label class="font-semibold text-foreground text-xs">Authorized Time IN</label>
+          <!-- Alert / Error message -->
+          <div v-if="adjustmentError" class="p-2.5 rounded-md border border-destructive/50 bg-destructive/10 text-destructive text-xs">
+            {{ adjustmentError }}
+          </div>
+
+          <!-- Success message -->
+          <div v-if="submitSuccessMsg" class="p-2.5 rounded-md border border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-1.5">
+            <CheckCircle2 class="size-4 shrink-0 text-emerald-600" />
+            <span>{{ submitSuccessMsg }}</span>
+          </div>
+
+          <!-- IN and OUT Adjustment Fields in ONE Dialog -->
+          <div class="grid grid-cols-2 gap-3">
+            <!-- IN Field -->
+            <div class="space-y-1.5">
+              <label class="font-semibold text-foreground text-xs flex items-center justify-between">
+                <span>Time IN</span>
+                <span class="text-[10px] font-normal text-muted-foreground">Optional</span>
+              </label>
               <Input
                 v-model="manualInTime"
                 placeholder="e.g. 08:00 AM"
@@ -1092,8 +1060,12 @@ onUnmounted(() => {
               />
             </div>
 
-            <div v-if="adjustmentType === 'out' || adjustmentType === 'both'" class="space-y-1">
-              <label class="font-semibold text-foreground text-xs">Authorized Time OUT</label>
+            <!-- OUT Field -->
+            <div class="space-y-1.5">
+              <label class="font-semibold text-foreground text-xs flex items-center justify-between">
+                <span>Time OUT</span>
+                <span class="text-[10px] font-normal text-muted-foreground">Optional</span>
+              </label>
               <Input
                 v-model="manualOutTime"
                 placeholder="e.g. 05:00 PM"
@@ -1102,93 +1074,36 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Real Biometric Scenario Presets -->
-          <div class="space-y-1">
-            <label class="font-semibold text-foreground text-xs">Biometric Adjustment Reason Scenario</label>
-            <Select v-model="adjustmentScenario">
-              <SelectTrigger class="h-8 text-xs w-full bg-card">
-                <SelectValue placeholder="Select adjustment scenario" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem v-for="sc in SCENARIOS" :key="sc.id" :value="sc.id">
-                    {{ sc.label }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <!-- Reference Slip / Authorizer -->
-          <div class="grid grid-cols-2 gap-2">
-            <div class="space-y-1">
-              <label class="font-semibold text-foreground text-xs">Slip / Document Ref #</label>
-              <Input
-                v-model="manualReference"
-                placeholder="e.g. OB-2026-042 or HR-SLIP-#101"
-                class="h-8 text-xs"
-              />
-            </div>
-
-            <div class="space-y-1">
-              <label class="font-semibold text-foreground text-xs">Approver / Authorized By</label>
-              <Input
-                v-model="manualApprover"
-                placeholder="e.g. Admin or HR Officer"
-                class="h-8 text-xs"
-              />
-            </div>
-          </div>
-
-          <!-- Approval Status Mode -->
-          <div class="space-y-1">
-            <label class="font-semibold text-foreground text-xs">Approval Status</label>
-            <div class="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                class="px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors"
-                :class="manualStatus === 'Approved' ? 'bg-emerald-600 text-white border-emerald-600 font-semibold' : 'bg-muted/40 text-muted-foreground'"
-                @click="manualStatus = 'Approved'"
-              >
-                Approve Immediately
-              </button>
-              <button
-                type="button"
-                class="px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors"
-                :class="manualStatus === 'Pending' ? 'bg-amber-600 text-white border-amber-600 font-semibold' : 'bg-muted/40 text-muted-foreground'"
-                @click="manualStatus = 'Pending'"
-              >
-                Submit as Pending
-              </button>
-            </div>
-          </div>
-
-          <!-- Additional Notes -->
-          <div class="space-y-1">
-            <label class="font-semibold text-foreground text-xs">Optional Notes</label>
-            <Input
-              v-model="manualCustomNote"
-              placeholder="Supervisor remarks, client meeting details, etc."
-              class="h-8 text-xs"
+          <!-- Optional Notes using shadcn-vue Textarea -->
+          <div class="space-y-1.5">
+            <label class="font-semibold text-foreground text-xs flex items-center justify-between">
+              <span>Optional Notes</span>
+              <span class="text-[10px] font-normal text-muted-foreground">Reason / Slip Ref #</span>
+            </label>
+            <Textarea
+              v-model="manualNotes"
+              placeholder="e.g. Forgot to punch IN on arrival / Signed paper slip #104"
+              class="h-16 text-xs resize-none"
             />
           </div>
         </div>
 
-        <DialogFooter class="flex items-center justify-between sm:justify-between gap-2 border-t pt-3">
+        <DialogFooter class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-t pt-3">
+          <!-- Revert / Delete button if already adjusted -->
           <Button
-            v-if="adjustmentRow?.is_manual_adjustment || adjustmentRow?.is_pending_adjustment"
-            variant="destructive"
+            v-if="adjustmentRow?.is_manual_adjustment"
+            variant="ghost"
             size="sm"
-            class="h-8 text-xs gap-1"
+            class="h-8 text-xs text-destructive hover:bg-destructive/10"
             :disabled="isSavingAdjustment"
             @click="handleDeleteAdjustment"
           >
-            <Trash2 class="size-3" />
-            <span>Remove Adjustment</span>
+            <Trash2 class="size-3.5 mr-1" />
+            <span>Revert to Biometric</span>
           </Button>
           <div v-else />
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center justify-end gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -1200,11 +1115,12 @@ onUnmounted(() => {
             <Button
               variant="default"
               size="sm"
-              class="h-8 text-xs font-semibold gap-1.5"
-              :disabled="isSavingAdjustment"
-              @click="handleSaveAdjustment"
+              class="h-8 text-xs font-semibold gap-1.5 shadow-xs"
+              :disabled="isSavingAdjustment || !!submitSuccessMsg"
+              @click="handleSubmitForApproval"
             >
-              <span>{{ isSavingAdjustment ? 'Saving...' : (manualStatus === 'Approved' ? 'Save & Apply Adjustment' : 'Submit for Approval') }}</span>
+              <Send class="size-3.5" />
+              <span>{{ isSavingAdjustment ? 'Submitting...' : 'Submit for Approval' }}</span>
             </Button>
           </div>
         </DialogFooter>

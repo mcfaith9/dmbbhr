@@ -552,61 +552,63 @@ export function processEmployeeDayPunches(
     statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
   }
 
-  // Check for Manual / Paper Request Adjustment (Approved or Pending)
+  // Check for Approved Manual / Paper Request Adjustment
   let isManualAdjustment = false
-  let isPendingAdjustment = false
   let manualAdjustmentReason = ''
-  let manualAdjustmentRef = ''
-  let manualAdjustmentStatus: 'Approved' | 'Pending' | undefined = undefined
   const manual = employeeContext?.manualAdjustment
 
-  if (manual) {
-    manualAdjustmentReason = manual.reason
-    manualAdjustmentStatus = manual.status || 'Approved'
+  if (manual && manual.status === 'Approved') {
+    manualAdjustmentReason = manual.reason || manual.notes || 'Approved Manual Adjustment'
 
-    if (manual.status === 'Pending') {
-      isPendingAdjustment = true
-      status = 'Pending Approval'
-      statusVariant = 'warning'
-    } else {
-      // Approved
-      if (manual.manualIn) {
-        actualInStr = `${manual.manualIn} (Manual)`
-        isManualAdjustment = true
-        isMissingIn = false
-        isLikelyOut = false
+    let effectiveInMins = -1
+    let effectiveOutMins = -1
 
-        // If we have an actual biometric OUT, calculate worked hours with manual IN
-        if (hasValidOut && actualOutStr !== '-' && !actualOutStr.includes('Missing')) {
-          const manualInMins = parseHHMMOr12hToMinutes(manual.manualIn)
-          const lastPunch = validPunches[validCount - 1]
-          const actualOutMins = getManilaMinutesFromMidnight(lastPunch.attendance_time)
+    if (manual.manualIn) {
+      actualInStr = `${manual.manualIn} (Manual)`
+      isManualAdjustment = true
+      isMissingIn = false
+      isLikelyOut = false
+      effectiveInMins = parseHHMMOr12hToMinutes(manual.manualIn)
+    }
 
-          lateMinutes = Math.max(0, manualInMins - expectedInMinutes)
-          earlyOutMinutes = Math.max(0, expectedOutMinutes - actualOutMins)
-          undertimeMinutes = earlyOutMinutes
+    if (manual.manualOut) {
+      actualOutStr = `${manual.manualOut} (Manual)`
+      isManualAdjustment = true
+      hasValidOut = true
+      isAwaitingOut = false
+      effectiveOutMins = parseHHMMOr12hToMinutes(manual.manualOut)
+    }
 
-          let grossMins = Math.max(0, actualOutMins - manualInMins)
-          if (manualInMins < lunchStartMins && actualOutMins > lunchEndMins) {
-            grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
-          }
+    // Recalculate working session if either or both are manual
+    if (manual.manualIn && !manual.manualOut && hasValidOut && actualOutStr !== '-' && !actualOutStr.includes('Missing')) {
+      const lastPunch = validPunches[validCount - 1]
+      effectiveOutMins = getManilaMinutesFromMidnight(lastPunch.attendance_time)
+    } else if (manual.manualOut && !manual.manualIn && actualInStr !== '-' && !actualInStr.includes('Missing')) {
+      const firstPunch = validPunches[0]
+      effectiveInMins = getManilaMinutesFromMidnight(firstPunch.attendance_time)
+    }
 
-          workedMinutes = grossMins
-          const netHours = workedMinutes / 60
-          totalHoursDecimal = Number(netHours.toFixed(2))
-          totalHoursStr = `${netHours.toFixed(1)} hrs`
-        }
+    if (effectiveInMins >= 0 && effectiveOutMins >= 0 && effectiveOutMins >= effectiveInMins) {
+      lateMinutes = Math.max(0, effectiveInMins - expectedInMinutes)
+      earlyOutMinutes = Math.max(0, expectedOutMinutes - effectiveOutMins)
+      undertimeMinutes = earlyOutMinutes
 
-        status = 'Manual / Paper IN'
-        statusVariant = 'secondary'
+      let grossMins = Math.max(0, effectiveOutMins - effectiveInMins)
+      if (effectiveInMins < lunchStartMins && effectiveOutMins > lunchEndMins) {
+        grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
       }
 
-      if (manual.manualOut) {
-        actualOutStr = `${manual.manualOut} (Manual)`
-        isManualAdjustment = true
-        hasValidOut = true
-        isAwaitingOut = false
-      }
+      workedMinutes = grossMins
+      const netHours = workedMinutes / 60
+      totalHoursDecimal = Number(netHours.toFixed(2))
+      totalHoursStr = `${netHours.toFixed(1)} hrs`
+
+      status = 'Regular Day'
+      statusVariant = (lateMinutes > 0 || earlyOutMinutes > 0) ? 'warning' : 'success'
+    } else if (manual.manualIn && (actualOutStr === '-' || actualOutStr.includes('Missing'))) {
+      lateMinutes = Math.max(0, (effectiveInMins >= 0 ? effectiveInMins : expectedInMinutes) - expectedInMinutes)
+      status = 'Single Punch — No OUT'
+      statusVariant = 'outline'
     }
   }
 
@@ -695,10 +697,7 @@ export function processEmployeeDayPunches(
     is_likely_out: isLikelyOut,
     is_missing_in: isMissingIn,
     is_manual_adjustment: isManualAdjustment,
-    is_pending_adjustment: isPendingAdjustment,
     manual_adjustment_reason: manualAdjustmentReason,
-    manual_adjustment_ref: manualAdjustmentRef,
-    manual_adjustment_status: manualAdjustmentStatus,
     first_punch_time_ms: firstPunchMs,
     latest_punch_time_ms: latestPunchMs,
     latest_punch_time: latestPunchTimeStr,

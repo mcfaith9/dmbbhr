@@ -139,12 +139,23 @@ export interface ImportJobRecord {
 export interface ManualAttendanceRecord {
   id: string // `${bioId}_${date}`
   bioId: string
+  employeeName?: string
   date: string // YYYY-MM-DD
+  scheduleContext?: string // e.g. "8:00 AM → 5:00 PM (Group C)"
+  originalIn?: string // e.g. "—" or "8:07 AM"
+  originalOut?: string // e.g. "5:20 PM" or "—"
   manualIn?: string // e.g. "08:00 AM" or "08:00"
   manualOut?: string
   reason: string
-  status: 'Approved' | 'Pending'
-  approvedBy: string
+  notes?: string
+  status: 'Pending' | 'Approved' | 'Rejected'
+  requestedBy: string
+  requestedAt: string
+  approvedBy?: string
+  approvedAt?: string
+  reviewedBy?: string
+  reviewedAt?: string
+  rejectionReason?: string
   createdAt: string
   updatedAt: string
 }
@@ -165,7 +176,7 @@ export class DMBBHRDatabase extends Dexie {
     super('DMBBHR_LocalDB')
 
     // Schema definition with targeted high-performance indices
-    this.version(4).stores({
+    this.version(5).stores({
       workGroups: 'id, name, code, isDefault',
       biometricPunches: 'id, bioId, date, timestampMs, deviceId, isDuplicate, [date+bioId], [bioId+timestampMs]',
       employees: 'bioId, fullName, location, workGroupId, status',
@@ -175,7 +186,7 @@ export class DMBBHRDatabase extends Dexie {
       leaveRecords: 'id, bioId, startDate, endDate, status',
       holidays: 'id, date',
       importJobs: 'id, importedAt',
-      manualAdjustments: 'id, bioId, date, [bioId+date]'
+      manualAdjustments: 'id, bioId, date, status, [bioId+date], [status+date]'
     })
   }
 }
