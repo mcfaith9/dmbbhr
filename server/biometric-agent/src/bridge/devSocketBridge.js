@@ -301,6 +301,8 @@ class DevSocketBridge {
 
     this.deviceState.lastEvent = scanRecord.attendance_time || new Date().toISOString();
 
+    console.log(`[DMBBHR WS] Broadcasting scan event for User ${uid} to ${this.clients.size} connected client(s)`);
+
     const message = {
       type: 'BIOMETRIC_SCAN',
       payload: scanRecord

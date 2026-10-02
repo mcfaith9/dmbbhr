@@ -241,6 +241,7 @@ class LiveAttendanceService {
           // 3. Real Biometric Scan Received
           if (data.type === 'BIOMETRIC_SCAN' && data.payload) {
             const raw = data.payload
+            console.log('[DMBBHR LIVE] Real-time scan received from agent for User:', raw.user_id || raw.userId)
 
             const scanLog: AttendanceLog = {
               id: raw.id || `real-${Date.now()}-${Math.floor(Math.random() * 1000)}`,

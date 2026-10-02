@@ -3,8 +3,10 @@
  * Target: BISMAC BISBIO B-29b (192.168.1.201:4370)
  * Location: DBB Cebu
  *
- * PRE-LARAVEL TEST ARCHITECTURE:
- * B-29b (192.168.1.201:4370) -> Node.js + zkteco-js -> DevSocketBridge (ws://0.0.0.0:5174) -> Vue Web App
+ * PRE-LARAVEL ARCHITECTURE:
+ * - Dedicated Real-time Push Socket: ZKLib getRealTimeLogs() continuously listening for scans
+ * - Dedicated On-Demand Sync Socket: Independent short-lived ZKLib connection for 24K+ syncs
+ * - DevSocketBridge (ws://0.0.0.0:5174): Realtime WebSocket broadcaster to Vue Web App
  */
 const { createDeviceInstance } = require('./src/device/deviceClient');
 const { startAttendanceListener, stopAttendanceListener } = require('./src/device/attendanceListener');
@@ -14,10 +16,11 @@ const { DevSocketBridge } = require('./src/bridge/devSocketBridge');
 const WS_PORT = parseInt(process.env.WS_PORT || '5174', 10);
 const bridge = new DevSocketBridge(WS_PORT);
 
-let currentDevice = null;
+let realtimeDevice = null;
 let currentConfig = null;
 let isShuttingDown = false;
-let heartbeatTimer = null;
+let reconnectTimeout = null;
+let isConnecting = false;
 
 function log(msg) {
   const timeStr = new Intl.DateTimeFormat('en-PH', {
@@ -41,9 +44,12 @@ function parseErrorMessage(err) {
   return err.message || 'Unable to connect to biometric device';
 }
 
-async function connectAndListen() {
+async function startRealtimeAgent() {
+  if (isConnecting || isShuttingDown) return;
+  isConnecting = true;
+
   const { device, config } = createDeviceInstance();
-  currentDevice = device;
+  realtimeDevice = device;
   currentConfig = config;
 
   log(`Agent starting...`);
@@ -53,110 +59,79 @@ async function connectAndListen() {
 
   bridge.setDeviceStatus('connecting', 'Attempting socket connection...');
 
-  let connected = false;
-
   try {
-    // Attempt socket connection with timeout (preserve existing working connection)
-    await device.createSocket();
-    connected = true;
+    // 1. Create dedicated socket for real-time push events
+    const cbErr = (err) => {
+      log(`Realtime socket error: ${err.message || err}`);
+      handleRealtimeSocketDrop('Socket error: ' + (err.message || err));
+    };
+    const cbClose = () => {
+      log(`Realtime socket closed.`);
+      handleRealtimeSocketDrop('Socket closed');
+    };
+
+    await realtimeDevice.createSocket(cbErr, cbClose);
 
     log(`Connected to ${config.name}`);
     log(`Device ONLINE`);
+    log(`Realtime listener active`);
 
-    bridge.setDeviceStatus('online', 'Connected via TCP/IP socket');
+    bridge.setDeviceStatus('online', 'Connected via dedicated real-time TCP socket');
 
-    // 1. Read device user list for employee name mapping
-    let deviceUserMap = new Map();
-    try {
-      const usersResult = await device.getUsers();
-      const users = Array.isArray(usersResult)
-        ? usersResult
-        : (usersResult && Array.isArray(usersResult.data) ? usersResult.data : []);
-      for (const u of users) {
-        deviceUserMap.set(String(u.userId), u.name || '');
-      }
-      log(`Device user registry: ${deviceUserMap.size} biometric profiles loaded`);
-    } catch (uErr) {
-      log(`Notice: Could not load user registry (${uErr.message})`);
-    }
-
-    // 2. Load locally persisted valid records into bridge (NO automatic device download)
+    // 2. Load locally persisted valid records into bridge
     const localStore = loadLocalStore();
     log(`Loaded ${localStore.length} locally persisted record(s). Ready for manual sync.`);
     bridge.setDeviceLogs(localStore);
 
-    // 3. Register manual sync handler (Section 1 & 2)
+    // 3. Register manual sync handler using a SEPARATE, INDEPENDENT connection
+    // This guarantees manual sync never touches or interrupts the realtime listener socket!
     bridge.setSyncHandler(async (onProgress) => {
-      if (!currentDevice || !connected) {
-        throw new Error('Device is not currently connected');
-      }
-      log(`User initiated manual attendance sync...`);
-      return await syncBiometricAttendance(currentDevice, config, onProgress);
+      log(`User initiated manual attendance sync (using dedicated sync connection)...`);
+      return await syncBiometricAttendance(null, config, onProgress);
     });
 
-    // 4. Start real-time push attendance listener (waits for real fingerprint scans)
+    // 4. Start real-time push attendance listener on the dedicated socket
+    // No conflicting command packets (like getTime or getUsers) are sent down this socket!
     log(`Real-time hardware event socket active and waiting for fingerprint scans...`);
-    await startAttendanceListener(device, config, deviceUserMap, localStore, async (eventRecord) => {
-      // Attach mapped employee name if present
-      if (!eventRecord.employee_name && deviceUserMap.has(eventRecord.user_id)) {
-        eventRecord.employee_name = deviceUserMap.get(eventRecord.user_id);
-      }
-
-      log(`[${eventRecord.source || 'Biometric Event'}] User: ${eventRecord.user_id} (${eventRecord.employee_name}) Time: ${eventRecord.attendance_time}`);
-
-      // Broadcast immediately to all connected Vue browser instances over LAN
+    await startAttendanceListener(realtimeDevice, config, new Map(), async (eventRecord) => {
+      log(`[DMBBHR REALTIME] Dispatching scan event to WebSocket bridge: User ${eventRecord.user_id}`);
       bridge.broadcastScan(eventRecord);
     });
 
-    // 5. Start periodic heartbeat to verify socket is actually alive (read-only getTime)
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    heartbeatTimer = setInterval(async () => {
-      try {
-        if (!connected || !currentDevice) return;
-        await currentDevice.getTime();
-        bridge.setDeviceStatus('online', 'Active heartbeat confirmed');
-      } catch (hbErr) {
-        log(`Heartbeat failed: ${hbErr.message}`);
-        log(`Device OFFLINE`);
-        bridge.setDeviceStatus('offline', 'Heartbeat lost: ' + parseErrorMessage(hbErr));
-        clearInterval(heartbeatTimer);
-        stopAttendanceListener();
-        cleanupSocket(currentDevice);
-        if (!isShuttingDown) scheduleReconnect();
-      }
-    }, 15000); // 15-second heartbeat
-
   } catch (error) {
     const errorReason = parseErrorMessage(error);
-    log(`${errorReason}`);
+    log(`Connection failed: ${errorReason}`);
     log(`Device OFFLINE`);
 
     bridge.setDeviceStatus('offline', errorReason);
-
-    stopAttendanceListener();
-    cleanupSocket(currentDevice);
-
-    if (!isShuttingDown) {
-      scheduleReconnect();
-    }
+    handleRealtimeSocketDrop(errorReason);
+  } finally {
+    isConnecting = false;
   }
 }
 
-async function cleanupSocket(dev) {
-  if (dev) {
+async function handleRealtimeSocketDrop(reason) {
+  if (isShuttingDown) return;
+  stopAttendanceListener();
+  bridge.setDeviceStatus('offline', reason);
+
+  if (realtimeDevice) {
     try {
-      await dev.disconnect();
-    } catch {
-      // ignore
-    }
+      await realtimeDevice.disconnect();
+    } catch {}
+    realtimeDevice = null;
   }
+
+  scheduleReconnect();
 }
 
 function scheduleReconnect() {
+  if (reconnectTimeout || isShuttingDown) return;
   log(`Retrying connection in 10 seconds...`);
-  setTimeout(() => {
+  reconnectTimeout = setTimeout(() => {
+    reconnectTimeout = null;
     if (!isShuttingDown) {
-      connectAndListen();
+      startRealtimeAgent();
     }
   }, 10000);
 }
@@ -166,12 +141,15 @@ async function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
   log(`Gracefully shutting down agent...`);
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (reconnectTimeout) clearTimeout(reconnectTimeout);
   stopAttendanceListener();
   bridge.setDeviceStatus('offline', 'Agent terminated');
   bridge.stop();
-  if (currentDevice) {
-    await cleanupSocket(currentDevice);
+  if (realtimeDevice) {
+    try {
+      await realtimeDevice.disconnect();
+    } catch {}
+    realtimeDevice = null;
   }
   process.exit(0);
 }
@@ -181,6 +159,6 @@ process.on('SIGTERM', shutdown);
 
 // Entry point
 bridge.start();
-connectAndListen();
+startRealtimeAgent();
 
-module.exports = { connectAndListen, shutdown };
+module.exports = { startRealtimeAgent, shutdown };
