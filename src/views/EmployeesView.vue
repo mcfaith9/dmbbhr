@@ -264,8 +264,8 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview') {
   formName.value = emp.full_name
   formPreferredName.value = emp.preferred_name || ''
   formDateOfBirth.value = emp.date_of_birth || ''
-  formGender.value = emp.gender || ''
-  formCivilStatus.value = emp.civil_status || ''
+  formGender.value = emp.gender && emp.gender.trim() && emp.gender !== 'not_specified' ? emp.gender : 'not_specified'
+  formCivilStatus.value = emp.civil_status && emp.civil_status.trim() && emp.civil_status !== 'not_specified' ? emp.civil_status : 'not_specified'
   formMobileNumber.value = emp.mobile_number || ''
   formEmail.value = emp.email || ''
   formAlternateNumber.value = emp.alternate_number || ''
@@ -288,6 +288,12 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview') {
   showProfileModal.value = true
 }
 
+function closeProfileModal() {
+  showProfileModal.value = false
+  profileSuccessMsg.value = ''
+  profileErrorMsg.value = ''
+}
+
 async function saveProfile() {
   if (!formName.value.trim()) {
     profileErrorMsg.value = 'Employee Full Name is required.'
@@ -299,12 +305,20 @@ async function saveProfile() {
   profileSuccessMsg.value = ''
 
   try {
+    const cleanGender = formGender.value && formGender.value !== 'not_specified' && formGender.value !== 'none'
+      ? formGender.value.trim()
+      : undefined
+
+    const cleanCivilStatus = formCivilStatus.value && formCivilStatus.value !== 'not_specified' && formCivilStatus.value !== 'none'
+      ? formCivilStatus.value.trim()
+      : undefined
+
     const updated = await employeeService.updateEmployee(formBioId.value, {
       full_name: formName.value.trim(),
       preferred_name: formPreferredName.value.trim() || undefined,
       date_of_birth: formDateOfBirth.value.trim() || undefined,
-      gender: (formGender.value.trim() as any) || undefined,
-      civil_status: (formCivilStatus.value.trim() as any) || undefined,
+      gender: (cleanGender as any) || undefined,
+      civil_status: (cleanCivilStatus as any) || undefined,
       mobile_number: formMobileNumber.value.trim() || undefined,
       email: formEmail.value.trim() || undefined,
       alternate_number: formAlternateNumber.value.trim() || undefined,
@@ -790,7 +804,7 @@ onUnmounted(() => {
           <button
             type="button"
             class="text-muted-foreground hover:text-foreground rounded p-1.5 hover:bg-muted transition-colors"
-            @click="showProfileModal = false"
+            @click="closeProfileModal"
           >
             <X class="size-4" />
           </button>
@@ -867,11 +881,15 @@ onUnmounted(() => {
                   </div>
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Gender</span>
-                    <span class="font-medium text-foreground">{{ selectedEmployee.gender || '—' }}</span>
+                    <span class="font-medium text-foreground">
+                      {{ (selectedEmployee.gender && selectedEmployee.gender !== 'not_specified') ? selectedEmployee.gender : '—' }}
+                    </span>
                   </div>
                   <div class="col-span-2">
                     <span class="text-muted-foreground block text-[11px]">Civil Status</span>
-                    <span class="font-medium text-foreground">{{ selectedEmployee.civil_status || '—' }}</span>
+                    <span class="font-medium text-foreground">
+                      {{ (selectedEmployee.civil_status && selectedEmployee.civil_status !== 'not_specified') ? selectedEmployee.civil_status : '—' }}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1107,7 +1125,7 @@ onUnmounted(() => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
-                          <SelectItem value="">Not Specified</SelectItem>
+                          <SelectItem value="not_specified">Not Specified</SelectItem>
                           <SelectItem value="Male">Male</SelectItem>
                           <SelectItem value="Female">Female</SelectItem>
                           <SelectItem value="Other">Other</SelectItem>
@@ -1123,7 +1141,7 @@ onUnmounted(() => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
-                          <SelectItem value="">Not Specified</SelectItem>
+                          <SelectItem value="not_specified">Not Specified</SelectItem>
                           <SelectItem value="Single">Single</SelectItem>
                           <SelectItem value="Married">Married</SelectItem>
                           <SelectItem value="Widowed">Widowed</SelectItem>
@@ -1354,7 +1372,7 @@ onUnmounted(() => {
                   variant="outline"
                   size="sm"
                   class="h-8 text-xs"
-                  @click="activeProfileTab = 'overview'"
+                  @click="closeProfileModal"
                 >
                   Cancel
                 </Button>
@@ -1393,10 +1411,19 @@ onUnmounted(() => {
               <span>Edit Profile</span>
             </Button>
             <Button
+              v-else
               variant="outline"
               size="sm"
               class="h-7 text-xs"
-              @click="showProfileModal = false"
+              @click="closeProfileModal"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 text-xs"
+              @click="closeProfileModal"
             >
               Close
             </Button>

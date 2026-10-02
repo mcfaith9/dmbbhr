@@ -583,7 +583,9 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     for (const v of vals) {
       if (v !== undefined && v !== null && typeof v === 'string') {
         const trimmed = v.trim()
-        if (trimmed) return trimmed
+        if (trimmed && trimmed !== 'not_specified' && trimmed !== 'none' && trimmed !== 'unassigned') {
+          return trimmed
+        }
       }
     }
     return undefined

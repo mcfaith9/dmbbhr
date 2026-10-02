@@ -50,8 +50,8 @@ export interface Employee {
   full_name: string
   preferred_name?: string
   date_of_birth?: string // YYYY-MM-DD
-  gender?: 'Male' | 'Female' | 'Other' | ''
-  civil_status?: 'Single' | 'Married' | 'Widowed' | 'Separated' | ''
+  gender?: 'Male' | 'Female' | 'Other' | 'not_specified' | string
+  civil_status?: 'Single' | 'Married' | 'Widowed' | 'Separated' | 'not_specified' | string
   // Contact Information
   mobile_number?: string
   email?: string
