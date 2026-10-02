@@ -388,13 +388,6 @@ onUnmounted(() => {
 
       <!-- Action Toolbar -->
       <div class="flex items-center gap-2 flex-wrap">
-        <router-link to="/attendance/logs">
-          <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs">
-            <Fingerprint class="size-3.5 text-muted-foreground" />
-            <span>Attendance Logs</span>
-          </Button>
-        </router-link>
-
         <Button
           variant="default"
           size="sm"
@@ -681,6 +674,7 @@ onUnmounted(() => {
         <Table class="text-xs">
           <TableHeader>
             <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
+              <TableHead class="w-[100px] text-foreground font-semibold">BIO ID</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[210px]">Employee & Scans</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[140px]">Work Schedule</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[170px]">Actual IN / OUT</TableHead>
@@ -699,13 +693,16 @@ onUnmounted(() => {
               :class="row.is_pending_adjustment ? 'bg-amber-500/5' : ''"
             >
               <!-- 1. Employee Name & Duplicate Scans Popover (Top & Bottom) -->
+              <TableCell class="font-mono font-medium text-foreground">                
+                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
+                  {{ row.biometric_user_id }}
+                </span>
+              </TableCell>
+
               <TableCell class="py-2.5">
                 <div class="flex flex-col gap-1">
                   <div class="flex items-center gap-1.5 flex-wrap">
                     <span class="font-semibold text-foreground text-sm leading-tight">{{ row.employee_name }}</span>
-                    <span class="font-mono text-[11px] px-1.5 py-0.2 rounded bg-muted text-muted-foreground font-medium">
-                      #{{ row.biometric_user_id }}
-                    </span>
                   </div>
 
                   <div class="flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
@@ -978,12 +975,15 @@ onUnmounted(() => {
                               ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
                               : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline'))))
                     "
-                    class="text-[10px] gap-1 font-medium"
+                    :class="[
+                      'text-[10px] gap-1 font-medium',
+                      row.status === 'Likely OUT — Missing IN' ? 'text-white' : ''
+                    ]"
                   >
-                    <AlertTriangle v-if="row.status === 'Likely OUT — Missing IN' || row.is_missing_in" class="size-2.5" />
+                    <!-- <AlertTriangle v-if="row.status === 'Likely OUT — Missing IN' || row.is_missing_in" class="size-2.5" />
                     <FileCheck v-else-if="row.is_pending_adjustment" class="size-2.5" />
                     <FileText v-else-if="row.status === 'Manual / Paper IN'" class="size-2.5" />
-                    <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" />
+                    <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" /> -->
                     <span>{{ row.is_pending_adjustment ? 'Pending Approval' : row.status }}</span>
                   </Badge>
 

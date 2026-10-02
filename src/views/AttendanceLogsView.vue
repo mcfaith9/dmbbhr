@@ -495,13 +495,6 @@ onUnmounted(() => {
 
       <!-- Action buttons -->
       <div class="flex items-center gap-2 flex-wrap">
-        <router-link to="/attendance/daily">
-          <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs">
-            <Clock class="size-3.5 text-primary" />
-            <span>Daily Attendance</span>
-          </Button>
-        </router-link>
-
         <Button
           variant="default"
           size="sm"
@@ -752,16 +745,16 @@ onUnmounted(() => {
       <Table>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="w-[100px] font-semibold">BIO ID</TableHead>
-            <TableHead class="font-semibold">Employee</TableHead>
-            <TableHead class="font-semibold">Work Group</TableHead>
-            <TableHead class="font-semibold">Date</TableHead>
-            <TableHead class="font-semibold">Time</TableHead>
-            <TableHead class="font-semibold text-center w-[70px]">Type</TableHead>
-            <TableHead class="font-semibold text-center w-[70px]">State</TableHead>
-            <TableHead class="font-semibold text-center w-[80px]">Serial</TableHead>
-            <TableHead class="font-semibold">Location</TableHead>
-            <TableHead class="font-semibold text-right">Audit</TableHead>
+            <TableHead class="w-[100px] text-foreground font-semibold">BIO ID</TableHead>
+            <TableHead class="text-foreground font-semibold">Employee</TableHead>
+            <TableHead class="text-foreground font-semibold">Work Group</TableHead>
+            <TableHead class="text-foreground font-semibold">Date</TableHead>
+            <TableHead class="text-foreground font-semibold">Time</TableHead>
+            <TableHead class="text-foreground font-semibold text-center w-[70px]">Type</TableHead>
+            <TableHead class="text-foreground font-semibold text-center w-[70px]">State</TableHead>
+            <TableHead class="text-foreground font-semibold text-center w-[80px]">Serial</TableHead>
+            <TableHead class="text-foreground font-semibold">Location</TableHead>
+            <TableHead class="text-foreground font-semibold text-right">Audit</TableHead>
           </TableRow>
         </TableHeader>
 
