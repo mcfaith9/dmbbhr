@@ -12,8 +12,9 @@ import {
   X,
   MapPin,
   ArrowDownUp,
-  Layers,
+  Eye,
   FileText,
+  NotebookPen,
   Info,
   Trash2,
   Fingerprint,
@@ -671,10 +672,10 @@ onUnmounted(() => {
           <TableHeader>
             <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
               <TableHead class="w-[100px] text-foreground font-semibold">BIO ID</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[210px]">Employee & Scans</TableHead>
+              <TableHead class="font-semibold text-foreground min-w-[190px]">Employee</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[140px]">Work Schedule</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[170px]">Actual IN / OUT</TableHead>
-              <TableHead class="font-semibold text-foreground text-center min-w-[100px]">Rendered Hours</TableHead>
+              <TableHead class="font-semibold text-foreground text-center min-w-[120px]">Rendered Hours</TableHead>
               <TableHead class="font-semibold text-foreground text-center min-w-[120px]">Late / Undertime</TableHead>
               <TableHead class="font-semibold text-foreground text-right min-w-[140px]">Status</TableHead>
               <TableHead class="font-semibold text-foreground text-right w-[90px]">Action</TableHead>
@@ -722,7 +723,7 @@ onUnmounted(() => {
                           ]"
                           :title="`Click to audit all ${row.raw_punches_count} biometric scans`"
                         >
-                          <Layers class="size-2.5" />
+                          <Eye class="size-2.5" />
                           <span>{{ row.raw_punches_count }} scans</span>
                           <span v-if="row.duplicate_punches_count > 0" class="text-[9px] font-bold text-purple-600 dark:text-purple-400">
                             (+{{ row.duplicate_punches_count }} dup)
@@ -958,30 +959,87 @@ onUnmounted(() => {
               <!-- 6. Status & Explanatory Subtext (Top & Bottom) -->
               <TableCell class="py-2.5 text-right">
                 <div class="flex flex-col gap-1 items-end">
-                  <Badge
-                    :variant="
+                  <div
+                    class="flex items-center justify-end text-[10px] font-medium"
+                    :class="
                       row.status === 'Likely OUT — Missing IN'
-                        ? 'destructive'
-                        : (row.status === 'Manual / Paper IN'
-                          ? 'secondary'
-                          : (row.status === 'Regular Day'
-                            ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
-                            : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline')))
+                        ? 'text-destructive'
+                        : row.status === 'Manual / Paper IN'
+                          ? 'text-muted-foreground'
+                          : row.status === 'Regular Day'
+                            ? (row.late_minutes > 0 || row.early_out_minutes > 0
+                                ? 'text-warning'
+                                : 'text-success')
+                            : row.status === 'Awaiting OUT'
+                              ? 'text-muted-foreground'
+                              : 'text-foreground'
                     "
-                    :class="[
-                      'text-[10px] gap-1 font-medium',
-                      row.status === 'Likely OUT — Missing IN' ? 'text-white' : ''
-                    ]"
                   >
-                    <!-- Icon removed from 'Likely OUT — Missing IN' as per user instruction -->
-                    <FileText v-if="row.status === 'Manual / Paper IN'" class="size-2.5" />
-                    <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" />
                     <span>{{ row.status }}</span>
-                  </Badge>
+                  </div>
 
-                  <span class="text-[10px] text-muted-foreground truncate max-w-[140px]" :title="row.manual_adjustment_reason || row.notes">
-                    {{ row.manual_adjustment_reason || (row.is_missing_in ? 'Paper request required' : (row.raw_punches_count + ' scan(s) preserved')) }}
-                  </span>
+                  <!-- Notes / attendance details -->
+                  <Popover v-if="row.manual_adjustment_reason || row.notes">
+                    <PopoverTrigger as-child>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border transition-colors cursor-pointer"
+                        :class="[
+                          row.manual_adjustment_reason || row.notes
+                            ? 'bg-muted/60 text-muted-foreground border-border hover:text-foreground hover:bg-muted'
+                            : ''
+                        ]"
+                        :title="`Click to audit all ${row.raw_punches_count} biometric scans`"
+                      >
+                        <NotebookPen class="size-2.5" />
+                        <span>Manual Notes</span>
+                      </button>                      
+                    </PopoverTrigger>
+
+                    <PopoverContent
+                      align="end"
+                      class="w-72"
+                    >
+                      <div class="space-y-2">
+                        <div>
+                          <p class="text-xs font-medium">
+                            Attendance Note
+                          </p>
+                          <p class="text-xs text-muted-foreground mt-1">
+                            {{ row.manual_adjustment_reason || row.notes }}
+                          </p>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+
+                  <!-- Preserved biometric scans -->
+                  <Popover v-else-if="row.raw_punches_count > 1">
+                    <PopoverTrigger as-child>
+                      <button
+                        type="button"
+                        class="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {{ row.raw_punches_count }} scans
+                      </button>
+                    </PopoverTrigger>
+
+                    <PopoverContent
+                      align="end"
+                      class="w-64"
+                    >
+                      <div class="space-y-2">
+                        <p class="text-xs font-medium">
+                          Biometric Scans
+                        </p>
+
+                        <p class="text-xs text-muted-foreground">
+                          {{ row.raw_punches_count }} biometric scans were preserved
+                          for this attendance record.
+                        </p>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </div>
               </TableCell>
 
