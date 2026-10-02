@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, toRaw } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Search,
   Fingerprint,
@@ -12,11 +13,17 @@ import {
   MapPin,
   Building,
   Save,
-  Layers,
   Upload,
   Download,
   FileSpreadsheet,
-  RefreshCw
+  RefreshCw,
+  Lock,
+  Phone,
+  User,
+  ShieldAlert,
+  CreditCard,
+  ExternalLink,
+  Eye
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -41,28 +48,53 @@ import {
   SelectValue
 } from '@/components/ui/select'
 
+const router = useRouter()
+
 const employees = ref<Employee[]>([])
 const workGroups = ref<WorkGroup[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const selectedLocation = ref<string>('all')
 const selectedWorkGroup = ref<string>('all')
+const selectedDepartment = ref<string>('all')
+const selectedStatus = ref<string>('all')
 
 // Pagination state
 const currentPage = ref(1)
 const pageSize = ref(10)
 
-// Modal state for single employee edit
-const showEditModal = ref(false)
-const editBioId = ref('')
-const editName = ref('')
-const editLocation = ref<EmployeeLocation>('DBB CEBU')
-const editWorkGroupId = ref<string>('wg-group-c')
-const editDepartment = ref('')
-const editPosition = ref('')
-const editSaving = ref(false)
-const editSuccessMsg = ref('')
-const editErrorMsg = ref('')
+// Active Profile Modal state
+const showProfileModal = ref(false)
+const activeProfileTab = ref<'overview' | 'edit'>('overview')
+const selectedEmployee = ref<Employee | null>(null)
+
+// Form fields for editing employee profile
+const formBioId = ref('')
+const formName = ref('')
+const formPreferredName = ref('')
+const formDateOfBirth = ref('')
+const formGender = ref<string>('')
+const formCivilStatus = ref<string>('')
+const formMobileNumber = ref('')
+const formEmail = ref('')
+const formAlternateNumber = ref('')
+const formHomeAddress = ref('')
+const formEmergencyName = ref('')
+const formEmergencyRelationship = ref('')
+const formEmergencyNumber = ref('')
+const formLocation = ref<EmployeeLocation>('DBB CEBU')
+const formWorkGroupId = ref<string>('wg-group-c')
+const formDepartment = ref('')
+const formPosition = ref('')
+const formHireDate = ref('')
+const formRegularizationDate = ref('')
+const formStatus = ref<'active' | 'inactive' | 'on_leave'>('active')
+const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Monthly')
+const formPayrollStatus = ref<'configured' | 'pending' | 'exempt'>('configured')
+
+const profileSaving = ref(false)
+const profileSuccessMsg = ref('')
+const profileErrorMsg = ref('')
 
 // Bulk Import State
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -75,6 +107,17 @@ const activePreviewTab = ref<'all' | 'update' | 'create' | 'unchanged' | 'unknow
 const previewSearch = ref('')
 const importResultSuccess = ref<PeopleImportApplyResult | null>(null)
 const importError = ref<string>('')
+
+// Unique departments for filter
+const availableDepartments = computed(() => {
+  const depts = new Set<string>()
+  for (const emp of employees.value) {
+    if (emp.department && emp.department.trim()) {
+      depts.add(emp.department.trim())
+    }
+  }
+  return Array.from(depts).sort()
+})
 
 const filteredPreviewRows = computed<PeopleImportRowItem[]>(() => {
   if (!importPreview.value) return []
@@ -124,6 +167,13 @@ async function executeLoadEmployees() {
   loading.value = true
   try {
     employees.value = await employeeService.getEmployees()
+    // If modal is open, refresh selected employee data
+    if (showProfileModal.value && selectedEmployee.value) {
+      const refreshed = employees.value.find(e => e.biometric_user_id === selectedEmployee.value?.biometric_user_id)
+      if (refreshed) {
+        selectedEmployee.value = refreshed
+      }
+    }
   } finally {
     loading.value = false
     isExecutingReload = false
@@ -153,7 +203,7 @@ function loadEmployees() {
   triggerCoalescedEmployees(true)
 }
 
-watch([selectedLocation, selectedWorkGroup], () => {
+watch([selectedLocation, selectedWorkGroup, selectedDepartment, selectedStatus], () => {
   currentPage.value = 1
 })
 
@@ -169,15 +219,25 @@ const filteredEmployees = computed(() => {
     list = list.filter(e => (e.work_group_id || 'wg-group-c') === selectedWorkGroup.value)
   }
 
+  if (selectedDepartment.value && selectedDepartment.value !== 'all') {
+    list = list.filter(e => (e.department || 'Operations') === selectedDepartment.value)
+  }
+
+  if (selectedStatus.value && selectedStatus.value !== 'all') {
+    list = list.filter(e => e.status === selectedStatus.value)
+  }
+
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.trim().toLowerCase()
     list = list.filter(e =>
       e.full_name.toLowerCase().includes(q) ||
       e.biometric_user_id.toLowerCase().includes(q) ||
       e.employee_number.toLowerCase().includes(q) ||
+      (e.preferred_name && e.preferred_name.toLowerCase().includes(q)) ||
       (e.work_group_name && e.work_group_name.toLowerCase().includes(q)) ||
       (e.work_group_code && e.work_group_code.toLowerCase().includes(q)) ||
-      (e.department && e.department.toLowerCase().includes(q))
+      (e.department && e.department.toLowerCase().includes(q)) ||
+      (e.position && e.position.toLowerCase().includes(q))
     )
   }
 
@@ -195,47 +255,94 @@ function onPageChange(page: number) {
   currentPage.value = page
 }
 
-function openEditModal(emp: Employee) {
-  editBioId.value = emp.biometric_user_id
-  editName.value = emp.full_name
-  editLocation.value = emp.location || 'DBB CEBU'
-  editWorkGroupId.value = emp.work_group_id || 'wg-group-c'
-  editDepartment.value = emp.department || 'Operations'
-  editPosition.value = emp.position || 'Staff'
-  editSuccessMsg.value = ''
-  editErrorMsg.value = ''
-  showEditModal.value = true
+function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview') {
+  selectedEmployee.value = emp
+  activeProfileTab.value = tab
+
+  // Initialize form state
+  formBioId.value = emp.biometric_user_id
+  formName.value = emp.full_name
+  formPreferredName.value = emp.preferred_name || ''
+  formDateOfBirth.value = emp.date_of_birth || ''
+  formGender.value = emp.gender || ''
+  formCivilStatus.value = emp.civil_status || ''
+  formMobileNumber.value = emp.mobile_number || ''
+  formEmail.value = emp.email || ''
+  formAlternateNumber.value = emp.alternate_number || ''
+  formHomeAddress.value = emp.home_address || ''
+  formEmergencyName.value = emp.emergency_contact_name || ''
+  formEmergencyRelationship.value = emp.emergency_contact_relationship || ''
+  formEmergencyNumber.value = emp.emergency_contact_number || ''
+  formLocation.value = emp.location || 'DBB CEBU'
+  formWorkGroupId.value = emp.work_group_id || 'wg-group-c'
+  formDepartment.value = emp.department || 'Operations'
+  formPosition.value = emp.position || 'Staff'
+  formHireDate.value = emp.hire_date || ''
+  formRegularizationDate.value = emp.regularization_date || ''
+  formStatus.value = emp.status || 'active'
+  formSalaryType.value = (emp.salary_type as any) || 'Monthly'
+  formPayrollStatus.value = (emp.payroll_status as any) || 'configured'
+
+  profileSuccessMsg.value = ''
+  profileErrorMsg.value = ''
+  showProfileModal.value = true
 }
 
-async function saveEmployee() {
-  if (!editName.value.trim()) {
-    editErrorMsg.value = 'Employee Name cannot be empty.'
+async function saveProfile() {
+  if (!formName.value.trim()) {
+    profileErrorMsg.value = 'Employee Full Name is required.'
     return
   }
 
-  editSaving.value = true
-  editErrorMsg.value = ''
-  editSuccessMsg.value = ''
+  profileSaving.value = true
+  profileErrorMsg.value = ''
+  profileSuccessMsg.value = ''
 
   try {
-    await employeeService.updateEmployee(editBioId.value, {
-      full_name: editName.value.trim(),
-      location: editLocation.value,
-      work_group_id: editWorkGroupId.value,
-      department: editDepartment.value.trim(),
-      position: editPosition.value.trim()
+    const updated = await employeeService.updateEmployee(formBioId.value, {
+      full_name: formName.value.trim(),
+      preferred_name: formPreferredName.value.trim() || undefined,
+      date_of_birth: formDateOfBirth.value.trim() || undefined,
+      gender: (formGender.value.trim() as any) || undefined,
+      civil_status: (formCivilStatus.value.trim() as any) || undefined,
+      mobile_number: formMobileNumber.value.trim() || undefined,
+      email: formEmail.value.trim() || undefined,
+      alternate_number: formAlternateNumber.value.trim() || undefined,
+      home_address: formHomeAddress.value.trim() || undefined,
+      emergency_contact_name: formEmergencyName.value.trim() || undefined,
+      emergency_contact_relationship: formEmergencyRelationship.value.trim() || undefined,
+      emergency_contact_number: formEmergencyNumber.value.trim() || undefined,
+      location: formLocation.value,
+      work_group_id: formWorkGroupId.value,
+      department: formDepartment.value.trim() || 'Operations',
+      position: formPosition.value.trim() || 'Staff',
+      hire_date: formHireDate.value.trim() || undefined,
+      regularization_date: formRegularizationDate.value.trim() || undefined,
+      status: formStatus.value,
+      salary_type: formSalaryType.value,
+      payroll_status: formPayrollStatus.value
     })
 
-    editSuccessMsg.value = `Employee profile for Bio ID ${editBioId.value} updated successfully.`
+    selectedEmployee.value = updated
+    profileSuccessMsg.value = `Employee profile for Bio ID ${formBioId.value} (${updated.full_name}) saved successfully.`
+    
+    // Auto switch to overview after brief moment
     setTimeout(() => {
-      showEditModal.value = false
-      loadEmployees()
-    }, 1200)
+      profileSuccessMsg.value = ''
+      activeProfileTab.value = 'overview'
+    }, 1400)
+    
+    await executeLoadEmployees()
   } catch (err: any) {
-    editErrorMsg.value = err.message || 'Failed to update employee.'
+    profileErrorMsg.value = err.message || 'Failed to save employee profile.'
   } finally {
-    editSaving.value = false
+    profileSaving.value = false
   }
+}
+
+function navigateToPayrollRecords() {
+  showProfileModal.value = false
+  router.push('/payroll/records')
 }
 
 // -------------------------------------------------------------
@@ -381,12 +488,12 @@ onUnmounted(() => {
       <div>
         <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <span>People Directory</span>
-          <span class="text-xs px-2 py-0.5 rounded-full bg-muted font-normal text-muted-foreground font-mono">
-            {{ filteredEmployees.length }} Profiles
+          <span class="text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium font-mono">
+            {{ filteredEmployees.length }} Employees
           </span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Master employee records linked by permanent Bio ID. Bulk update names and Work Group schedules from Excel.
+          Master central employee profiles linked by permanent Bio ID. Serves as single source of truth for Attendance, Time Management, and Payroll.
         </p>
       </div>
 
@@ -427,13 +534,14 @@ onUnmounted(() => {
     </div>
 
     <!-- Filter and Search Bar -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-2 items-center">
-      <div class="relative sm:col-span-2">
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-center">
+      <!-- Search Input -->
+      <div class="relative sm:col-span-2 md:col-span-2">
         <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
         <Input
           v-model="searchQuery"
           type="text"
-          placeholder="Search by Bio ID, name, or work group..."
+          placeholder="Search by Bio ID, name, position, dept..."
           class="pl-8 h-8 text-xs bg-card"
           @input="currentPage = 1"
         />
@@ -466,7 +574,24 @@ onUnmounted(() => {
             <SelectGroup>
               <SelectItem value="all">All Work Groups</SelectItem>
               <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
-                {{ wg.name }} (Code: {{ wg.code }})
+                {{ wg.name }} ({{ wg.code }})
+              </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <!-- Department Filter -->
+      <div>
+        <Select v-model="selectedDepartment">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
+            <SelectValue placeholder="All Departments" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Departments</SelectItem>
+              <SelectItem v-for="dept in availableDepartments" :key="dept" :value="dept">
+                {{ dept }}
               </SelectItem>
             </SelectGroup>
           </SelectContent>
@@ -479,13 +604,11 @@ onUnmounted(() => {
       <Table>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="w-[110px] font-semibold">BIO ID</TableHead>
-            <TableHead class="font-semibold">Employee Name</TableHead>
-            <TableHead class="font-semibold">Location</TableHead>
+            <TableHead class="w-[120px] font-semibold">BIO ID</TableHead>
+            <TableHead class="font-semibold">Employee</TableHead>
+            <TableHead class="font-semibold">Department & Position</TableHead>
             <TableHead class="font-semibold">Work Group</TableHead>
-            <TableHead class="font-semibold">Group Code</TableHead>
-            <TableHead class="font-semibold">Department</TableHead>
-            <TableHead class="font-semibold">Position</TableHead>
+            <TableHead class="font-semibold">Branch Location</TableHead>
             <TableHead class="font-semibold">Status</TableHead>
             <TableHead class="text-right font-semibold">Actions</TableHead>
           </TableRow>
@@ -494,7 +617,7 @@ onUnmounted(() => {
         <TableBody>
           <template v-if="loading">
             <TableRow>
-              <TableCell colspan="9" class="h-32 text-center text-xs text-muted-foreground">
+              <TableCell colspan="7" class="h-32 text-center text-xs text-muted-foreground">
                 <RefreshCw class="size-4 animate-spin mx-auto mb-2 text-primary" />
                 Loading employee records...
               </TableCell>
@@ -503,12 +626,12 @@ onUnmounted(() => {
 
           <template v-else-if="filteredEmployees.length === 0">
             <TableRow>
-              <TableCell colspan="9" class="h-32 text-center text-muted-foreground">
+              <TableCell colspan="7" class="h-32 text-center text-muted-foreground">
                 <div class="flex flex-col items-center justify-center gap-1.5">
                   <Users class="size-6 text-muted-foreground/40" />
                   <span class="font-medium text-foreground text-sm">No employees found</span>
                   <p class="text-xs text-muted-foreground">
-                    Try adjusting your search query, or click <strong>Import People (Excel)</strong> to bulk upload names.
+                    Try adjusting your filters, or click <strong>Import Employees</strong> to bulk sync names from Excel.
                   </p>
                 </div>
               </TableCell>
@@ -516,18 +639,56 @@ onUnmounted(() => {
           </template>
 
           <template v-else>
-            <TableRow v-for="emp in paginatedEmployees" :key="emp.biometric_user_id">
+            <TableRow
+              v-for="emp in paginatedEmployees"
+              :key="emp.biometric_user_id"
+              class="cursor-pointer hover:bg-muted/40 transition-colors"
+              @click="openProfile(emp, 'overview')"
+            >
+              <!-- Bio ID / Employee ID (Immutable Core Identifier) -->
               <TableCell class="font-mono font-semibold text-primary">
-                <span class="inline-flex items-center gap-1.5" :title="`Permanent Biometric Identifier: ${emp.biometric_user_id}`">
-                  <Fingerprint class="size-3.5 text-muted-foreground" />                  
-                  <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
-                    {{ emp.biometric_user_id }}
+                <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20 text-xs font-semibold">
+                  <Fingerprint class="size-3.5 text-primary" />
+                  <span>{{ emp.biometric_user_id }}</span>
+                </div>
+              </TableCell>
+
+              <!-- Employee Name & Avatar -->
+              <TableCell>
+                <div class="flex items-center gap-2.5">
+                  <div class="size-7 rounded-full bg-muted flex items-center justify-center font-bold text-xs text-primary shrink-0 border">
+                    {{ emp.full_name.charAt(0).toUpperCase() }}
+                  </div>
+                  <div>
+                    <div class="font-semibold text-foreground text-xs leading-snug">
+                      {{ emp.full_name }}
+                    </div>
+                    <div v-if="emp.preferred_name" class="text-[11px] text-muted-foreground">
+                      "{{ emp.preferred_name }}"
+                    </div>
+                  </div>
+                </div>
+              </TableCell>
+
+              <!-- Department & Position -->
+              <TableCell class="text-xs">
+                <div class="font-medium text-foreground">{{ emp.department || 'Operations' }}</div>
+                <div class="text-[11px] text-muted-foreground">{{ emp.position || 'Staff' }}</div>
+              </TableCell>
+
+              <!-- Work Group & Code Badge -->
+              <TableCell class="text-xs">
+                <div class="flex items-center gap-1.5">
+                  <span class="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono font-bold border">
+                    {{ emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C') }}
                   </span>
-                </span>
+                  <span class="text-xs text-muted-foreground">
+                    {{ emp.work_group_name || 'Group C' }}
+                  </span>
+                </div>
               </TableCell>
-              <TableCell class="font-medium text-foreground text-xs">
-                {{ emp.full_name }}
-              </TableCell>
+
+              <!-- Branch Location -->
               <TableCell class="text-xs">
                 <span class="inline-flex items-center gap-1 font-medium text-foreground">
                   <MapPin class="size-3 text-emerald-600 dark:text-emerald-400" />
@@ -535,42 +696,38 @@ onUnmounted(() => {
                 </span>
               </TableCell>
 
-              <!-- Work Group Badge -->
-              <TableCell class="text-xs">
-                <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40 font-medium">
-                  <Layers class="size-2.5 text-primary" />
-                  {{ emp.work_group_name || 'Group C' }}
-                </Badge>
-              </TableCell>
-
-              <!-- Work Group Code -->
-              <TableCell class="text-xs font-mono font-bold text-foreground">
-                <span class="px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 text-[11px]">
-                  {{ emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C') }}
-                </span>
-              </TableCell>
-
-              <TableCell class="text-xs text-muted-foreground">
-                {{ emp.department || 'Operations' }}
-              </TableCell>
-              <TableCell class="text-xs text-muted-foreground">
-                {{ emp.position || 'Staff' }}
-              </TableCell>
+              <!-- Employment Status -->
               <TableCell>
-                <Badge variant="success" class="text-[10px] uppercase font-mono">
-                  {{ emp.status }}
+                <Badge
+                  :variant="emp.status === 'active' ? 'success' : (emp.status === 'on_leave' ? 'warning' : 'outline')"
+                  class="text-[10px] uppercase font-mono"
+                >
+                  {{ emp.status.replace('_', ' ') }}
                 </Badge>
               </TableCell>
-              <TableCell class="text-right">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="h-7 px-2 text-xs gap-1"
-                  @click="openEditModal(emp)"
-                >
-                  <UserRoundPen class="size-3 text-primary" />
-                  <span>Edit</span>
-                </Button>
+
+              <!-- Actions -->
+              <TableCell class="text-right" @click.stop>
+                <div class="flex items-center justify-end gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-7 px-2 text-xs gap-1 shadow-xs"
+                    @click="openProfile(emp, 'overview')"
+                  >
+                    <Eye class="size-3 text-muted-foreground" />
+                    <span>Profile</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 px-2 text-xs gap-1"
+                    @click="openProfile(emp, 'edit')"
+                  >
+                    <UserRoundPen class="size-3 text-primary" />
+                    <span>Edit</span>
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           </template>
@@ -586,6 +743,665 @@ onUnmounted(() => {
           :page-size="pageSize"
           @update:page="onPageChange"
         />
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- CENTRAL MASTER EMPLOYEE PROFILE MODAL (OVERVIEW + EDIT) -->
+    <!-- ============================================================= -->
+    <div
+      v-if="showProfileModal && selectedEmployee"
+      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+    >
+      <div class="bg-card text-card-foreground border rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+        <!-- Modal Top Header -->
+        <div class="p-4 border-b bg-muted/30 flex items-start justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="size-12 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
+              {{ selectedEmployee.full_name.charAt(0).toUpperCase() }}
+            </div>
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h2 class="text-base font-bold text-foreground">
+                  {{ selectedEmployee.full_name }}
+                </h2>
+                <Badge
+                  :variant="selectedEmployee.status === 'active' ? 'success' : (selectedEmployee.status === 'on_leave' ? 'warning' : 'outline')"
+                  class="text-[10px] uppercase font-mono px-2 py-0.5"
+                >
+                  {{ selectedEmployee.status.replace('_', ' ') }}
+                </Badge>
+              </div>
+
+              <!-- Core Identifier Display: Employee ID = Bio ID -->
+              <div class="flex items-center gap-2 mt-1 flex-wrap text-xs">
+                <span class="inline-flex items-center gap-1.5 font-mono px-2 py-0.5 rounded bg-primary/10 border border-primary/20 text-primary font-semibold">
+                  <Fingerprint class="size-3.5 text-primary" />
+                  <span>Employee ID / Bio ID: {{ selectedEmployee.biometric_user_id }}</span>
+                </span>
+                <span class="text-muted-foreground text-[11px] flex items-center gap-1 font-mono">
+                  <Lock class="size-3 text-muted-foreground/80" />
+                  <span>Hardware Key (Read-Only)</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="text-muted-foreground hover:text-foreground rounded p-1.5 hover:bg-muted transition-colors"
+            @click="showProfileModal = false"
+          >
+            <X class="size-4" />
+          </button>
+        </div>
+
+        <!-- Tab Toggle Bar -->
+        <div class="px-4 py-2 border-b bg-muted/15 flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1 text-xs">
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5"
+              :class="activeProfileTab === 'overview' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activeProfileTab = 'overview'"
+            >
+              <Eye class="size-3.5" />
+              <span>Profile Overview</span>
+            </button>
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5"
+              :class="activeProfileTab === 'edit' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activeProfileTab = 'edit'"
+            >
+              <UserRoundPen class="size-3.5" />
+              <span>Edit Profile</span>
+            </button>
+          </div>
+
+          <div class="text-[11px] text-muted-foreground hidden sm:block">
+            <span>{{ selectedEmployee.department || 'Operations' }}</span> • <span>{{ selectedEmployee.location }}</span>
+          </div>
+        </div>
+
+        <!-- Success & Error Banners -->
+        <div v-if="profileSuccessMsg" class="p-3 mx-4 mt-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+          <CheckCircle2 class="size-4 shrink-0 text-emerald-600" />
+          <span>{{ profileSuccessMsg }}</span>
+        </div>
+
+        <div v-if="profileErrorMsg" class="p-3 mx-4 mt-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
+          <AlertCircle class="size-4 shrink-0" />
+          <span>{{ profileErrorMsg }}</span>
+        </div>
+
+        <!-- Modal Body (Scrollable) -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+          <!-- ============================================== -->
+          <!-- TAB 1: OVERVIEW -->
+          <!-- ============================================== -->
+          <template v-if="activeProfileTab === 'overview'">
+            <!-- Quick Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <!-- Card: Basic Information -->
+              <div class="rounded-xl border bg-card p-3.5 space-y-2.5 shadow-2xs">
+                <div class="flex items-center justify-between pb-1.5 border-b">
+                  <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <User class="size-3.5 text-primary" />
+                    <span>Basic Information</span>
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">Personal</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Full Name</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.full_name }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Preferred Name</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.preferred_name || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Birthday / Date of Birth</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.date_of_birth || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Gender</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.gender || '—' }}</span>
+                  </div>
+                  <div class="col-span-2">
+                    <span class="text-muted-foreground block text-[11px]">Civil Status</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.civil_status || '—' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card: Contact Information -->
+              <div class="rounded-xl border bg-card p-3.5 space-y-2.5 shadow-2xs">
+                <div class="flex items-center justify-between pb-1.5 border-b">
+                  <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <Phone class="size-3.5 text-primary" />
+                    <span>Contact Information</span>
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">Reachability</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Mobile Number</span>
+                    <span class="font-medium text-foreground font-mono">{{ selectedEmployee.mobile_number || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Alternate Contact</span>
+                    <span class="font-medium text-foreground font-mono">{{ selectedEmployee.alternate_number || '—' }}</span>
+                  </div>
+                  <div class="col-span-2">
+                    <span class="text-muted-foreground block text-[11px]">Email Address</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.email || '—' }}</span>
+                  </div>
+                  <div class="col-span-2">
+                    <span class="text-muted-foreground block text-[11px]">Home Address</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.home_address || '—' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card: Employment Information -->
+              <div class="rounded-xl border bg-card p-3.5 space-y-2.5 shadow-2xs">
+                <div class="flex items-center justify-between pb-1.5 border-b">
+                  <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <Building class="size-3.5 text-primary" />
+                    <span>Employment Information</span>
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">Organizational</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Department</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.department || 'Operations' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Position / Role</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.position || 'Staff' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Work Group Schedule</span>
+                    <span class="font-medium text-foreground">
+                      {{ selectedEmployee.work_group_name || 'Group C' }} ({{ selectedEmployee.work_group_code || 'C' }})
+                    </span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Branch Location</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.location }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Date Hired</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.hire_date || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Date Regularized</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.regularization_date || '—' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card: Emergency Contact -->
+              <div class="rounded-xl border bg-card p-3.5 space-y-2.5 shadow-2xs">
+                <div class="flex items-center justify-between pb-1.5 border-b">
+                  <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <ShieldAlert class="size-3.5 text-amber-500" />
+                    <span>Emergency Contact</span>
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">Safety</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div class="col-span-2">
+                    <span class="text-muted-foreground block text-[11px]">Contact Person</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.emergency_contact_name || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Relationship</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.emergency_contact_relationship || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Emergency Number</span>
+                    <span class="font-medium text-foreground font-mono">{{ selectedEmployee.emergency_contact_number || '—' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card: Biometric Hardware Key (Read-Only) -->
+            <div class="rounded-xl border bg-muted/20 p-3.5 space-y-2">
+              <div class="flex items-center justify-between pb-1 border-b">
+                <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <Fingerprint class="size-4 text-primary" />
+                  <span>Biometric Device Registration</span>
+                </div>
+                <Badge variant="outline" class="text-[10px] font-mono gap-1">
+                  <Lock class="size-2.5" />
+                  Read-Only Key
+                </Badge>
+              </div>
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs pt-1">
+                <div class="space-y-0.5">
+                  <div class="font-mono font-semibold text-foreground text-sm flex items-center gap-2">
+                    <span>Bio ID: {{ selectedEmployee.biometric_user_id }}</span>
+                    <span class="text-muted-foreground font-normal text-xs">= Employee ID</span>
+                  </div>
+                  <p class="text-muted-foreground text-[11px]">
+                    Directly maps to the BISBIO B-29b hardware attendance scanner and attendance interpretation engine.
+                  </p>
+                </div>
+                <div class="text-[11px] px-2.5 py-1.5 rounded bg-muted text-muted-foreground font-mono">
+                  IndexedDB Key: {{ selectedEmployee.biometric_user_id }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Card: Payroll Profile Section (Separation of Concerns) -->
+            <div class="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+              <div class="flex items-center justify-between pb-1.5 border-b border-primary/10">
+                <div class="flex items-center gap-2 text-xs font-bold text-foreground">
+                  <CreditCard class="size-4 text-primary" />
+                  <span>Payroll Profile</span>
+                </div>
+                <Badge variant="default" class="text-[10px] font-mono uppercase bg-primary text-primary-foreground">
+                  {{ selectedEmployee.payroll_status || 'Configured' }}
+                </Badge>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Salary Type</span>
+                  <span class="font-semibold text-foreground">{{ selectedEmployee.salary_type || 'Monthly' }} Rate</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Linked Employee ID</span>
+                  <span class="font-mono font-semibold text-primary">{{ selectedEmployee.biometric_user_id }}</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Payroll Module Link</span>
+                  <span class="text-emerald-700 dark:text-emerald-400 font-medium">Ready for Audited Records</span>
+                </div>
+              </div>
+              <p class="text-[11px] text-muted-foreground leading-relaxed">
+                Financial calculations, government deductions (SSS, PhilHealth, Pag-IBIG), daily wage rates, and payslips are calculated in the Payroll module using this employee's Bio ID.
+              </p>
+              <div class="pt-1 flex items-center justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 text-xs gap-1.5 shadow-xs"
+                  @click="navigateToPayrollRecords"
+                >
+                  <ExternalLink class="size-3 text-primary" />
+                  <span>View in Payroll Records</span>
+                </Button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ============================================== -->
+          <!-- TAB 2: EDIT PROFILE FORM -->
+          <!-- ============================================== -->
+          <template v-else>
+            <form @submit.prevent="saveProfile" class="space-y-4">
+              <!-- Section 1: Immutable Identifier (Bio ID = Employee ID) -->
+              <div class="rounded-lg border bg-muted/40 p-3 space-y-1.5">
+                <div class="flex items-center justify-between text-xs font-semibold">
+                  <span class="flex items-center gap-1.5 text-foreground">
+                    <Fingerprint class="size-3.5 text-primary" />
+                    <span>Employee ID / Bio ID</span>
+                  </span>
+                  <span class="text-[10px] text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
+                    <Lock class="size-2.5" />
+                    Permanent Read-Only Identifier
+                  </span>
+                </div>
+                <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted font-mono text-xs font-bold text-foreground">
+                  <span>{{ formBioId }}</span>
+                  <span class="text-muted-foreground font-normal text-[11px]">— Matches Biometric Device User ID</span>
+                </div>
+              </div>
+
+              <!-- Section 2: Basic Information -->
+              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
+                  <User class="size-3.5 text-primary" />
+                  <span>Basic Personal Information</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">
+                      Full Name <span class="text-destructive">*</span>
+                    </label>
+                    <Input
+                      v-model="formName"
+                      type="text"
+                      required
+                      placeholder="e.g. Dela Cruz, Juan"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Preferred Name</label>
+                    <Input
+                      v-model="formPreferredName"
+                      type="text"
+                      placeholder="e.g. Johnny"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Birthday / Date of Birth</label>
+                    <Input
+                      v-model="formDateOfBirth"
+                      type="date"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Gender</label>
+                    <Select v-model="formGender">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Gender" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="">Not Specified</SelectItem>
+                          <SelectItem value="Male">Male</SelectItem>
+                          <SelectItem value="Female">Female</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div class="space-y-1 sm:col-span-2">
+                    <label class="text-xs font-semibold text-foreground">Civil Status</label>
+                    <Select v-model="formCivilStatus">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Civil Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="">Not Specified</SelectItem>
+                          <SelectItem value="Single">Single</SelectItem>
+                          <SelectItem value="Married">Married</SelectItem>
+                          <SelectItem value="Widowed">Widowed</SelectItem>
+                          <SelectItem value="Separated">Separated</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Section 3: Contact Details -->
+              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
+                  <Phone class="size-3.5 text-primary" />
+                  <span>Contact Information</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Mobile / Contact Number</label>
+                    <Input
+                      v-model="formMobileNumber"
+                      type="text"
+                      placeholder="e.g. 0917-123-4567"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Alternate Contact Number</label>
+                    <Input
+                      v-model="formAlternateNumber"
+                      type="text"
+                      placeholder="e.g. 032-234-5678"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1 sm:col-span-2">
+                    <label class="text-xs font-semibold text-foreground">Email Address</label>
+                    <Input
+                      v-model="formEmail"
+                      type="email"
+                      placeholder="e.g. employee@dmbb.com"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1 sm:col-span-2">
+                    <label class="text-xs font-semibold text-foreground">Home Address</label>
+                    <Input
+                      v-model="formHomeAddress"
+                      type="text"
+                      placeholder="e.g. Cebu City, Philippines"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Section 4: Emergency Contact -->
+              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
+                  <ShieldAlert class="size-3.5 text-amber-500" />
+                  <span>Emergency Contact</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Contact Name</label>
+                    <Input
+                      v-model="formEmergencyName"
+                      type="text"
+                      placeholder="e.g. Maria Dela Cruz"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Relationship</label>
+                    <Input
+                      v-model="formEmergencyRelationship"
+                      type="text"
+                      placeholder="e.g. Spouse / Parent"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Contact Number</label>
+                    <Input
+                      v-model="formEmergencyNumber"
+                      type="text"
+                      placeholder="e.g. 0918-987-6543"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Section 5: Employment Details -->
+              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
+                  <Building class="size-3.5 text-primary" />
+                  <span>Employment & Schedule</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Department</label>
+                    <Input
+                      v-model="formDepartment"
+                      type="text"
+                      placeholder="Operations"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Position / Role</label>
+                    <Input
+                      v-model="formPosition"
+                      type="text"
+                      placeholder="Staff"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Branch Location</label>
+                    <Select v-model="formLocation">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
+                            {{ loc }}
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Assigned Work Group</label>
+                    <Select v-model="formWorkGroupId">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Work Group" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
+                            {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Date Hired</label>
+                    <Input
+                      v-model="formHireDate"
+                      type="date"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Date Regularized</label>
+                    <Input
+                      v-model="formRegularizationDate"
+                      type="date"
+                      class="h-8 text-xs"
+                    />
+                  </div>
+                  <div class="space-y-1 sm:col-span-2">
+                    <label class="text-xs font-semibold text-foreground">Employment Status</label>
+                    <Select v-model="formStatus">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="on_leave">On Leave</SelectItem>
+                          <SelectItem value="inactive">Inactive</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Section 6: Payroll Configuration -->
+              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
+                  <CreditCard class="size-3.5 text-primary" />
+                  <span>Payroll Profile Setup</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Salary Rate Type</label>
+                    <Select v-model="formSalaryType">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Salary Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="Monthly">Monthly Salary</SelectItem>
+                          <SelectItem value="Daily">Daily Wage</SelectItem>
+                          <SelectItem value="Hourly">Hourly Rate</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div class="space-y-1">
+                    <label class="text-xs font-semibold text-foreground">Payroll Status</label>
+                    <Select v-model="formPayrollStatus">
+                      <SelectTrigger class="h-8 text-xs w-full bg-card">
+                        <SelectValue placeholder="Select Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="configured">Configured</SelectItem>
+                          <SelectItem value="pending">Pending Setup</SelectItem>
+                          <SelectItem value="exempt">Exempt</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bottom Action Buttons inside Form -->
+              <div class="flex items-center justify-end gap-2 pt-2 border-t">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="h-8 text-xs"
+                  @click="activeProfileTab = 'overview'"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  class="h-8 text-xs gap-1.5 font-medium shadow-xs"
+                  :disabled="profileSaving"
+                >
+                  <RefreshCw v-if="profileSaving" class="size-3.5 animate-spin" />
+                  <Save v-else class="size-3.5" />
+                  <span>{{ profileSaving ? 'Saving Changes...' : 'Save Profile Changes' }}</span>
+                </Button>
+              </div>
+            </form>
+          </template>
+        </div>
+
+        <!-- Modal Bottom Footer -->
+        <div class="p-3 border-t bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
+          <div class="flex items-center gap-1.5 font-mono text-[11px]">
+            <span>Bio ID: {{ selectedEmployee.biometric_user_id }}</span>
+            <span>•</span>
+            <span>Employee ID: {{ selectedEmployee.biometric_user_id }}</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <Button
+              v-if="activeProfileTab === 'overview'"
+              variant="default"
+              size="sm"
+              class="h-7 text-xs gap-1.5 font-medium"
+              @click="activeProfileTab = 'edit'"
+            >
+              <UserRoundPen class="size-3" />
+              <span>Edit Profile</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 text-xs"
+              @click="showProfileModal = false"
+            >
+              Close
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -876,146 +1692,6 @@ onUnmounted(() => {
             </Button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- ============================================================= -->
-    <!-- EDIT SINGLE EMPLOYEE MODAL -->
-    <!-- ============================================================= -->
-    <div
-      v-if="showEditModal"
-      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
-    >
-      <div class="bg-card text-card-foreground border rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-        <div class="flex items-center justify-between p-4 border-b bg-muted/40">
-          <div class="flex items-center gap-2">
-            <Building class="size-4 text-primary" />
-            <h2 class="font-semibold text-sm">Edit Employee Profile</h2>
-          </div>
-          <button
-            type="button"
-            class="text-muted-foreground hover:text-foreground rounded p-1"
-            @click="showEditModal = false"
-          >
-            <X class="size-4" />
-          </button>
-        </div>
-
-        <form @submit.prevent="saveEmployee" class="p-4 space-y-3.5">
-          <!-- Permanent Bio ID (Read-only) -->
-          <div class="space-y-1">
-            <label class="text-xs font-semibold text-muted-foreground flex items-center justify-between">
-              <span>Biometric User ID</span>
-              <span class="text-[10px] text-amber-600 dark:text-amber-400 font-mono font-normal">Permanent Immutable Key</span>
-            </label>
-            <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted/60 text-xs font-mono font-semibold text-foreground">
-              <Fingerprint class="size-3.5 text-muted-foreground" />
-              <span>{{ editBioId }}</span>
-            </div>
-          </div>
-
-          <!-- Employee Name -->
-          <div class="space-y-1">
-            <label class="text-xs font-semibold text-foreground">
-              Employee Full Name <span class="text-destructive">*</span>
-            </label>
-            <Input
-              v-model="editName"
-              type="text"
-              required
-              placeholder="e.g. Santos, Roberto"
-              class="h-8 text-xs"
-            />
-          </div>
-
-          <!-- Location -->
-          <div class="space-y-1">
-            <label class="text-xs font-semibold text-foreground">Branch Location</label>
-            <Select v-model="editLocation">
-              <SelectTrigger class="h-8 text-xs w-full bg-card">
-                <SelectValue placeholder="Select Location" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
-                    {{ loc }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <!-- Work Group Schedule -->
-          <div class="space-y-1">
-            <label class="text-xs font-semibold text-foreground">Assigned Work Group</label>
-            <Select v-model="editWorkGroupId">
-              <SelectTrigger class="h-8 text-xs w-full bg-card">
-                <SelectValue placeholder="Select Work Group" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
-                    {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <!-- Department -->
-          <div class="space-y-1">
-            <label class="text-xs font-semibold text-foreground">Department</label>
-            <Input
-              v-model="editDepartment"
-              type="text"
-              placeholder="Operations"
-              class="h-8 text-xs"
-            />
-          </div>
-
-          <!-- Position -->
-          <div class="space-y-1">
-            <label class="text-xs font-semibold text-foreground">Position / Role</label>
-            <Input
-              v-model="editPosition"
-              type="text"
-              placeholder="Staff"
-              class="h-8 text-xs"
-            />
-          </div>
-
-          <!-- Feedback messages -->
-          <div v-if="editSuccessMsg" class="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
-            <CheckCircle2 class="size-4 shrink-0" />
-            <span>{{ editSuccessMsg }}</span>
-          </div>
-
-          <div v-if="editErrorMsg" class="p-2.5 rounded bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
-            <AlertCircle class="size-4 shrink-0" />
-            <span>{{ editErrorMsg }}</span>
-          </div>
-
-          <div class="flex items-center justify-end gap-2 pt-2 border-t">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              class="h-8 text-xs"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              class="h-8 text-xs gap-1.5 font-medium"
-              :disabled="editSaving"
-            >
-              <Save class="size-3.5" />
-              <span>{{ editSaving ? 'Saving...' : 'Save Profile' }}</span>
-            </Button>
-          </div>
-        </form>
       </div>
     </div>
   </div>

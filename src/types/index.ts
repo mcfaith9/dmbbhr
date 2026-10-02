@@ -45,9 +45,23 @@ export interface WorkGroup {
 
 export interface Employee {
   id: string
-  employee_number: string
-  biometric_user_id: string
+  employee_number: string // Strictly identical to biometric_user_id (Employee ID = Bio ID)
+  biometric_user_id: string // Permanent hardware identifier (Bio ID)
   full_name: string
+  preferred_name?: string
+  date_of_birth?: string // YYYY-MM-DD
+  gender?: 'Male' | 'Female' | 'Other' | ''
+  civil_status?: 'Single' | 'Married' | 'Widowed' | 'Separated' | ''
+  // Contact Information
+  mobile_number?: string
+  email?: string
+  alternate_number?: string
+  home_address?: string
+  // Emergency Contact
+  emergency_contact_name?: string
+  emergency_contact_relationship?: string
+  emergency_contact_number?: string
+  // Employment Information
   location: EmployeeLocation
   work_group_id: string // References WorkGroup.id
   work_group_name?: string
@@ -58,8 +72,12 @@ export interface Employee {
   department?: string
   position?: string
   location_id?: string
-  hire_date?: string
+  hire_date?: string // Date Hired
+  regularization_date?: string // Date Regularized
   status: 'active' | 'inactive' | 'on_leave'
+  // Payroll Profile Information
+  payroll_status?: 'configured' | 'pending' | 'exempt'
+  salary_type?: 'Monthly' | 'Daily' | 'Hourly'
   created_at?: string
   updated_at?: string
 }

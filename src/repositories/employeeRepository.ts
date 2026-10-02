@@ -417,7 +417,7 @@ async function ensureInitialized() {
 
   const count = await db.employees.count()
   if (count === 0) {
-    await db.employees.bulkPut(DEFAULT_INITIAL_EMPLOYEES)
+    await db.employees.bulkPut(DEFAULT_INITIAL_EMPLOYEES.map(e => ({ ...e, employeeNumber: e.bioId })))
   }
 
   const all = await db.employees.toArray()
@@ -425,6 +425,10 @@ async function ensureInitialized() {
   for (const emp of all) {
     if (!emp.workGroupId) {
       emp.workGroupId = 'wg-group-c'
+    }
+    // Core Identifier Rule: Employee ID = Bio ID
+    if (emp.employeeNumber !== emp.bioId) {
+      emp.employeeNumber = emp.bioId
     }
     employeeCache.set(emp.bioId, emp)
   }
@@ -532,6 +536,9 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     throw new Error('Missing or invalid permanent Bio ID.')
   }
 
+  // Core Rule: Employee ID = Bio ID (no separate employee ID)
+  const cleanEmpNum = cleanBioId
+
   // Extract Name (string only)
   const rawName = input.fullName ?? input.full_name ?? input.name ?? input.NAME
   const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : `User ${cleanBioId}`
@@ -571,11 +578,45 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     cleanStatus = rawStatus
   }
 
-  // Extract Employee Number (primitive string only)
-  const rawEmpNum = input.employeeNumber ?? input.employee_number
-  const cleanEmpNum = rawEmpNum !== undefined && rawEmpNum !== null && String(rawEmpNum).trim() !== ''
-    ? String(rawEmpNum).trim()
-    : `EMP-${cleanBioId}`
+  // Helper for optional string fields (returns trimmed string or undefined, never dummy values)
+  const getOptString = (...vals: any[]): string | undefined => {
+    for (const v of vals) {
+      if (v !== undefined && v !== null && typeof v === 'string') {
+        const trimmed = v.trim()
+        if (trimmed) return trimmed
+      }
+    }
+    return undefined
+  }
+
+  const cleanPreferredName = getOptString(input.preferredName, input.preferred_name)
+  const cleanDob = getOptString(input.dateOfBirth, input.date_of_birth, input.birthday, input.dob)
+  const cleanGender = getOptString(input.gender)
+  const cleanCivilStatus = getOptString(input.civilStatus, input.civil_status)
+
+  const cleanMobile = getOptString(input.mobileNumber, input.mobile_number, input.contactNumber, input.contact_number, input.mobile)
+  const cleanEmail = getOptString(input.email, input.email_address)
+  const cleanAltNumber = getOptString(input.alternateNumber, input.alternate_number, input.alternateContact, input.alternate_contact)
+  const cleanAddress = getOptString(input.homeAddress, input.home_address, input.address)
+
+  const cleanEmergencyName = getOptString(input.emergencyContactName, input.emergency_contact_name, input.emergencyName)
+  const cleanEmergencyRel = getOptString(input.emergencyContactRelationship, input.emergency_contact_relationship, input.emergencyRelationship)
+  const cleanEmergencyNumber = getOptString(input.emergencyContactNumber, input.emergency_contact_number, input.emergencyNumber)
+
+  const cleanHireDate = getOptString(input.hireDate, input.hire_date, input.dateHired, input.date_hired)
+  const cleanRegDate = getOptString(input.regularizationDate, input.regularization_date, input.dateRegularized, input.date_regularized)
+
+  const rawPayrollStatus = getOptString(input.payrollStatus, input.payroll_status)
+  let cleanPayrollStatus: 'configured' | 'pending' | 'exempt' | undefined = undefined
+  if (rawPayrollStatus === 'configured' || rawPayrollStatus === 'pending' || rawPayrollStatus === 'exempt') {
+    cleanPayrollStatus = rawPayrollStatus
+  }
+
+  const rawSalaryType = getOptString(input.salaryType, input.salary_type)
+  let cleanSalaryType: 'Monthly' | 'Daily' | 'Hourly' | undefined = undefined
+  if (rawSalaryType === 'Monthly' || rawSalaryType === 'Daily' || rawSalaryType === 'Hourly') {
+    cleanSalaryType = rawSalaryType
+  }
 
   // Extract Created / Updated Dates (primitive ISO strings only)
   let cleanCreatedAt = new Date().toISOString()
@@ -592,11 +633,26 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     bioId: cleanBioId,
     employeeNumber: cleanEmpNum,
     fullName: cleanName || `User ${cleanBioId}`,
+    preferredName: cleanPreferredName,
+    dateOfBirth: cleanDob,
+    gender: cleanGender,
+    civilStatus: cleanCivilStatus,
+    mobileNumber: cleanMobile,
+    email: cleanEmail,
+    alternateNumber: cleanAltNumber,
+    homeAddress: cleanAddress,
+    emergencyContactName: cleanEmergencyName,
+    emergencyContactRelationship: cleanEmergencyRel,
+    emergencyContactNumber: cleanEmergencyNumber,
     location: cleanLoc,
     workGroupId: cleanWgId,
     department: cleanDept || 'Operations',
     position: cleanPos || 'Staff',
+    hireDate: cleanHireDate,
+    regularizationDate: cleanRegDate,
     status: cleanStatus,
+    payrollStatus: cleanPayrollStatus,
+    salaryType: cleanSalaryType,
     createdAt: cleanCreatedAt,
     updatedAt: cleanUpdatedAt
   }
@@ -623,16 +679,31 @@ export const employeeRepository = {
     const wg = wgMap ? (wgMap.get(wgId) || wgMap.get('wg-group-c')) : workGroupRepository.getRecordByIdSync(wgId)
     return {
       id: `emp-${rec.bioId}`,
-      employee_number: rec.employeeNumber,
+      employee_number: rec.bioId, // Core Rule: Employee ID = Bio ID
       biometric_user_id: rec.bioId,
       full_name: rec.fullName,
+      preferred_name: rec.preferredName,
+      date_of_birth: rec.dateOfBirth,
+      gender: rec.gender as any,
+      civil_status: rec.civilStatus as any,
+      mobile_number: rec.mobileNumber,
+      email: rec.email,
+      alternate_number: rec.alternateNumber,
+      home_address: rec.homeAddress,
+      emergency_contact_name: rec.emergencyContactName,
+      emergency_contact_relationship: rec.emergencyContactRelationship,
+      emergency_contact_number: rec.emergencyContactNumber,
       location: rec.location,
       work_group_id: wgId,
       work_group_name: wg?.name || 'Group C',
       work_group_code: wg?.code || 'C',
       department: rec.department,
       position: rec.position,
+      hire_date: rec.hireDate,
+      regularization_date: rec.regularizationDate,
       status: rec.status,
+      payroll_status: rec.payrollStatus,
+      salary_type: rec.salaryType,
       created_at: rec.createdAt,
       updated_at: rec.updatedAt
     }
@@ -698,26 +769,37 @@ export const employeeRepository = {
 
   /**
    * Edits an employee. Bio ID is strictly permanent and read-only.
-   * Updates Employee Name, Location, and Work Group.
+   * Updates employee profile details and persists safely to IndexedDB.
    */
   async updateEmployee(
     bioId: string,
-    updates: { fullName: string; location: EmployeeLocation; workGroupId?: string; department?: string; position?: string }
+    updates: Partial<EmployeeRecord> & {
+      full_name?: string
+      preferred_name?: string
+      date_of_birth?: string
+      civil_status?: string
+      mobile_number?: string
+      alternate_number?: string
+      home_address?: string
+      emergency_contact_name?: string
+      emergency_contact_relationship?: string
+      emergency_contact_number?: string
+      work_group_id?: string
+      hire_date?: string
+      regularization_date?: string
+      payroll_status?: 'configured' | 'pending' | 'exempt'
+      salary_type?: 'Monthly' | 'Daily' | 'Hourly'
+    }
   ): Promise<Employee> {
     await ensureInitialized()
     const cleanBioId = String(bioId).trim()
     const existing = employeeCache!.get(cleanBioId)
 
     const record = toPersistableEmployeeRecord({
-      bioId: cleanBioId,
-      employeeNumber: existing?.employeeNumber || `EMP-${cleanBioId}`,
-      fullName: updates.fullName.trim() || existing?.fullName || `User ${cleanBioId}`,
-      location: updates.location || existing?.location || 'DBB CEBU',
-      workGroupId: updates.workGroupId || existing?.workGroupId || 'wg-group-c',
-      department: updates.department !== undefined ? updates.department.trim() : (existing?.department || 'Operations'),
-      position: updates.position !== undefined ? updates.position.trim() : (existing?.position || 'Staff'),
-      status: existing?.status || 'active',
-      createdAt: existing?.createdAt || new Date().toISOString(),
+      ...existing,
+      ...updates,
+      bioId: cleanBioId, // Strictly permanent and read-only
+      employeeNumber: cleanBioId, // Core Rule: Employee ID = Bio ID
       updatedAt: new Date().toISOString()
     })
 
@@ -744,7 +826,7 @@ export const employeeRepository = {
     if (!existing) {
       const record = toPersistableEmployeeRecord({
         bioId: cleanBioId,
-        employeeNumber: `EMP-${cleanBioId}`,
+        employeeNumber: cleanBioId,
         fullName: name && name.trim() ? name.trim() : `User ${cleanBioId}`,
         location,
         workGroupId,
@@ -789,7 +871,7 @@ export const employeeRepository = {
       if (!existing) {
         const newRec = toPersistableEmployeeRecord({
           bioId: cleanBioId,
-          employeeNumber: `EMP-${cleanBioId}`,
+          employeeNumber: cleanBioId,
           fullName: emp.name && emp.name.trim() ? emp.name.trim() : `User ${cleanBioId}`,
           location: emp.location || 'DBB CEBU',
           workGroupId: emp.workGroupId || 'wg-group-c',
@@ -998,8 +1080,9 @@ export const employeeRepository = {
         const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated
 
         const targetRecord = toPersistableEmployeeRecord({
+          ...existingRecord,
           bioId: existingRecord.bioId,
-          employeeNumber: existingRecord.employeeNumber,
+          employeeNumber: existingRecord.bioId,
           fullName: targetName,
           location: existingRecord.location,
           workGroupId: targetWgId,
@@ -1078,7 +1161,7 @@ export const employeeRepository = {
 
         const targetRecord = toPersistableEmployeeRecord({
           bioId,
-          employeeNumber: `EMP-${bioId}`,
+          employeeNumber: bioId,
           fullName: targetName,
           location: 'DBB CEBU',
           workGroupId: targetWgId,
@@ -1233,7 +1316,11 @@ export const employeeRepository = {
       'DEPARTMENT': emp.department || 'Operations',
       'LOCATION': emp.location,
       'POSITION': emp.position || 'Staff',
-      'STATUS': emp.status === 'active' ? 'Active' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive')
+      'STATUS': emp.status === 'active' ? 'Active' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive'),
+      'MOBILE': emp.mobile_number || '',
+      'EMAIL': emp.email || '',
+      'BIRTHDAY': emp.date_of_birth || '',
+      'DATE_HIRED': emp.hire_date || ''
     }))
   },
 

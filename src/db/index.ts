@@ -37,14 +37,29 @@ export interface BiometricPunchRecord {
 }
 
 export interface EmployeeRecord {
-  bioId: string // Primary key (permanent, immutable)
-  employeeNumber: string
+  bioId: string // Primary key (permanent, immutable) — also Employee ID
+  employeeNumber: string // Identical to bioId (Employee ID = Bio ID)
   fullName: string
+  preferredName?: string
+  dateOfBirth?: string // YYYY-MM-DD
+  gender?: string
+  civilStatus?: string
+  mobileNumber?: string
+  email?: string
+  alternateNumber?: string
+  homeAddress?: string
+  emergencyContactName?: string
+  emergencyContactRelationship?: string
+  emergencyContactNumber?: string
   location: EmployeeLocation
   workGroupId: string // "wg-group-a" | "wg-group-b" | "wg-group-c"
   department: string
   position: string
+  hireDate?: string // Date Hired
+  regularizationDate?: string // Date Regularized
   status: 'active' | 'inactive' | 'on_leave'
+  payrollStatus?: 'configured' | 'pending' | 'exempt'
+  salaryType?: 'Monthly' | 'Daily' | 'Hourly'
   createdAt: string
   updatedAt: string
 }

@@ -100,18 +100,50 @@ export const employeeService = {
 
   /**
    * Edits an employee. Bio ID is strictly permanent and read-only.
-   * Updates Employee Name, Location, and Work Group.
+   * Updates Employee Profile details and persists to IndexedDB.
    */
   async updateEmployee(
     bioId: string,
-    updates: { full_name: string; location: EmployeeLocation; work_group_id?: string; department?: string; position?: string }
+    updates: Partial<Employee> & {
+      fullName?: string
+      workGroupId?: string
+      preferredName?: string
+      dateOfBirth?: string
+      civilStatus?: string
+      mobileNumber?: string
+      alternateNumber?: string
+      homeAddress?: string
+      emergencyContactName?: string
+      emergencyContactRelationship?: string
+      emergencyContactNumber?: string
+      hireDate?: string
+      regularizationDate?: string
+      payrollStatus?: 'configured' | 'pending' | 'exempt'
+      salaryType?: 'Monthly' | 'Daily' | 'Hourly'
+    }
   ): Promise<Employee> {
     return employeeRepository.updateEmployee(bioId, {
-      fullName: updates.full_name,
+      fullName: updates.full_name ?? updates.fullName,
+      preferredName: updates.preferred_name ?? updates.preferredName,
+      dateOfBirth: updates.date_of_birth ?? updates.dateOfBirth,
+      gender: updates.gender,
+      civilStatus: updates.civil_status ?? updates.civilStatus,
+      mobileNumber: updates.mobile_number ?? updates.mobileNumber,
+      email: updates.email,
+      alternateNumber: updates.alternate_number ?? updates.alternateNumber,
+      homeAddress: updates.home_address ?? updates.homeAddress,
+      emergencyContactName: updates.emergency_contact_name ?? updates.emergencyContactName,
+      emergencyContactRelationship: updates.emergency_contact_relationship ?? updates.emergencyContactRelationship,
+      emergencyContactNumber: updates.emergency_contact_number ?? updates.emergencyContactNumber,
       location: updates.location,
-      workGroupId: updates.work_group_id,
+      workGroupId: updates.work_group_id ?? updates.workGroupId,
       department: updates.department,
-      position: updates.position
+      position: updates.position,
+      hireDate: updates.hire_date ?? updates.hireDate,
+      regularizationDate: updates.regularization_date ?? updates.regularizationDate,
+      status: updates.status,
+      payrollStatus: updates.payroll_status ?? updates.payrollStatus,
+      salaryType: updates.salary_type ?? updates.salaryType
     })
   },
 
