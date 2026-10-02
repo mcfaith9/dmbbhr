@@ -120,6 +120,21 @@ export const employeeService = {
       regularizationDate?: string
       payrollStatus?: 'configured' | 'pending' | 'exempt'
       salaryType?: 'Monthly' | 'Daily' | 'Hourly'
+      basicSalary?: number
+      dailyRate?: number
+      hourlyRate?: number
+      payFrequency?: string
+      paymentMethod?: string
+      bankName?: string
+      bankAccountNumber?: string
+      allowances?: number
+      deMinimis?: number
+      salaryEffectiveDate?: string
+      sssNumber?: string
+      philhealthNumber?: string
+      pagibigNumber?: string
+      tin?: string
+      taxStatus?: string
     }
   ): Promise<Employee> {
     return employeeRepository.updateEmployee(bioId, {
@@ -143,7 +158,22 @@ export const employeeService = {
       regularizationDate: updates.regularization_date ?? updates.regularizationDate,
       status: updates.status,
       payrollStatus: updates.payroll_status ?? updates.payrollStatus,
-      salaryType: updates.salary_type ?? updates.salaryType
+      salaryType: updates.salary_type ?? updates.salaryType,
+      basicSalary: updates.basic_salary ?? updates.basicSalary,
+      dailyRate: updates.daily_rate ?? updates.dailyRate,
+      hourlyRate: updates.hourly_rate ?? updates.hourlyRate,
+      payFrequency: (updates as any).pay_frequency ?? updates.payFrequency,
+      paymentMethod: (updates as any).payment_method ?? updates.paymentMethod,
+      bankName: (updates as any).bank_name ?? updates.bankName,
+      bankAccountNumber: (updates as any).bank_account_number ?? updates.bankAccountNumber,
+      allowances: (updates as any).allowances ?? updates.allowances,
+      deMinimis: (updates as any).de_minimis ?? updates.deMinimis,
+      salaryEffectiveDate: updates.salary_effective_date ?? updates.salaryEffectiveDate,
+      sssNumber: updates.sss_number ?? updates.sssNumber,
+      philhealthNumber: updates.philhealth_number ?? updates.philhealthNumber,
+      pagibigNumber: updates.pagibig_number ?? updates.pagibigNumber,
+      tin: updates.tin ?? updates.tin,
+      taxStatus: updates.tax_status ?? updates.taxStatus
     })
   },
 

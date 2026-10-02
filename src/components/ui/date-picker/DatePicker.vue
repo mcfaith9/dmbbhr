@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DateValue } from '@internationalized/date'
 import { DateFormatter, getLocalTimeZone, parseDate, today } from '@internationalized/date'
-import { CalendarIcon } from '@lucide/vue'
+import { CalendarIcon, X } from '@lucide/vue'
 import { ref, watch, type Ref, type HTMLAttributes } from 'vue'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -16,12 +16,14 @@ const props = withDefaults(defineProps<{
   modelValue?: string | null
   placeholder?: string
   disabled?: boolean
+  clearable?: boolean
   class?: HTMLAttributes['class']
   align?: 'start' | 'center' | 'end'
 }>(), {
   modelValue: '',
   placeholder: 'Pick a date',
   disabled: false,
+  clearable: true,
   align: 'start'
 })
 
@@ -64,8 +66,15 @@ watch(date, (newDate) => {
   }
 })
 
+function handleClear() {
+  date.value = undefined as unknown as DateValue
+  emit('update:modelValue', '')
+  emit('change', '')
+}
+
 const df = new DateFormatter('en-US', {
   dateStyle: 'long',
+  timeZone: getLocalTimeZone()
 })
 </script>
 
@@ -73,22 +82,31 @@ const df = new DateFormatter('en-US', {
   <Popover v-slot="{ close }">
     <PopoverTrigger as-child>
       <Button
+        type="button"
         variant="outline"
         :disabled="disabled"
         :class="cn(
-          'w-[220px] max-w-full justify-start text-left font-normal h-8 text-xs shrink-0',
+          'w-full justify-start text-left font-normal h-8 text-xs shrink-0',
           !date && 'text-muted-foreground',
           props.class
         )"
       >
         <CalendarIcon class="size-3.5 shrink-0 mr-1.5" />
-        <span class="truncate">
+        <span class="truncate flex-1">
           {{ date ? df.format(date.toDate(getLocalTimeZone())) : placeholder }}
+        </span>
+        <span
+          v-if="clearable && date && !disabled"
+          class="ml-1 p-0.5 rounded-xs hover:bg-muted text-muted-foreground hover:text-foreground shrink-0"
+          title="Clear date"
+          @click.stop="handleClear"
+        >
+          <X class="size-3" />
         </span>
       </Button>
     </PopoverTrigger>
 
-    <PopoverContent class="w-auto p-0" :align="align">
+    <PopoverContent class="w-auto p-0 z-[60]" :align="align">
       <Calendar
         v-model="date"
         :default-placeholder="defaultPlaceholder"
@@ -96,6 +114,17 @@ const df = new DateFormatter('en-US', {
         initial-focus
         @update:model-value="close"
       />
+      <div v-if="clearable && date" class="p-1.5 border-t flex justify-end bg-muted/20">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="h-6 text-[11px] px-2 text-muted-foreground hover:text-foreground"
+          @click="handleClear(); close()"
+        >
+          Clear Date
+        </Button>
+      </div>
     </PopoverContent>
   </Popover>
 </template>

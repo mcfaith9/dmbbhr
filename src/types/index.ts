@@ -78,6 +78,21 @@ export interface Employee {
   // Payroll Profile Information
   payroll_status?: 'configured' | 'pending' | 'exempt'
   salary_type?: 'Monthly' | 'Daily' | 'Hourly'
+  basic_salary?: number
+  daily_rate?: number
+  hourly_rate?: number
+  pay_frequency?: 'Semi-Monthly' | 'Monthly' | 'Weekly' | string
+  payment_method?: 'Bank Transfer' | 'Cash' | 'Cheque' | string
+  bank_name?: string
+  bank_account_number?: string
+  allowances?: number
+  de_minimis?: number
+  salary_effective_date?: string
+  sss_number?: string
+  philhealth_number?: string
+  pagibig_number?: string
+  tin?: string
+  tax_status?: string
   created_at?: string
   updated_at?: string
 }

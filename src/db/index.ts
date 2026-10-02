@@ -60,6 +60,21 @@ export interface EmployeeRecord {
   status: 'active' | 'inactive' | 'on_leave'
   payrollStatus?: 'configured' | 'pending' | 'exempt'
   salaryType?: 'Monthly' | 'Daily' | 'Hourly'
+  basicSalary?: number
+  dailyRate?: number
+  hourlyRate?: number
+  payFrequency?: 'Semi-Monthly' | 'Monthly' | 'Weekly' | string
+  paymentMethod?: 'Bank Transfer' | 'Cash' | 'Cheque' | string
+  bankName?: string
+  bankAccountNumber?: string
+  allowances?: number
+  deMinimis?: number
+  salaryEffectiveDate?: string
+  sssNumber?: string
+  philhealthNumber?: string
+  pagibigNumber?: string
+  tin?: string
+  taxStatus?: string
   createdAt: string
   updatedAt: string
 }

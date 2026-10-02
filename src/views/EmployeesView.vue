@@ -23,7 +23,10 @@ import {
   ShieldAlert,
   CreditCard,
   ExternalLink,
-  Eye
+  Eye,
+  Landmark,
+  Banknote,
+  Calculator
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -39,6 +42,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
+import { DatePicker } from '@/components/ui/date-picker'
 import {
   Select,
   SelectContent,
@@ -89,8 +93,40 @@ const formPosition = ref('')
 const formHireDate = ref('')
 const formRegularizationDate = ref('')
 const formStatus = ref<'active' | 'inactive' | 'on_leave'>('active')
+
+// Complete Payroll Profile Form fields
 const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Monthly')
+const formBasicSalary = ref<number | ''>('')
+const formDailyRate = ref<number | ''>('')
+const formHourlyRate = ref<number | ''>('')
+const formPayFrequency = ref<'Semi-Monthly' | 'Monthly' | 'Weekly'>('Semi-Monthly')
+const formPaymentMethod = ref<'Bank Transfer' | 'Cash' | 'Cheque'>('Bank Transfer')
+const formBankName = ref('')
+const formBankAccountNumber = ref('')
+const formTin = ref('')
+const formSssNumber = ref('')
+const formPhilhealthNumber = ref('')
+const formPagibigNumber = ref('')
+const formTaxStatus = ref<string>('Standard')
+const formAllowances = ref<number | ''>('')
+const formDeMinimis = ref<number | ''>('')
 const formPayrollStatus = ref<'configured' | 'pending' | 'exempt'>('configured')
+
+function autoCalculateRates() {
+  if (typeof formBasicSalary.value === 'number' && formBasicSalary.value > 0) {
+    if (formSalaryType.value === 'Monthly') {
+      const daily = Math.round((formBasicSalary.value / 26) * 100) / 100
+      formDailyRate.value = daily
+      formHourlyRate.value = Math.round((daily / 8) * 100) / 100
+    } else if (formSalaryType.value === 'Daily') {
+      formDailyRate.value = formBasicSalary.value
+      formHourlyRate.value = Math.round((formBasicSalary.value / 8) * 100) / 100
+    } else if (formSalaryType.value === 'Hourly') {
+      formHourlyRate.value = formBasicSalary.value
+      formDailyRate.value = Math.round((formBasicSalary.value * 8) * 100) / 100
+    }
+  }
+}
 
 const profileSaving = ref(false)
 const profileSuccessMsg = ref('')
@@ -281,6 +317,20 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview') {
   formRegularizationDate.value = emp.regularization_date || ''
   formStatus.value = emp.status || 'active'
   formSalaryType.value = (emp.salary_type as any) || 'Monthly'
+  formBasicSalary.value = typeof emp.basic_salary === 'number' ? emp.basic_salary : ''
+  formDailyRate.value = typeof emp.daily_rate === 'number' ? emp.daily_rate : ''
+  formHourlyRate.value = typeof emp.hourly_rate === 'number' ? emp.hourly_rate : ''
+  formPayFrequency.value = (emp.pay_frequency as any) || 'Semi-Monthly'
+  formPaymentMethod.value = (emp.payment_method as any) || 'Bank Transfer'
+  formBankName.value = emp.bank_name || ''
+  formBankAccountNumber.value = emp.bank_account_number || ''
+  formTin.value = emp.tin || ''
+  formSssNumber.value = emp.sss_number || ''
+  formPhilhealthNumber.value = emp.philhealth_number || ''
+  formPagibigNumber.value = emp.pagibig_number || ''
+  formTaxStatus.value = emp.tax_status || 'Standard'
+  formAllowances.value = typeof emp.allowances === 'number' ? emp.allowances : ''
+  formDeMinimis.value = typeof emp.de_minimis === 'number' ? emp.de_minimis : ''
   formPayrollStatus.value = (emp.payroll_status as any) || 'configured'
 
   profileSuccessMsg.value = ''
@@ -334,6 +384,20 @@ async function saveProfile() {
       regularization_date: formRegularizationDate.value.trim() || undefined,
       status: formStatus.value,
       salary_type: formSalaryType.value,
+      basic_salary: typeof formBasicSalary.value === 'number' && !isNaN(formBasicSalary.value) ? formBasicSalary.value : undefined,
+      daily_rate: typeof formDailyRate.value === 'number' && !isNaN(formDailyRate.value) ? formDailyRate.value : undefined,
+      hourly_rate: typeof formHourlyRate.value === 'number' && !isNaN(formHourlyRate.value) ? formHourlyRate.value : undefined,
+      pay_frequency: formPayFrequency.value,
+      payment_method: formPaymentMethod.value,
+      bank_name: formBankName.value.trim() || undefined,
+      bank_account_number: formBankAccountNumber.value.trim() || undefined,
+      tin: formTin.value.trim() || undefined,
+      sss_number: formSssNumber.value.trim() || undefined,
+      philhealth_number: formPhilhealthNumber.value.trim() || undefined,
+      pagibig_number: formPagibigNumber.value.trim() || undefined,
+      tax_status: formTaxStatus.value.trim() || 'Standard',
+      allowances: typeof formAllowances.value === 'number' && !isNaN(formAllowances.value) ? formAllowances.value : undefined,
+      de_minimis: typeof formDeMinimis.value === 'number' && !isNaN(formDeMinimis.value) ? formDeMinimis.value : undefined,
       payroll_status: formPayrollStatus.value
     })
 
@@ -1014,28 +1078,90 @@ onUnmounted(() => {
                   <CreditCard class="size-4 text-primary" />
                   <span>Payroll Profile</span>
                 </div>
-                <Badge variant="default" class="text-[10px] font-mono uppercase bg-primary text-primary-foreground">
-                  {{ selectedEmployee.payroll_status || 'Configured' }}
-                </Badge>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                <div>
-                  <span class="text-muted-foreground block text-[11px]">Salary Type</span>
-                  <span class="font-semibold text-foreground">{{ selectedEmployee.salary_type || 'Monthly' }} Rate</span>
-                </div>
-                <div>
-                  <span class="text-muted-foreground block text-[11px]">Linked Employee ID</span>
-                  <span class="font-mono font-semibold text-primary">{{ selectedEmployee.biometric_user_id }}</span>
-                </div>
-                <div>
-                  <span class="text-muted-foreground block text-[11px]">Payroll Module Link</span>
-                  <span class="text-emerald-700 dark:text-emerald-400 font-medium">Ready for Audited Records</span>
+                <div class="flex items-center gap-2">
+                  <Badge variant="default" class="text-[10px] font-mono uppercase bg-primary text-primary-foreground">
+                    {{ selectedEmployee.payroll_status || 'Configured' }}
+                  </Badge>
                 </div>
               </div>
-              <p class="text-[11px] text-muted-foreground leading-relaxed">
-                Financial calculations, government deductions (SSS, PhilHealth, Pag-IBIG), daily wage rates, and payslips are calculated in the Payroll module using this employee's Bio ID.
-              </p>
-              <div class="pt-1 flex items-center justify-end">
+
+              <!-- Salary & Rate Breakdown -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Basic Salary</span>
+                  <span class="font-bold text-foreground font-mono">
+                    {{ typeof selectedEmployee.basic_salary === 'number' ? `₱${selectedEmployee.basic_salary.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—' }}
+                  </span>
+                  <span class="text-[10px] text-muted-foreground block">({{ selectedEmployee.salary_type || 'Monthly' }})</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Daily Rate</span>
+                  <span class="font-semibold text-foreground font-mono">
+                    {{ typeof selectedEmployee.daily_rate === 'number' ? `₱${selectedEmployee.daily_rate.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—' }}
+                  </span>
+                  <span class="text-[10px] text-muted-foreground block">per day</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Hourly Rate</span>
+                  <span class="font-semibold text-foreground font-mono">
+                    {{ typeof selectedEmployee.hourly_rate === 'number' ? `₱${selectedEmployee.hourly_rate.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—' }}
+                  </span>
+                  <span class="text-[10px] text-muted-foreground block">per hour</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Pay Frequency</span>
+                  <span class="font-semibold text-foreground">
+                    {{ selectedEmployee.pay_frequency || 'Semi-Monthly' }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Payment & Banking Details -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs pt-1 border-t border-primary/10">
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Disbursement Method</span>
+                  <span class="font-medium text-foreground">
+                    {{ selectedEmployee.payment_method || 'Bank Transfer' }}
+                  </span>
+                  <span v-if="selectedEmployee.bank_name || selectedEmployee.bank_account_number" class="text-[11px] font-mono text-muted-foreground block">
+                    {{ selectedEmployee.bank_name || 'Bank' }}: {{ selectedEmployee.bank_account_number || '—' }}
+                  </span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[11px]">Withholding Tax Status</span>
+                  <span class="font-medium text-foreground">
+                    {{ selectedEmployee.tax_status || 'Standard (TRAIN Law)' }}
+                  </span>
+                  <span v-if="selectedEmployee.allowances || selectedEmployee.de_minimis" class="text-[11px] text-muted-foreground block font-mono">
+                    Allowances: ₱{{ (selectedEmployee.allowances || 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Statutory Government Numbers -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1 border-t border-primary/10">
+                <div>
+                  <span class="text-muted-foreground block text-[10px]">TIN</span>
+                  <span class="font-mono text-foreground text-[11px]">{{ selectedEmployee.tin || '—' }}</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[10px]">SSS Number</span>
+                  <span class="font-mono text-foreground text-[11px]">{{ selectedEmployee.sss_number || '—' }}</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[10px]">PhilHealth</span>
+                  <span class="font-mono text-foreground text-[11px]">{{ selectedEmployee.philhealth_number || '—' }}</span>
+                </div>
+                <div>
+                  <span class="text-muted-foreground block text-[10px]">Pag-IBIG / HDMF</span>
+                  <span class="font-mono text-foreground text-[11px]">{{ selectedEmployee.pagibig_number || '—' }}</span>
+                </div>
+              </div>
+
+              <div class="pt-1 flex items-center justify-between">
+                <span class="text-[11px] text-muted-foreground">
+                  Linked to hardware Bio ID: <strong class="font-mono text-primary">{{ selectedEmployee.biometric_user_id }}</strong>
+                </span>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1106,10 +1232,10 @@ onUnmounted(() => {
                   </div>
                   <div class="space-y-1">
                     <label class="text-xs font-semibold text-foreground">Birthday / Date of Birth</label>
-                    <Input
+                    <DatePicker
                       v-model="formDateOfBirth"
-                      type="date"
-                      class="h-8 text-xs"
+                      placeholder="Pick birthday"
+                      class="w-full h-8 text-xs font-normal"
                     />
                   </div>
                   <div class="space-y-1">
@@ -1288,18 +1414,18 @@ onUnmounted(() => {
                   </div>
                   <div class="space-y-1">
                     <label class="text-xs font-semibold text-foreground">Date Hired</label>
-                    <Input
+                    <DatePicker
                       v-model="formHireDate"
-                      type="date"
-                      class="h-8 text-xs"
+                      placeholder="Pick hire date"
+                      class="w-full h-8 text-xs font-normal"
                     />
                   </div>
                   <div class="space-y-1">
                     <label class="text-xs font-semibold text-foreground">Date Regularized</label>
-                    <Input
+                    <DatePicker
                       v-model="formRegularizationDate"
-                      type="date"
-                      class="h-8 text-xs"
+                      placeholder="Pick regularization date"
+                      class="w-full h-8 text-xs font-normal"
                     />
                   </div>
                   <div class="space-y-1 sm:col-span-2">
@@ -1320,42 +1446,279 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- Section 6: Payroll Configuration -->
-              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
-                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
-                  <CreditCard class="size-3.5 text-primary" />
-                  <span>Payroll Profile Setup</span>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Salary Rate Type</label>
-                    <Select v-model="formSalaryType">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Salary Type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="Monthly">Monthly Salary</SelectItem>
-                          <SelectItem value="Daily">Daily Wage</SelectItem>
-                          <SelectItem value="Hourly">Hourly Rate</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+              <!-- Section 6: Complete Master Payroll Profile Information -->
+              <div class="rounded-xl border p-3.5 space-y-4 bg-card">
+                <div class="flex items-center justify-between pb-1.5 border-b">
+                  <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                    <CreditCard class="size-3.5 text-primary" />
+                    <span>Payroll Information</span>
                   </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Payroll Status</label>
-                    <Select v-model="formPayrollStatus">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="configured">Configured</SelectItem>
-                          <SelectItem value="pending">Pending Setup</SelectItem>
-                          <SelectItem value="exempt">Exempt</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                  <span class="text-[10px] text-muted-foreground">Compensation & Statutory</span>
+                </div>
+
+                <!-- 6.1 Salary & Rate Information -->
+                <div class="space-y-2">
+                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                    <span class="flex items-center gap-1.5">
+                      <Banknote class="size-3 text-primary" />
+                      <span>Salary Information</span>
+                    </span>
+                    <button
+                      type="button"
+                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                      @click="autoCalculateRates"
+                      title="Calculate Daily and Hourly rates based on Basic Salary"
+                    >
+                      <Calculator class="size-3" />
+                      <span>Auto-calc Daily/Hourly</span>
+                    </button>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Salary Type</label>
+                      <Select v-model="formSalaryType">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Salary Type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="Monthly">Monthly Salary</SelectItem>
+                            <SelectItem value="Daily">Daily Wage</SelectItem>
+                            <SelectItem value="Hourly">Hourly Rate</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">
+                        Basic Salary / Salary Rate
+                      </label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formBasicSalary"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                          @change="autoCalculateRates"
+                        />
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Pay Frequency</label>
+                      <Select v-model="formPayFrequency">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Frequency" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="Semi-Monthly">Semi-Monthly (15th / 30th)</SelectItem>
+                            <SelectItem value="Monthly">Monthly</SelectItem>
+                            <SelectItem value="Weekly">Weekly</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Daily Rate</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formDailyRate"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Hourly Rate</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formHourlyRate"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Payroll Status</label>
+                      <Select v-model="formPayrollStatus">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="configured">Configured</SelectItem>
+                            <SelectItem value="pending">Pending Setup</SelectItem>
+                            <SelectItem value="exempt">Exempt</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 6.2 Allowances & Benefits -->
+                <div class="space-y-2 pt-1 border-t">
+                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    Allowances & Benefits (Optional)
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Fixed Allowances (Monthly)</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formAllowances"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">De Minimis Benefits</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formDeMinimis"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 6.3 Payment & Disbursement -->
+                <div class="space-y-2 pt-1 border-t">
+                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Landmark class="size-3 text-primary" />
+                    <span>Payment Method & Banking</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Payment Method</label>
+                      <Select v-model="formPaymentMethod">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Method" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                            <SelectItem value="Cash">Cash</SelectItem>
+                            <SelectItem value="Cheque">Cheque</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Bank Name</label>
+                      <Input
+                        v-model="formBankName"
+                        type="text"
+                        placeholder="e.g. BDO, BPI, Metrobank"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Bank Account Number</label>
+                      <Input
+                        v-model="formBankAccountNumber"
+                        type="text"
+                        placeholder="e.g. 1234-5678-9012"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 6.4 Statutory & Government IDs -->
+                <div class="space-y-2 pt-1 border-t">
+                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Fingerprint class="size-3 text-primary" />
+                    <span>Statutory & Tax Identification</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">TIN (Tax ID Number)</label>
+                      <Input
+                        v-model="formTin"
+                        type="text"
+                        placeholder="e.g. 123-456-789-000"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">SSS Number</label>
+                      <Input
+                        v-model="formSssNumber"
+                        type="text"
+                        placeholder="e.g. 03-1234567-8"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">PhilHealth Number</label>
+                      <Input
+                        v-model="formPhilhealthNumber"
+                        type="text"
+                        placeholder="e.g. 12-345678901-2"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Pag-IBIG / HDMF Number</label>
+                      <Input
+                        v-model="formPagibigNumber"
+                        type="text"
+                        placeholder="e.g. 1234-5678-9012"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+
+                    <div class="space-y-1 sm:col-span-2 lg:col-span-2">
+                      <label class="text-xs font-semibold text-foreground">Tax Status / Withholding</label>
+                      <Select v-model="formTaxStatus">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Tax Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="Standard">Standard (TRAIN Law Tax Table)</SelectItem>
+                            <SelectItem value="Minimum Wage Earner">Minimum Wage Earner (Tax Exempt)</SelectItem>
+                            <SelectItem value="Single">Single / Zero Exemption</SelectItem>
+                            <SelectItem value="Married">Married</SelectItem>
+                            <SelectItem value="Exempt">Special Exempt</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
               </div>

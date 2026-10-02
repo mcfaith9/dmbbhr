@@ -591,6 +591,19 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     return undefined
   }
 
+  // Helper for optional number fields (returns valid positive number or undefined)
+  const getOptNumber = (...vals: any[]): number | undefined => {
+    for (const v of vals) {
+      if (v !== undefined && v !== null && v !== '') {
+        const num = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.-]+/g, ''))
+        if (!isNaN(num) && isFinite(num)) {
+          return num
+        }
+      }
+    }
+    return undefined
+  }
+
   const cleanPreferredName = getOptString(input.preferredName, input.preferred_name)
   const cleanDob = getOptString(input.dateOfBirth, input.date_of_birth, input.birthday, input.dob)
   const cleanGender = getOptString(input.gender)
@@ -619,6 +632,31 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   if (rawSalaryType === 'Monthly' || rawSalaryType === 'Daily' || rawSalaryType === 'Hourly') {
     cleanSalaryType = rawSalaryType
   }
+
+  const cleanBasicSalary = getOptNumber(input.basicSalary, input.basic_salary, input.salaryRate, input.salary_rate)
+  const cleanDailyRate = getOptNumber(input.dailyRate, input.daily_rate)
+  const cleanHourlyRate = getOptNumber(input.hourlyRate, input.hourly_rate)
+  const rawPayFrequency = getOptString(input.payFrequency, input.pay_frequency, input.payrollSchedule, input.payroll_schedule)
+  let cleanPayFrequency: 'Semi-Monthly' | 'Monthly' | 'Weekly' | undefined = undefined
+  if (rawPayFrequency === 'Semi-Monthly' || rawPayFrequency === 'Monthly' || rawPayFrequency === 'Weekly') {
+    cleanPayFrequency = rawPayFrequency
+  }
+  const rawPaymentMethod = getOptString(input.paymentMethod, input.payment_method)
+  let cleanPaymentMethod: 'Bank Transfer' | 'Cash' | 'Cheque' | undefined = undefined
+  if (rawPaymentMethod === 'Bank Transfer' || rawPaymentMethod === 'Cash' || rawPaymentMethod === 'Cheque') {
+    cleanPaymentMethod = rawPaymentMethod
+  }
+  const cleanBankName = getOptString(input.bankName, input.bank_name)
+  const cleanBankAccountNumber = getOptString(input.bankAccountNumber, input.bank_account_number, input.bankAccount, input.bank_account)
+  const cleanAllowances = getOptNumber(input.allowances, input.allowance)
+  const cleanDeMinimis = getOptNumber(input.deMinimis, input.de_minimis)
+
+  const cleanSalaryEffectiveDate = getOptString(input.salaryEffectiveDate, input.salary_effective_date, input.effectiveDate, input.effective_date)
+  const cleanSssNumber = getOptString(input.sssNumber, input.sss_number, input.sss)
+  const cleanPhilhealthNumber = getOptString(input.philhealthNumber, input.philhealth_number, input.philhealth)
+  const cleanPagibigNumber = getOptString(input.pagibigNumber, input.pagibig_number, input.pagibig)
+  const cleanTin = getOptString(input.tin, input.tinNumber, input.tin_number)
+  const cleanTaxStatus = getOptString(input.taxStatus, input.tax_status)
 
   // Extract Created / Updated Dates (primitive ISO strings only)
   let cleanCreatedAt = new Date().toISOString()
@@ -655,6 +693,21 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     status: cleanStatus,
     payrollStatus: cleanPayrollStatus,
     salaryType: cleanSalaryType,
+    basicSalary: cleanBasicSalary,
+    dailyRate: cleanDailyRate,
+    hourlyRate: cleanHourlyRate,
+    payFrequency: cleanPayFrequency,
+    paymentMethod: cleanPaymentMethod,
+    bankName: cleanBankName,
+    bankAccountNumber: cleanBankAccountNumber,
+    allowances: cleanAllowances,
+    deMinimis: cleanDeMinimis,
+    salaryEffectiveDate: cleanSalaryEffectiveDate,
+    sssNumber: cleanSssNumber,
+    philhealthNumber: cleanPhilhealthNumber,
+    pagibigNumber: cleanPagibigNumber,
+    tin: cleanTin,
+    taxStatus: cleanTaxStatus,
     createdAt: cleanCreatedAt,
     updatedAt: cleanUpdatedAt
   }
@@ -706,6 +759,21 @@ export const employeeRepository = {
       status: rec.status,
       payroll_status: rec.payrollStatus,
       salary_type: rec.salaryType,
+      basic_salary: rec.basicSalary,
+      daily_rate: rec.dailyRate,
+      hourly_rate: rec.hourlyRate,
+      pay_frequency: rec.payFrequency || 'Semi-Monthly',
+      payment_method: rec.paymentMethod || 'Bank Transfer',
+      bank_name: rec.bankName,
+      bank_account_number: rec.bankAccountNumber,
+      allowances: rec.allowances,
+      de_minimis: rec.deMinimis,
+      salary_effective_date: rec.salaryEffectiveDate,
+      sss_number: rec.sssNumber,
+      philhealth_number: rec.philhealthNumber,
+      pagibig_number: rec.pagibigNumber,
+      tin: rec.tin,
+      tax_status: rec.taxStatus,
       created_at: rec.createdAt,
       updated_at: rec.updatedAt
     }
@@ -791,6 +859,27 @@ export const employeeRepository = {
       regularization_date?: string
       payroll_status?: 'configured' | 'pending' | 'exempt'
       salary_type?: 'Monthly' | 'Daily' | 'Hourly'
+      basic_salary?: number
+      basicSalary?: number
+      daily_rate?: number
+      dailyRate?: number
+      hourly_rate?: number
+      hourlyRate?: number
+      salary_effective_date?: string
+      salaryEffectiveDate?: string
+      effectiveDate?: string
+      effective_date?: string
+      sss_number?: string
+      sssNumber?: string
+      philhealth_number?: string
+      philhealthNumber?: string
+      pagibig_number?: string
+      pagibigNumber?: string
+      tin?: string
+      tinNumber?: string
+      tin_number?: string
+      tax_status?: string
+      taxStatus?: string
     }
   ): Promise<Employee> {
     await ensureInitialized()
