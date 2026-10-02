@@ -10,6 +10,7 @@ import {
 import { punchRepository } from './punchRepository'
 import { employeeRepository } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
+import { manualAttendanceRepository } from './manualAttendanceRepository'
 
 export const attendanceRepository = {
   /**
@@ -42,8 +43,11 @@ export const attendanceRepository = {
       userGroups.get(uid)!.push(p)
     }
 
-    const employeeMap = await employeeRepository.getEmployeeMap()
-    const workGroupMap = await workGroupRepository.getMap()
+    const [employeeMap, workGroupMap, manualAdjustmentsMap] = await Promise.all([
+      employeeRepository.getEmployeeMap(),
+      workGroupRepository.getMap(),
+      manualAttendanceRepository.getAdjustmentsMapForDate(selectedDate)
+    ])
     const records: DailyAttendanceRecord[] = []
 
     // 3. Process each employee's daily punches with Work Group context
@@ -52,6 +56,7 @@ export const attendanceRepository = {
       const empLocation = emp?.location || punches[0].location_name || 'DBB CEBU'
       const empWgId = emp?.workGroupId || 'wg-group-c'
       const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
+      const manualAdj = manualAdjustmentsMap.get(bioId)
 
       // Location filter
       if (locationFilter && locationFilter !== 'all') {
@@ -86,7 +91,8 @@ export const attendanceRepository = {
         requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
         lunchStart: wg?.lunchStart || '12:00',
         lunchEnd: wg?.lunchEnd || '13:00',
-        gracePeriodMinutes: wg?.gracePeriodMinutes || 15
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
+        manualAdjustment: manualAdj
       }
 
       const dailyRecord = processEmployeeDayPunches(bioId, punches, selectedDate, empContext, customConfig)
@@ -115,7 +121,7 @@ export const attendanceRepository = {
     const presentCount = records.length
     const onTimeCount = records.filter(r => r.late_minutes === 0 && r.has_valid_out).length
     const lateCount = records.filter(r => r.late_minutes > 0).length
-    const singlePunchCount = records.filter(r => r.status === 'Single Punch (No OUT)').length
+    const singlePunchCount = records.filter(r => r.status.startsWith('Single Punch') || r.status.includes('Missing IN') || r.status.includes('Ambiguous')).length
     const awaitingOutCount = records.filter(r => r.status === 'Awaiting OUT').length
     const leaveCount = records.filter(r => r.status === 'On Leave').length
     const holidayCount = records.filter(r => r.status === 'Holiday').length

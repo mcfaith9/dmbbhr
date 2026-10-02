@@ -79,15 +79,23 @@ class LiveAttendanceService {
     this.connect()
   }
 
-  private getWsUrl(): string {
+  private getWsUrl(): string | null {
     if (import.meta.env.VITE_AGENT_WS_URL) {
       return import.meta.env.VITE_AGENT_WS_URL
     }
-    const host = window.location.hostname || 'localhost'
-    return `ws://${host}:5174`
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname || 'localhost'
+      // If running over HTTPS or on a remote cloud preview domain without an explicit agent URL,
+      // the local LAN agent is not directly reachable over insecure WS.
+      if (window.location.protocol === 'https:' || (host !== 'localhost' && host !== '127.0.0.1' && !host.endsWith('.local'))) {
+        return null
+      }
+      return `ws://${host}:5174`
+    }
+    return 'ws://localhost:5174'
   }
 
-  private getHttpBaseUrl(): string {
+  private getHttpBaseUrl(): string | null {
     if (import.meta.env.VITE_AGENT_WS_URL) {
       try {
         const u = new URL(import.meta.env.VITE_AGENT_WS_URL)
@@ -96,15 +104,23 @@ class LiveAttendanceService {
         // fallback
       }
     }
-    const host = window.location.hostname || 'localhost'
-    return `http://${host}:5174`
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname || 'localhost'
+      if (window.location.protocol === 'https:' || (host !== 'localhost' && host !== '127.0.0.1' && !host.endsWith('.local'))) {
+        return null
+      }
+      return `http://${host}:5174`
+    }
+    return 'http://localhost:5174'
   }
 
   private hasInitialSynced = false
 
   public async fetchHttpSync() {
+    const httpBase = this.getHttpBaseUrl()
+    if (!httpBase) return
+
     try {
-      const httpBase = this.getHttpBaseUrl()
       const statusRes = await fetch(`${httpBase}/api/device/status`, { signal: AbortSignal.timeout(2000) })
       if (statusRes.ok) {
         const data = await statusRes.json()
@@ -161,6 +177,13 @@ class LiveAttendanceService {
 
     this.cleanupSocket()
     const url = this.getWsUrl()
+    if (!url) {
+      this.isAgentConnected.value = false
+      this.deviceStatus.value.status = 'offline'
+      this.deviceStatus.value.reason = 'Biometric agent is accessible on local network or via VITE_AGENT_WS_URL'
+      this.notifyStatusListeners()
+      return
+    }
 
     try {
       this.socket = new WebSocket(url)
@@ -361,6 +384,16 @@ class LiveAttendanceService {
 
     try {
       const httpBase = this.getHttpBaseUrl()
+      if (!httpBase) {
+        const errorMsg = 'Local biometric agent is unreachable from cloud preview. Please configure VITE_AGENT_WS_URL or run on your local network.'
+        this.syncProgress.value = {
+          stage: 'error',
+          message: errorMsg,
+          progress: 0
+        }
+        this.isSyncing.value = false
+        return { success: false, message: errorMsg }
+      }
       const res = await fetch(`${httpBase}/api/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

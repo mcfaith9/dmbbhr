@@ -20,7 +20,8 @@ import {
 import {
   punchRepository,
   attendanceRepository,
-  workGroupRepository
+  workGroupRepository,
+  manualAttendanceRepository
 } from '@/repositories'
 
 export { getManilaDateString, formatManilaTime, type DailyAttendanceRecord, type AttendanceEngineConfig }
@@ -43,6 +44,27 @@ export const attendanceService = {
     customConfig: Partial<AttendanceEngineConfig> = {}
   ): Promise<DailyAttendanceRecord[]> {
     return attendanceRepository.getDailyAttendance(targetDate, locationFilter, workGroupFilter, customConfig)
+  },
+
+  /**
+   * Saves an approved manual / paper request adjustment
+   */
+  async saveManualAdjustment(data: {
+    bioId: string
+    date: string
+    manualIn?: string
+    manualOut?: string
+    reason: string
+    approvedBy?: string
+  }) {
+    return manualAttendanceRepository.saveAdjustment(data)
+  },
+
+  /**
+   * Deletes a manual adjustment
+   */
+  async deleteManualAdjustment(bioId: string, date: string) {
+    return manualAttendanceRepository.deleteAdjustment(bioId, date)
   },
 
   /**

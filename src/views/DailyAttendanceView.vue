@@ -1,212 +1,275 @@
-  <script setup lang="ts">
-  import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-  import {
-    Clock,
-    RefreshCw,
-    Calendar as CalendarIcon,
-    CheckCircle2,
-    AlertCircle,
-    Radio,
-    Users,
-    Search,
-    X,
-    MapPin,
-    Boxes,
-    ArrowDownUp
-  } from '@lucide/vue'
-  import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
-  import { liveAttendanceService } from '@/services/liveAttendance'
-  import { employeeService, VALID_LOCATIONS } from '@/services/employees'
-  import type { WorkGroup } from '@/types'
-  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-  import { Badge } from '@/components/ui/badge'
-  import { Button } from '@/components/ui/button'
-  import { Input } from '@/components/ui/input'
-  import {
-    Select,
-    SelectContent,
-    SelectGroup,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-  } from '@/components/ui/select'
-  import { DatePicker } from '@/components/ui/date-picker'
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import {
+  Clock,
+  RefreshCw,
+  Calendar as CalendarIcon,
+  CheckCircle2,
+  AlertCircle,
+  Radio,
+  Users,
+  Search,
+  X,
+  MapPin,
+  Boxes,
+  ArrowDownUp,
+  Layers,
+  AlertTriangle,
+  FileText,
+  Info,
+  Trash2
+} from '@lucide/vue'
+import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
+import { liveAttendanceService } from '@/services/liveAttendance'
+import { VALID_LOCATIONS } from '@/services/employees'
+import type { WorkGroup } from '@/types'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import { DatePicker } from '@/components/ui/date-picker'
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent
+} from '@/components/ui/popover'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from '@/components/ui/dialog'
 
-  // Real device status and sync state
-  const deviceStatus = liveAttendanceService.deviceStatus
-  const isSyncing = liveAttendanceService.isSyncing
-  const syncProgress = liveAttendanceService.syncProgress
+// Real device status and sync state
+const deviceStatus = liveAttendanceService.deviceStatus
+const isSyncing = liveAttendanceService.isSyncing
+const syncProgress = liveAttendanceService.syncProgress
 
-  // Default to Today in Philippine Standard Time
-  const todayDateStr = getManilaDateString(new Date())
-  const yesterdayDateStr = computed(() => {
-    const y = new Date()
-    y.setDate(y.getDate() - 1)
-    return getManilaDateString(y)
-  })
-  const selectedDate = ref<string>(todayDateStr)
-  const selectedLocation = ref<string>('all')
-  const selectedWorkGroup = ref<string>('all')
-  const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
-  const searchQuery = ref<string>('')
-  const loading = ref<boolean>(false)
-  const dailyRecords = ref<DailyAttendanceRecord[]>([])
-  const workGroups = ref<WorkGroup[]>([])
+// Default to Today in Philippine Standard Time
+const todayDateStr = getManilaDateString(new Date())
+const yesterdayDateStr = computed(() => {
+  const y = new Date()
+  y.setDate(y.getDate() - 1)
+  return getManilaDateString(y)
+})
+const selectedDate = ref<string>(todayDateStr)
+const selectedLocation = ref<string>('all')
+const selectedWorkGroup = ref<string>('all')
+const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
+const searchQuery = ref<string>('')
+const loading = ref<boolean>(false)
+const dailyRecords = ref<DailyAttendanceRecord[]>([])
+const workGroups = ref<WorkGroup[]>([])
 
-  async function loadLookups() {
-    workGroups.value = await attendanceService.getWorkGroups()
+// Manual Adjustment Dialog State
+const isAdjustmentDialogOpen = ref(false)
+const adjustmentRow = ref<DailyAttendanceRecord | null>(null)
+const manualInTime = ref('08:00 AM')
+const manualReason = ref('')
+const isSavingAdjustment = ref(false)
+
+async function loadLookups() {
+  workGroups.value = await attendanceService.getWorkGroups()
+}
+
+let refreshTimer: any = null
+let isExecutingReload = false
+let hasPendingReload = false
+
+async function executeDailyAttendance() {
+  if (isExecutingReload) {
+    hasPendingReload = true
+    return
   }
-
-  let refreshTimer: any = null
-  let isExecutingReload = false
-  let hasPendingReload = false
-
-  async function executeDailyAttendance() {
-    if (isExecutingReload) {
-      hasPendingReload = true
-      return
-    }
-    isExecutingReload = true
-    hasPendingReload = false
-    loading.value = true
-    try {
-      const records = await attendanceService.getDailyAttendance(
-        selectedDate.value,
-        selectedLocation.value,
-        selectedWorkGroup.value
-      )
-      dailyRecords.value = records
-    } finally {
-      loading.value = false
-      isExecutingReload = false
-      if (hasPendingReload) {
-        hasPendingReload = false
-        executeDailyAttendance()
-      }
-    }
-  }
-
-  function triggerCoalescedRefresh(immediate = false) {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-    if (immediate) {
+  isExecutingReload = true
+  hasPendingReload = false
+  loading.value = true
+  try {
+    const records = await attendanceService.getDailyAttendance(
+      selectedDate.value,
+      selectedLocation.value,
+      selectedWorkGroup.value
+    )
+    dailyRecords.value = records
+  } finally {
+    loading.value = false
+    isExecutingReload = false
+    if (hasPendingReload) {
+      hasPendingReload = false
       executeDailyAttendance()
-    } else {
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null
-        executeDailyAttendance()
-      }, 120)
     }
   }
+}
 
-  function loadDailyAttendance() {
-    triggerCoalescedRefresh(true)
+function triggerCoalescedRefresh(immediate = false) {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer)
+    refreshTimer = null
   }
-
-  watch([selectedLocation, selectedWorkGroup], () => {
-    triggerCoalescedRefresh(true)
-  })
-
-  async function handleManualSync() {
-    await liveAttendanceService.triggerManualSync()
-    triggerCoalescedRefresh(true)
-  }
-
-  function setDateQuick(range: 'today' | 'yesterday') {
-    if (range === 'today') {
-      selectedDate.value = todayDateStr
-    } else {
-      selectedDate.value = yesterdayDateStr.value
-    }
-
-    triggerCoalescedRefresh(true)
-  }
-
-  const filteredRecords = computed(() => {
-    let list = dailyRecords.value
-    if (searchQuery.value.trim()) {
-      const q = searchQuery.value.trim().toLowerCase()
-      list = list.filter(r =>
-        r.biometric_user_id.toLowerCase().includes(q) ||
-        r.employee_name.toLowerCase().includes(q) ||
-        (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
-      )
-    }
-
-    const sorted = [...list]
-    if (selectedSort.value === 'newest') {
-      sorted.sort((a, b) => {
-        const diff = (b.latest_punch_time_ms || 0) - (a.latest_punch_time_ms || 0)
-        if (diff !== 0) return diff
-        return a.employee_name.localeCompare(b.employee_name)
-      })
-    } else if (selectedSort.value === 'earliest') {
-      sorted.sort((a, b) => {
-        const diff = (a.first_punch_time_ms || 0) - (b.first_punch_time_ms || 0)
-        if (diff !== 0) return diff
-        return a.employee_name.localeCompare(b.employee_name)
-      })
-    } else if (selectedSort.value === 'name') {
-      sorted.sort((a, b) => a.employee_name.localeCompare(b.employee_name))
-    } else if (selectedSort.value === 'late') {
-      sorted.sort((a, b) => b.late_minutes - a.late_minutes)
-    }
-    return sorted
-  })
-
-  const stats = computed(() => {
-    const total = filteredRecords.value.length
-    const late = filteredRecords.value.filter(r => r.late_minutes > 0).length
-    const onTime = filteredRecords.value.filter(r => r.late_minutes === 0 && r.has_valid_out).length
-    const awaitingOut = filteredRecords.value.filter(r => r.status === 'Awaiting OUT').length
-    const singlePunchNoOut = filteredRecords.value.filter(r => r.status === 'Single Punch (No OUT)').length
-    return { total, late, onTime, awaitingOut, singlePunchNoOut }
-  })
-
-  const displayDateTitle = computed(() => {
-    if (selectedDate.value === todayDateStr) {
-      return 'Today'
-    }
-    const y = new Date()
-    y.setDate(y.getDate() - 1)
-    if (selectedDate.value === getManilaDateString(y)) {
-      return 'Yesterday'
-    }
-    return selectedDate.value
-  })
-
-  let unSubLogs: (() => void) | null = null
-  let unSubScan: (() => void) | null = null
-  let unSubEmployees: (() => void) | null = null
-
-  onMounted(async () => {
-    await loadLookups()
+  if (immediate) {
     executeDailyAttendance()
-    liveAttendanceService.connect()
-
-    unSubLogs = liveAttendanceService.onLogs(() => {
-      triggerCoalescedRefresh(false)
-    })
-    unSubScan = liveAttendanceService.onScan(() => {
-      triggerCoalescedRefresh(false)
-    })
-    unSubEmployees = employeeService.onEmployeesChanged(() => {
-      triggerCoalescedRefresh(false)
-    })
-  })
-
-  onUnmounted(() => {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer)
+  } else {
+    refreshTimer = setTimeout(() => {
       refreshTimer = null
-    }
-    if (unSubLogs) unSubLogs()
-    if (unSubScan) unSubScan()
-    if (unSubEmployees) unSubEmployees()
+      executeDailyAttendance()
+    }, 120)
+  }
+}
+
+watch([selectedLocation, selectedWorkGroup], () => {
+  triggerCoalescedRefresh(true)
+})
+
+watch(selectedDate, () => {
+  triggerCoalescedRefresh(true)
+})
+
+async function handleManualSync() {
+  await liveAttendanceService.triggerManualSync()
+  triggerCoalescedRefresh(true)
+}
+
+function setDateQuick(range: 'today' | 'yesterday') {
+  if (range === 'today') {
+    selectedDate.value = todayDateStr
+  } else {
+    selectedDate.value = yesterdayDateStr.value
+  }
+}
+
+const filteredRecords = computed(() => {
+  let list = dailyRecords.value
+
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase().trim()
+    list = list.filter(r =>
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      r.employee_name.toLowerCase().includes(q) ||
+      r.work_group_name.toLowerCase().includes(q) ||
+      r.location.toLowerCase().includes(q)
+    )
+  }
+
+  const sorted = [...list]
+  if (selectedSort.value === 'newest') {
+    sorted.sort((a, b) => {
+      const diff = (b.latest_punch_time_ms || 0) - (a.latest_punch_time_ms || 0)
+      if (diff !== 0) return diff
+      return a.employee_name.localeCompare(b.employee_name)
+    })
+  } else if (selectedSort.value === 'earliest') {
+    sorted.sort((a, b) => {
+      const diff = (a.first_punch_time_ms || 0) - (b.first_punch_time_ms || 0)
+      if (diff !== 0) return diff
+      return a.employee_name.localeCompare(b.employee_name)
+    })
+  } else if (selectedSort.value === 'name') {
+    sorted.sort((a, b) => a.employee_name.localeCompare(b.employee_name))
+  } else if (selectedSort.value === 'late') {
+    sorted.sort((a, b) => b.late_minutes - a.late_minutes)
+  }
+  return sorted
+})
+
+const stats = computed(() => {
+  const total = filteredRecords.value.length
+  const late = filteredRecords.value.filter(r => r.late_minutes > 0).length
+  const onTime = filteredRecords.value.filter(r => r.late_minutes === 0 && r.has_valid_out && !r.is_missing_in).length
+  const awaitingOut = filteredRecords.value.filter(r => r.status === 'Awaiting OUT').length
+  const singlePunchNoOut = filteredRecords.value.filter(r => r.status === 'Single Punch — No OUT').length
+  const likelyOutMissingIn = filteredRecords.value.filter(r => r.status === 'Likely OUT — Missing IN' || r.is_missing_in).length
+  const duplicateScans = filteredRecords.value.filter(r => (r.duplicate_punches_count || 0) > 0).length
+  return { total, late, onTime, awaitingOut, singlePunchNoOut, likelyOutMissingIn, duplicateScans }
+})
+
+const displayDateTitle = computed(() => {
+  if (selectedDate.value === todayDateStr) {
+    return 'Today'
+  }
+  const y = new Date()
+  y.setDate(y.getDate() - 1)
+  if (selectedDate.value === getManilaDateString(y)) {
+    return 'Yesterday'
+  }
+  return selectedDate.value
+})
+
+function openAdjustmentModal(row: DailyAttendanceRecord) {
+  adjustmentRow.value = row
+  manualInTime.value = row.expected_in || '08:00 AM'
+  manualReason.value = row.manual_adjustment_reason || 'Approved Paper Slip / Manual Request'
+  isAdjustmentDialogOpen.value = true
+}
+
+async function handleSaveAdjustment() {
+  if (!adjustmentRow.value) return
+  isSavingAdjustment.value = true
+  try {
+    await attendanceService.saveManualAdjustment({
+      bioId: adjustmentRow.value.biometric_user_id,
+      date: adjustmentRow.value.raw_date,
+      manualIn: manualInTime.value.trim(),
+      reason: manualReason.value.trim() || 'Paper Slip / Manual Request',
+      approvedBy: 'Admin'
+    })
+    isAdjustmentDialogOpen.value = false
+    triggerCoalescedRefresh(true)
+  } finally {
+    isSavingAdjustment.value = false
+  }
+}
+
+async function handleDeleteAdjustment() {
+  if (!adjustmentRow.value) return
+  isSavingAdjustment.value = true
+  try {
+    await attendanceService.deleteManualAdjustment(
+      adjustmentRow.value.biometric_user_id,
+      adjustmentRow.value.raw_date
+    )
+    isAdjustmentDialogOpen.value = false
+    triggerCoalescedRefresh(true)
+  } finally {
+    isSavingAdjustment.value = false
+  }
+}
+
+let unSubLogs: (() => void) | null = null
+let unSubScan: (() => void) | null = null
+
+onMounted(async () => {
+  await loadLookups()
+  executeDailyAttendance()
+  liveAttendanceService.connect()
+
+  unSubLogs = liveAttendanceService.onLogs(() => {
+    triggerCoalescedRefresh(false)
   })
-  </script>
+
+  unSubScan = liveAttendanceService.onScan(() => {
+    triggerCoalescedRefresh(false)
+  })
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
+  if (unSubLogs) unSubLogs()
+  if (unSubScan) unSubScan()
+})
+</script>
 
 <template>
   <div class="space-y-4">
@@ -235,7 +298,7 @@
           </Badge>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Dynamic Work Group evaluation (6am-3pm, 7am-4pm, 8am-5pm) with automatic lunch exclusion (12pm-1pm).
+          Dynamic Work Group evaluation with duplicate scan clustering, schedule awareness, and missing punch detection.
         </p>
       </div>
 
@@ -339,8 +402,7 @@
         <div class="flex items-center gap-2 shrink-0">
           <DatePicker
             v-model="selectedDate"
-            class="w-[220px]"
-            @change="loadDailyAttendance"
+            class="w-full text-xs h-8"
           />
         </div>
       </div>
@@ -368,6 +430,18 @@
           <span v-else class="text-muted-foreground">
             {{ stats.singlePunchNoOut }} no OUT
           </span>
+          <template v-if="stats.likelyOutMissingIn > 0">
+            <span>•</span>
+            <span class="text-rose-600 dark:text-rose-400 font-semibold">
+              {{ stats.likelyOutMissingIn }} missing IN
+            </span>
+          </template>
+          <template v-if="stats.duplicateScans > 0">
+            <span>•</span>
+            <span class="text-purple-600 dark:text-purple-400 font-semibold">
+              {{ stats.duplicateScans }} with repeated scans
+            </span>
+          </template>
         </div>
       </div>
     </div>
@@ -466,8 +540,8 @@
       <Table v-else>
         <TableHeader>
           <TableRow class="bg-muted/40">
-            <TableHead class="font-semibold w-[80px]">BIO ID</TableHead>
-            <TableHead class="font-semibold">Employee</TableHead>
+            <TableHead class="font-semibold w-[90px]">BIO ID</TableHead>
+            <TableHead class="font-semibold min-w-[170px]">Employee</TableHead>
             <TableHead class="font-semibold">Location</TableHead>
             <TableHead class="font-semibold">Work Group</TableHead>
             <TableHead class="font-semibold">Expected IN / OUT</TableHead>
@@ -477,17 +551,92 @@
             <TableHead class="font-semibold text-center">Late</TableHead>
             <TableHead class="font-semibold text-center">Early Out</TableHead>
             <TableHead class="font-semibold text-right">Status</TableHead>
+            <TableHead class="font-semibold text-right w-[80px]">Action</TableHead>
           </TableRow>
         </TableHeader>
 
         <TableBody>
           <TableRow v-for="row in filteredRecords" :key="row.id">
+            <!-- BIO ID -->
             <TableCell class="font-mono font-medium text-foreground">                
               <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
                 {{ row.biometric_user_id }}
               </span>
             </TableCell>
-            <TableCell class="font-medium text-foreground text-xs">{{ row.employee_name }}</TableCell>
+
+            <!-- Employee Name & Scans Indicator -->
+            <TableCell class="text-xs">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-medium text-foreground">{{ row.employee_name }}</span>
+
+                <!-- Duplicate / Multi-Scan Popover Indicator -->
+                <Popover v-if="row.raw_punches_count > 1">
+                  <PopoverTrigger as-child>
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-300/40 hover:bg-purple-500/20 transition-colors cursor-pointer"
+                      :title="`Click to audit all ${row.raw_punches_count} biometric scans`"
+                    >
+                      <Layers class="size-2.5" />
+                      <span>{{ row.raw_punches_count }} scans</span>
+                      <span v-if="row.duplicate_punches_count > 0" class="text-[9px] opacity-75">
+                        ({{ row.duplicate_punches_count }} dup)
+                      </span>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent class="w-84 p-3 text-xs shadow-lg" align="start">
+                    <div class="space-y-2">
+                      <div class="border-b pb-1.5 flex items-center justify-between">
+                        <div>
+                          <div class="font-semibold text-foreground">Biometric Scans Audit</div>
+                          <div class="text-[11px] text-muted-foreground">{{ row.employee_name }}</div>
+                        </div>
+                        <Badge variant="outline" class="font-mono text-[10px]">
+                          {{ row.raw_punches_count }} total scans
+                        </Badge>
+                      </div>
+
+                      <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        <div
+                          v-for="scan in row.scan_breakdown"
+                          :key="scan.id"
+                          class="flex items-center justify-between p-1.5 rounded-md border text-[11px]"
+                          :class="scan.isPrimary ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-muted/40 border-muted'"
+                        >
+                          <div class="flex items-center gap-1.5">
+                            <span class="font-mono font-semibold" :class="scan.isPrimary ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'">
+                              {{ scan.timeFormatted }}
+                            </span>
+                            <span
+                              v-if="scan.isPrimary"
+                              class="px-1 py-0.2 rounded text-[9px] font-semibold bg-emerald-500/20 text-emerald-800 dark:text-emerald-200"
+                            >
+                              Primary
+                            </span>
+                            <span
+                              v-else
+                              class="px-1 py-0.2 rounded text-[9px] bg-muted text-muted-foreground"
+                            >
+                              Duplicate (+{{ scan.diffSeconds }}s)
+                            </span>
+                          </div>
+                          <span class="font-mono text-[9px] text-muted-foreground truncate max-w-[100px]" :title="scan.deviceName">
+                            {{ scan.deviceName || 'BISBIO B-29b' }}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="pt-1 text-[10px] text-muted-foreground border-t flex items-center gap-1">
+                        <Info class="size-3 shrink-0 text-muted-foreground" />
+                        <span>First valid punch in each window is primary. Raw records are preserved in logs.</span>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </TableCell>
+
+            <!-- Location -->
             <TableCell class="text-xs">
               <span class="inline-flex items-center gap-1 font-medium text-foreground">
                 <MapPin class="size-3 text-emerald-600 dark:text-emerald-400" />
@@ -511,8 +660,26 @@
             </TableCell>
 
             <!-- Actual IN -->
-            <TableCell class="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-              {{ row.actual_in }}
+            <TableCell class="text-xs">
+              <!-- Case: Missing IN (Likely OUT) -->
+              <div v-if="row.is_missing_in" class="flex flex-col gap-0.5">
+                <span class="text-amber-600 dark:text-amber-400 font-sans font-medium text-[11px] inline-flex items-center gap-1">
+                  <AlertTriangle class="size-3 shrink-0 text-amber-500" />
+                  Missing (Manual Request)
+                </span>
+                <span class="text-[10px] text-muted-foreground">Punch occurred near shift end</span>
+              </div>
+
+              <!-- Case: Approved Manual / Paper Adjustment -->
+              <div v-else-if="row.is_manual_adjustment" class="flex items-center gap-1 font-mono text-sky-600 dark:text-sky-400 font-semibold" :title="row.manual_adjustment_reason">
+                <FileText class="size-3 shrink-0 text-sky-500" />
+                <span>{{ row.actual_in }}</span>
+              </div>
+
+              <!-- Case: Standard Biometric IN -->
+              <span v-else class="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                {{ row.actual_in }}
+              </span>
             </TableCell>
 
             <!-- Actual OUT -->
@@ -551,22 +718,128 @@
               </span>
             </TableCell>
 
-            <!-- Distinct Clean Status Column -->
+            <!-- Distinct Status Column -->
             <TableCell class="text-right">
               <Badge
                 :variant="
-                  row.status === 'Regular Day'
-                    ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
-                    : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline')
+                  row.status === 'Likely OUT — Missing IN'
+                    ? 'destructive'
+                    : (row.status === 'Manual / Paper IN'
+                      ? 'secondary'
+                      : (row.status === 'Regular Day'
+                        ? (row.late_minutes > 0 || row.early_out_minutes > 0 ? 'warning' : 'success')
+                        : (row.status === 'Awaiting OUT' ? 'secondary' : 'outline')))
                 "
-                class="text-[10px]"
+                class="text-[10px] gap-1"
               >
-                {{ row.status }}
+                <AlertTriangle v-if="row.status === 'Likely OUT — Missing IN'" class="size-2.5" />
+                <FileText v-else-if="row.status === 'Manual / Paper IN'" class="size-2.5" />
+                <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" />
+                <span>{{ row.status }}</span>
               </Badge>
+            </TableCell>
+
+            <!-- Action: Manual Adjustment / Paper Slip -->
+            <TableCell class="text-right">
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 px-2 text-[11px] gap-1 hover:bg-muted text-muted-foreground hover:text-foreground"
+                :title="row.is_manual_adjustment ? 'Edit manual adjustment' : 'Record official paper slip / manual time-in'"
+                @click="openAdjustmentModal(row)"
+              >
+                <FileText class="size-3" />
+                <span>{{ row.is_manual_adjustment ? 'Adjusted' : 'Adjust' }}</span>
+              </Button>
             </TableCell>
           </TableRow>
         </TableBody>
       </Table>
     </div>
+
+    <!-- Manual Attendance Adjustment Dialog -->
+    <Dialog v-model:open="isAdjustmentDialogOpen">
+      <DialogContent class="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2">
+            <FileText class="size-4 text-primary" />
+            <span>Manual Attendance Adjustment</span>
+          </DialogTitle>
+          <DialogDescription>
+            Record or update an authorized paper time-in / manual request for
+            <strong>{{ adjustmentRow?.employee_name }}</strong> on {{ adjustmentRow?.date }}.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="grid gap-3 py-2 text-xs">
+          <!-- Expected Shift Info -->
+          <div class="p-2.5 rounded-md border bg-muted/40 space-y-1">
+            <div class="text-[11px] text-muted-foreground">Work Group & Expected Hours:</div>
+            <div class="font-medium text-foreground">
+              {{ adjustmentRow?.work_group_name }} ({{ adjustmentRow?.expected_in }} → {{ adjustmentRow?.expected_out }})
+            </div>
+            <div v-if="adjustmentRow?.actual_out !== '-'" class="text-[11px] text-blue-600 dark:text-blue-400">
+              Biometric OUT Recorded: <strong>{{ adjustmentRow?.actual_out }}</strong>
+            </div>
+          </div>
+
+          <!-- Time IN -->
+          <div class="space-y-1">
+            <label class="font-semibold text-foreground">Authorized Time IN</label>
+            <Input
+              v-model="manualInTime"
+              placeholder="e.g. 08:00 AM"
+              class="h-8 text-xs font-mono"
+            />
+            <p class="text-[10px] text-muted-foreground">Standard 12h format (e.g. 08:00 AM, 07:00 AM).</p>
+          </div>
+
+          <!-- Reason / Paper Slip Ref -->
+          <div class="space-y-1">
+            <label class="font-semibold text-foreground">Reference / Authorization Note</label>
+            <Input
+              v-model="manualReason"
+              placeholder="e.g. Supervisor Approved Paper Slip #104"
+              class="h-8 text-xs"
+            />
+          </div>
+        </div>
+
+        <DialogFooter class="flex items-center justify-between sm:justify-between gap-2">
+          <Button
+            v-if="adjustmentRow?.is_manual_adjustment"
+            variant="destructive"
+            size="sm"
+            class="h-8 text-xs gap-1"
+            :disabled="isSavingAdjustment"
+            @click="handleDeleteAdjustment"
+          >
+            <Trash2 class="size-3" />
+            <span>Remove Adjustment</span>
+          </Button>
+          <div v-else />
+
+          <div class="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 text-xs"
+              @click="isAdjustmentDialogOpen = false"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              class="h-8 text-xs font-medium"
+              :disabled="isSavingAdjustment"
+              @click="handleSaveAdjustment"
+            >
+              <span>{{ isSavingAdjustment ? 'Saving...' : 'Apply Adjustment' }}</span>
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

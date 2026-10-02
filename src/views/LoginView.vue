@@ -1,7 +1,3 @@
-<script lang="ts">
-export const description = "A two column login page with a cover image."
-</script>
-
 <script setup lang="ts">
 import { Fingerprint } from "@lucide/vue"
 import LoginForm from "@/components/LoginForm.vue"

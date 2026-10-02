@@ -16,7 +16,7 @@ const PayrollRecordsView = () => import('@/views/PayrollRecordsView.vue')
 const ReportsView = () => import('@/views/ReportsView.vue')
 const UsersView = () => import('@/views/UsersView.vue')
 const SettingsView = () => import('@/views/SettingsView.vue')
-const LoginPage = () => import('@/components/pages/login/index.vue')
+const LoginView = () => import('@/views/LoginView.vue')
 const AppLayout = () => import('@/layouts/AppLayout.vue')
 
 export const router = createRouter({
@@ -25,7 +25,7 @@ export const router = createRouter({
     {
       path: '/login',
       name: 'login',
-      component: LoginPage,
+      component: LoginView,
       meta: { requiresAuth: false, title: 'Login' }
     },
     {
