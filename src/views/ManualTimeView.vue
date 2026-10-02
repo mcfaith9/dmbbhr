@@ -82,6 +82,33 @@ const filteredRequests = computed(() => {
   return list
 })
 
+function cleanTime(t?: string) {
+  if (!t) return ''
+  return t.replace(/\s*\(Manual\)/gi, '').trim()
+}
+
+function hasInChanged(req?: ManualAttendanceRecord | null) {
+  if (!req) return false
+  if (!req.manualIn) return false
+  const manual = cleanTime(req.manualIn)
+  const orig = cleanTime(req.originalIn)
+  if (!orig || orig === '—' || orig === '-' || orig.toLowerCase().includes('missing')) {
+    return true
+  }
+  return manual.toLowerCase() !== orig.toLowerCase()
+}
+
+function hasOutChanged(req?: ManualAttendanceRecord | null) {
+  if (!req) return false
+  if (!req.manualOut) return false
+  const manual = cleanTime(req.manualOut)
+  const orig = cleanTime(req.originalOut)
+  if (!orig || orig === '—' || orig === '-' || orig.toLowerCase().includes('awaiting') || orig.toLowerCase().includes('missing') || orig.toLowerCase().includes('no out')) {
+    return true
+  }
+  return manual.toLowerCase() !== orig.toLowerCase()
+}
+
 function openReviewModal(req: ManualAttendanceRecord) {
   selectedRequest.value = req
   showRejectionInput.value = false
@@ -331,8 +358,8 @@ onMounted(() => {
             <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
               <TableHead class="font-semibold text-foreground min-w-[170px]">Employee</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[110px]">Date</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[140px]">Original Captured</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[150px]">Requested Adjustment</TableHead>
+              <TableHead class="font-semibold text-foreground min-w-[130px]">Current IN / OUT</TableHead>
+              <TableHead class="font-semibold text-foreground min-w-[180px]">Requested Adjustment</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[180px]">Reason / Notes</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[130px]">Requested By</TableHead>
               <TableHead class="font-semibold text-foreground text-center w-[100px]">Status</TableHead>
@@ -366,43 +393,53 @@ onMounted(() => {
                 </div>
               </TableCell>
 
-              <!-- 3. Original Captured Attendance -->
+              <!-- 3. Current / Original Captured Attendance -->
               <TableCell class="py-2.5 font-mono text-[11px]">
                 <div class="flex flex-col gap-0.5">
                   <div class="flex items-center gap-1">
                     <span class="text-[10px] text-muted-foreground font-sans font-medium">IN:</span>
                     <span :class="req.originalIn === '—' || !req.originalIn ? 'text-amber-600 font-sans' : 'text-foreground'">
-                      {{ req.originalIn || '—' }}
+                      {{ cleanTime(req.originalIn) || '—' }}
                     </span>
                   </div>
                   <div class="flex items-center gap-1">
                     <span class="text-[10px] text-muted-foreground font-sans font-medium">OUT:</span>
                     <span :class="req.originalOut === '—' || !req.originalOut ? 'text-muted-foreground' : 'text-foreground'">
-                      {{ req.originalOut || '—' }}
+                      {{ cleanTime(req.originalOut) || '—' }}
                     </span>
                   </div>
                 </div>
               </TableCell>
 
-              <!-- 4. Requested Adjustment -->
+              <!-- 4. Requested Adjustment (Distinguishes Adjusted vs No change) -->
               <TableCell class="py-2.5 font-mono text-[11px]">
-                <div class="flex flex-col gap-0.5">
-                  <div v-if="req.manualIn" class="flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-400">
-                    <span class="text-[10px] text-emerald-600/80 font-sans font-medium">IN:</span>
-                    <span>{{ req.manualIn }}</span>
-                    <span class="text-[9px] px-1 rounded bg-emerald-500/10 uppercase font-sans">Adjusted</span>
+                <div class="flex flex-col gap-1">
+                  <!-- IN Status -->
+                  <div v-if="hasInChanged(req)" class="flex items-center gap-1.5 flex-wrap">
+                    <span class="text-[10px] text-emerald-700 dark:text-emerald-400 font-sans font-bold">IN:</span>
+                    <span class="font-bold text-emerald-700 dark:text-emerald-400">{{ req.manualIn }}</span>
+                    <span class="text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300">
+                      Adjusted
+                    </span>
                   </div>
-                  <div v-else class="text-muted-foreground text-[10px] font-sans">
-                    IN: Unchanged
+                  <div v-else class="flex items-center gap-1 text-muted-foreground text-[10px] font-sans">
+                    <span class="font-medium">IN:</span>
+                    <span class="font-mono text-[11px]">{{ cleanTime(req.originalIn) || '—' }}</span>
+                    <span class="text-[9px] text-muted-foreground/70 italic">(No change)</span>
                   </div>
 
-                  <div v-if="req.manualOut" class="flex items-center gap-1 font-semibold text-blue-700 dark:text-blue-400">
-                    <span class="text-[10px] text-blue-600/80 font-sans font-medium">OUT:</span>
-                    <span>{{ req.manualOut }}</span>
-                    <span class="text-[9px] px-1 rounded bg-blue-500/10 uppercase font-sans">Adjusted</span>
+                  <!-- OUT Status -->
+                  <div v-if="hasOutChanged(req)" class="flex items-center gap-1.5 flex-wrap">
+                    <span class="text-[10px] text-blue-700 dark:text-blue-400 font-sans font-bold">OUT:</span>
+                    <span class="font-bold text-blue-700 dark:text-blue-400">{{ req.manualOut }}</span>
+                    <span class="text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold bg-blue-500/15 text-blue-800 dark:text-blue-300">
+                      Adjusted
+                    </span>
                   </div>
-                  <div v-else class="text-muted-foreground text-[10px] font-sans">
-                    OUT: Unchanged
+                  <div v-else class="flex items-center gap-1 text-muted-foreground text-[10px] font-sans">
+                    <span class="font-medium">OUT:</span>
+                    <span class="font-mono text-[11px]">{{ cleanTime(req.originalOut) || '—' }}</span>
+                    <span class="text-[9px] text-muted-foreground/70 italic">(No change)</span>
                   </div>
                 </div>
               </TableCell>
@@ -458,23 +495,23 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Review & Authorization Dialog -->
+    <!-- Review & Authorization Dialog (Optimized layout, container bounds, and explicit field breakdown) -->
     <Dialog v-model:open="isReviewDialogOpen">
-      <DialogContent class="sm:max-w-[480px]">
-        <DialogHeader>
-          <DialogTitle class="flex items-center gap-2">
-            <UserCheck class="size-5 text-primary" />
+      <DialogContent class="sm:max-w-[520px] max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+        <DialogHeader class="space-y-1">
+          <DialogTitle class="flex items-center gap-2 text-base font-bold">
+            <UserCheck class="size-5 text-primary shrink-0" />
             <span>Review Manual Time Adjustment</span>
           </DialogTitle>
           <DialogDescription class="text-xs">
-            Inspect requested attendance corrections for <strong>{{ selectedRequest?.employeeName || selectedRequest?.bioId }}</strong> on {{ selectedRequest?.date }}.
+            Inspect and authorize attendance corrections for <strong>{{ selectedRequest?.employeeName || selectedRequest?.bioId }}</strong> on {{ selectedRequest?.date }}.
           </DialogDescription>
         </DialogHeader>
 
-        <div v-if="selectedRequest" class="space-y-3 py-1 text-xs">
-          <!-- Employee & Schedule Header -->
-          <div class="p-3 rounded-lg border bg-muted/40 space-y-1">
-            <div class="flex items-center justify-between font-semibold text-foreground">
+        <div v-if="selectedRequest" class="space-y-3.5 py-2 text-xs">
+          <!-- Employee & Schedule Header Card -->
+          <div class="p-3 rounded-lg border bg-muted/40 space-y-1.5">
+            <div class="flex items-center justify-between font-semibold text-foreground text-sm">
               <span>{{ selectedRequest.employeeName }} (#{{ selectedRequest.bioId }})</span>
               <Badge
                 :variant="selectedRequest.status === 'Approved' ? 'success' : (selectedRequest.status === 'Pending' ? 'warning' : 'destructive')"
@@ -483,47 +520,109 @@ onMounted(() => {
                 {{ selectedRequest.status }}
               </Badge>
             </div>
-            <div class="text-[11px] text-muted-foreground flex items-center justify-between">
-              <span>Date: {{ formatDateDisplay(selectedRequest.date) }}</span>
-              <span v-if="selectedRequest.scheduleContext">{{ selectedRequest.scheduleContext }}</span>
+            <div class="text-[11px] text-muted-foreground flex items-center justify-between flex-wrap gap-1">
+              <span>Date: <strong class="text-foreground">{{ formatDateDisplay(selectedRequest.date) }}</strong></span>
+              <span v-if="selectedRequest.scheduleContext">Schedule: <strong class="text-foreground">{{ selectedRequest.scheduleContext }}</strong></span>
             </div>
           </div>
 
-          <!-- Comparison: Original vs Requested -->
-          <div class="grid grid-cols-2 gap-2.5">
-            <!-- Original Captured -->
-            <div class="p-2.5 rounded-lg border border-border bg-background space-y-1.5">
-              <span class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Original Captured</span>
-              <div class="font-mono text-xs space-y-1">
-                <div>IN: <span class="font-semibold">{{ selectedRequest.originalIn || '—' }}</span></div>
-                <div>OUT: <span class="font-semibold">{{ selectedRequest.originalOut || '—' }}</span></div>
-              </div>
-            </div>
+          <!-- Explicit Comparison: IN & OUT with Adjusted vs No change -->
+          <div class="space-y-2">
+            <label class="font-bold text-foreground text-xs uppercase tracking-wider text-muted-foreground block">
+              Requested Adjustment Breakdown
+            </label>
 
-            <!-- Requested Adjustment -->
-            <div class="p-2.5 rounded-lg border border-primary/30 bg-primary/5 space-y-1.5">
-              <span class="text-[10px] font-bold uppercase tracking-wider text-primary">Requested Adjustment</span>
-              <div class="font-mono text-xs space-y-1">
-                <div class="text-emerald-700 dark:text-emerald-300">
-                  IN: <span class="font-bold">{{ selectedRequest.manualIn || 'Unchanged' }}</span>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <!-- Time IN Card -->
+              <div
+                class="p-3 rounded-lg border transition-all"
+                :class="hasInChanged(selectedRequest) ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border bg-background'"
+              >
+                <div class="flex items-center justify-between mb-1.5">
+                  <span class="font-bold uppercase tracking-wider text-[11px]" :class="hasInChanged(selectedRequest) ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'">
+                    Time IN
+                  </span>
+                  <span
+                    class="text-[10px] px-1.5 py-0.2 rounded font-semibold font-sans"
+                    :class="hasInChanged(selectedRequest) ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'"
+                  >
+                    {{ hasInChanged(selectedRequest) ? 'Adjusted' : 'No change' }}
+                  </span>
                 </div>
-                <div class="text-blue-700 dark:text-blue-300">
-                  OUT: <span class="font-bold">{{ selectedRequest.manualOut || 'Unchanged' }}</span>
+
+                <div v-if="hasInChanged(selectedRequest)" class="space-y-1 font-mono text-xs">
+                  <div class="text-muted-foreground text-[11px] flex items-center justify-between">
+                    <span>Original:</span>
+                    <span class="font-medium text-foreground">{{ cleanTime(selectedRequest.originalIn) || '—' }}</span>
+                  </div>
+                  <div class="text-emerald-700 dark:text-emerald-300 font-bold flex items-center justify-between pt-1 border-t border-emerald-500/20">
+                    <span>Requested:</span>
+                    <span class="text-sm">{{ selectedRequest.manualIn }}</span>
+                  </div>
+                </div>
+
+                <div v-else class="space-y-1 font-mono text-xs">
+                  <div class="flex items-center justify-between text-muted-foreground text-[11px]">
+                    <span>Current:</span>
+                    <span class="font-semibold text-foreground">{{ cleanTime(selectedRequest.originalIn) || cleanTime(selectedRequest.manualIn) || '—' }}</span>
+                  </div>
+                  <div class="text-[10px] font-sans text-muted-foreground/70 italic pt-1 border-t">
+                    No adjustment requested for Time IN
+                  </div>
+                </div>
+              </div>
+
+              <!-- Time OUT Card -->
+              <div
+                class="p-3 rounded-lg border transition-all"
+                :class="hasOutChanged(selectedRequest) ? 'border-blue-500/40 bg-blue-500/5' : 'border-border bg-background'"
+              >
+                <div class="flex items-center justify-between mb-1.5">
+                  <span class="font-bold uppercase tracking-wider text-[11px]" :class="hasOutChanged(selectedRequest) ? 'text-blue-700 dark:text-blue-300' : 'text-foreground'">
+                    Time OUT
+                  </span>
+                  <span
+                    class="text-[10px] px-1.5 py-0.2 rounded font-semibold font-sans"
+                    :class="hasOutChanged(selectedRequest) ? 'bg-blue-500/20 text-blue-800 dark:text-blue-300' : 'bg-muted text-muted-foreground'"
+                  >
+                    {{ hasOutChanged(selectedRequest) ? 'Adjusted' : 'No change' }}
+                  </span>
+                </div>
+
+                <div v-if="hasOutChanged(selectedRequest)" class="space-y-1 font-mono text-xs">
+                  <div class="text-muted-foreground text-[11px] flex items-center justify-between">
+                    <span>Original:</span>
+                    <span class="font-medium text-foreground">{{ cleanTime(selectedRequest.originalOut) || '—' }}</span>
+                  </div>
+                  <div class="text-blue-700 dark:text-blue-300 font-bold flex items-center justify-between pt-1 border-t border-blue-500/20">
+                    <span>Requested:</span>
+                    <span class="text-sm">{{ selectedRequest.manualOut }}</span>
+                  </div>
+                </div>
+
+                <div v-else class="space-y-1 font-mono text-xs">
+                  <div class="flex items-center justify-between text-muted-foreground text-[11px]">
+                    <span>Current:</span>
+                    <span class="font-semibold text-foreground">{{ cleanTime(selectedRequest.originalOut) || cleanTime(selectedRequest.manualOut) || '—' }}</span>
+                  </div>
+                  <div class="text-[10px] font-sans text-muted-foreground/70 italic pt-1 border-t">
+                    No adjustment requested for Time OUT
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Notes / Reason -->
+          <!-- Reason / Notes -->
           <div class="space-y-1">
             <label class="font-semibold text-foreground text-xs">Request Notes / Reason</label>
-            <div class="p-2.5 rounded-md border bg-muted/30 text-foreground text-xs leading-relaxed">
+            <div class="p-2.5 rounded-md border bg-muted/30 text-foreground text-xs leading-relaxed max-h-24 overflow-y-auto">
               {{ selectedRequest.reason || selectedRequest.notes || 'No notes provided.' }}
             </div>
           </div>
 
           <!-- Submission Audit Info -->
-          <div class="text-[11px] text-muted-foreground p-2 rounded bg-muted/20 border flex items-center justify-between">
+          <div class="text-[11px] text-muted-foreground p-2 rounded bg-muted/20 border flex items-center justify-between flex-wrap gap-1">
             <span>Requested by: <strong class="text-foreground">{{ selectedRequest.requestedBy }}</strong></span>
             <span class="font-mono">{{ formatTimestamp(selectedRequest.requestedAt) }}</span>
           </div>
@@ -545,7 +644,7 @@ onMounted(() => {
           </div>
 
           <!-- Rejection Input (Expandable) -->
-          <div v-if="showRejectionInput && selectedRequest.status === 'Pending'" class="space-y-1 pt-1 border-t">
+          <div v-if="showRejectionInput && selectedRequest.status === 'Pending'" class="space-y-1.5 pt-2 border-t">
             <label class="font-semibold text-destructive text-xs">Reason for Rejection</label>
             <Textarea
               v-model="rejectionReasonInput"
@@ -555,7 +654,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <DialogFooter class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-t pt-3">
+        <DialogFooter class="border-t pt-3 flex flex-wrap items-center justify-between gap-2">
           <!-- Left: Delete/Dismiss action -->
           <Button
             variant="ghost"
@@ -567,8 +666,8 @@ onMounted(() => {
             <span>Delete Record</span>
           </Button>
 
-          <!-- Right Action Buttons -->
-          <div class="flex items-center justify-end gap-2">
+          <!-- Right Action Buttons grouped together -->
+          <div class="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="outline"
               size="sm"

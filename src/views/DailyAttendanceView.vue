@@ -1146,22 +1146,21 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <DialogFooter class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-t pt-3">
-          <!-- Revert / Delete button if already adjusted -->
-          <Button
-            v-if="adjustmentRow?.is_manual_adjustment"
-            variant="ghost"
-            size="sm"
-            class="h-8 text-xs text-destructive hover:bg-destructive/10"
-            :disabled="isSavingAdjustment"
-            @click="handleDeleteAdjustment"
-          >
-            <Trash2 class="size-3.5 mr-1" />
-            <span>Revert to Biometric</span>
-          </Button>
-          <div v-else />
+        <DialogFooter class="border-t pt-3 flex items-center justify-end">
+          <div class="flex flex-wrap items-center justify-end gap-2 w-full">
+            <!-- Revert / Delete button if already adjusted -->
+            <Button
+              v-if="adjustmentRow?.is_manual_adjustment"
+              variant="ghost"
+              size="sm"
+              class="h-8 text-xs text-destructive hover:bg-destructive/10"
+              :disabled="isSavingAdjustment"
+              @click="handleDeleteAdjustment"
+            >
+              <Trash2 class="size-3.5 mr-1" />
+              <span>Revert to Biometric</span>
+            </Button>
 
-          <div class="flex items-center justify-end gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -1170,6 +1169,7 @@ onUnmounted(() => {
             >
               Cancel
             </Button>
+
             <Button
               variant="default"
               size="sm"
