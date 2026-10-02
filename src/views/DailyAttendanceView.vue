@@ -980,10 +980,10 @@ onUnmounted(() => {
                       row.status === 'Likely OUT — Missing IN' ? 'text-white' : ''
                     ]"
                   >
-                    <!-- <AlertTriangle v-if="row.status === 'Likely OUT — Missing IN' || row.is_missing_in" class="size-2.5" />
+                    <AlertTriangle v-if="row.status === 'Likely OUT — Missing IN' || row.is_missing_in" class="size-2.5" />
                     <FileCheck v-else-if="row.is_pending_adjustment" class="size-2.5" />
                     <FileText v-else-if="row.status === 'Manual / Paper IN'" class="size-2.5" />
-                    <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" /> -->
+                    <Clock v-else-if="row.status === 'Single Punch — No OUT'" class="size-2.5" />
                     <span>{{ row.is_pending_adjustment ? 'Pending Approval' : row.status }}</span>
                   </Badge>
 
