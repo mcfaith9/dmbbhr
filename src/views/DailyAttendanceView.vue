@@ -1064,7 +1064,7 @@ onUnmounted(() => {
 
     <!-- Unified "Adjust Attendance" Dialog for Both IN and OUT -->
     <Dialog v-model:open="isAdjustmentDialogOpen">
-      <DialogContent class="sm:max-w-[460px]">
+      <DialogContent class="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2 font-bold text-base">
             <ShieldCheck class="size-5 text-primary" />

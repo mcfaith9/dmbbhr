@@ -480,7 +480,7 @@ onMounted(() => {
               <!-- 8. Action Button -->
               <TableCell class="py-2.5 text-right">
                 <Button
-                  variant="outline"
+                  variant="default"
                   size="sm"
                   class="h-7 px-2.5 text-xs font-semibold shadow-2xs"
                   :class="req.status === 'Pending' ? 'bg-primary text-primary-foreground border-primary hover:bg-primary/90' : 'hover:bg-muted'"
@@ -686,7 +686,7 @@ onMounted(() => {
                 class="h-8 text-xs font-semibold"
                 @click="showRejectionInput = true"
               >
-                Reject Request
+                Reject
               </Button>
               <Button
                 v-else
@@ -702,12 +702,12 @@ onMounted(() => {
               <Button
                 variant="default"
                 size="sm"
-                class="h-8 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-xs"
+                class="h-8 text-xs font-semibold gap-1.5 shadow-xs"
                 :disabled="isSubmittingAction"
                 @click="handleApprove"
               >
                 <Check class="size-3.5" />
-                <span>Approve Adjustment</span>
+                <span>Approve</span>
               </Button>
             </template>
           </div>
