@@ -1,3 +1,80 @@
+## Project
+
+##### dmbbhr — Biometric HR & Attendance Management System
+
+© 2026 Marc Louie. All Rights Reserved.
+
+#### dmbbhr — Functionalities
+
+- Secure Admin & HR Login
+- Employee Management
+- Employee People Directory
+- Employee Profile Management
+- Employee Contact & Personal Information
+- Employee Department & Group Management
+- Employee Location Management
+- Employee Search & Filtering
+- Excel Employee Import
+- Bulk Employee Import & Updates
+- Biometric Fingerprint Integration
+- Real-Time Fingerprint Attendance
+- Automatic Employee Identification
+- Biometric Attendance Log Import
+- Manual Attendance Recording
+- Attendance Approval & Rejection
+- Attendance Approval History
+- Daily Attendance Monitoring
+- Attendance IN/OUT Tracking
+- Late Detection
+- Undertime Detection
+- Missing IN Detection
+- Missing OUT Detection
+- Single Punch Detection
+- Attendance Status Monitoring
+- Attendance History
+- Attendance Search & Filtering
+- Attendance Date Filtering
+- Attendance Calendar
+- Time Management
+- Absence Monitoring
+- Leave Monitoring
+- Work Group Management
+- Employee Work Schedule Management
+- Work Time Configuration
+- Break Time Configuration
+- Attendance Rule Configuration
+- Multi-Location Employee Management
+- Multi-Biometric Device Support
+- Biometric Device Connection Monitoring
+- Online/Offline Device Status
+- Real-Time Attendance Updates
+- Large Attendance Data Management
+- Attendance Pagination & Performance Optimization
+- Persistent Attendance Data
+- Persistent Employee Data
+- Data Validation & Duplicate Prevention
+- Dashboard & Attendance Overview
+- User Profile Management
+- Password Management
+- Future Payroll Management
+- Salary Management
+- Overtime Management
+- Payroll Deductions
+- Employee Loans
+- Salary Advances
+- Government Contribution Management
+- Payroll Cutoff Management
+- Payroll History
+- Payslip Generation
+- Future Leave Management
+- Future HR Management
+- Future Employee Records Management
+- Multi-Branch / Multi-Location Support
+- Centralized Employee Information
+- Centralized Attendance Management
+- Future Laravel & MySQL Integration
+
+
 | # | Scenario | Example punches | What system can reasonably infer | Daily Attendance |
 |---|---|---|---|---|
 | 1 | Normal full day | 7:53 AM → 11:58 AM → 12:58 PM → 5:03 PM | IN, lunch, OUT | Regular Day |
