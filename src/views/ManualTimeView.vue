@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import {
   FileText,
   Clock,
@@ -9,11 +9,16 @@ import {
   Check,
   Trash2,
   RefreshCw,
-  UserCheck
+  UserCheck,
+  History,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  X
 } from '@lucide/vue'
 import { attendanceService } from '@/services/attendance'
 import { authService } from '@/services/auth'
-import type { ManualAttendanceRecord } from '@/db'
+import type { ManualAttendanceRecord, ManualAttendanceHistoryRecord } from '@/db'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +33,10 @@ import {
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 
+// Top-level View Section: 'requests' (active workflow) vs 'history' (persistent completed log)
+const activeSection = ref<'requests' | 'history'>('requests')
+
+// Requests State
 const requests = ref<ManualAttendanceRecord[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
@@ -40,6 +49,19 @@ const rejectionReasonInput = ref('')
 const showRejectionInput = ref(false)
 const isSubmittingAction = ref(false)
 
+// History State
+const historyRecords = ref<ManualAttendanceHistoryRecord[]>([])
+const historyLoading = ref(false)
+const historyStatusFilter = ref<'all' | 'Approved' | 'Rejected'>('all')
+const historySearchQuery = ref('')
+const historyDateFilter = ref('')
+const historyPage = ref(1)
+const historyPageSize = ref(10)
+const historyTotal = ref(0)
+const historyApprovedCount = ref(0)
+const historyRejectedCount = ref(0)
+const historyTotalPages = ref(1)
+
 const currentUser = authService.currentUser
 
 async function loadRequests() {
@@ -49,6 +71,61 @@ async function loadRequests() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadHistory() {
+  historyLoading.value = true
+  try {
+    const res = await attendanceService.getManualAttendanceHistory({
+      status: historyStatusFilter.value,
+      search: historySearchQuery.value,
+      date: historyDateFilter.value,
+      page: historyPage.value,
+      pageSize: historyPageSize.value
+    })
+    historyRecords.value = res.records
+    historyTotal.value = res.total
+    historyApprovedCount.value = res.approvedCount
+    historyRejectedCount.value = res.rejectedCount
+    historyTotalPages.value = res.totalPages
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function handleRefresh() {
+  if (activeSection.value === 'requests') {
+    await loadRequests()
+  } else {
+    await loadHistory()
+  }
+}
+
+// Watchers for History filters
+watch([historyStatusFilter, historyDateFilter], () => {
+  historyPage.value = 1
+  loadHistory()
+})
+
+let searchDebounceTimer: any = null
+function onHistorySearchInput() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    historyPage.value = 1
+    loadHistory()
+  }, 250)
+}
+
+function clearHistoryDateFilter() {
+  historyDateFilter.value = ''
+  historyPage.value = 1
+  loadHistory()
+}
+
+function changeHistoryPage(newPage: number) {
+  if (newPage < 1 || newPage > historyTotalPages.value) return
+  historyPage.value = newPage
+  loadHistory()
 }
 
 const stats = computed(() => {
@@ -123,7 +200,7 @@ async function handleApprove() {
     const approverName = currentUser.value?.name || currentUser.value?.username || 'Admin'
     await attendanceService.approveManualTimeRequest(selectedRequest.value.id, undefined, approverName)
     isReviewDialogOpen.value = false
-    await loadRequests()
+    await Promise.all([loadRequests(), loadHistory()])
   } finally {
     isSubmittingAction.value = false
   }
@@ -137,7 +214,7 @@ async function handleReject() {
     const reason = rejectionReasonInput.value.trim() || 'Disapproved by HR/Admin'
     await attendanceService.rejectManualTimeRequest(selectedRequest.value.id, undefined, reviewerName, reason)
     isReviewDialogOpen.value = false
-    await loadRequests()
+    await Promise.all([loadRequests(), loadHistory()])
   } finally {
     isSubmittingAction.value = false
   }
@@ -174,6 +251,7 @@ function formatTimestamp(isoStr?: string) {
       timeZone: 'Asia/Manila',
       month: 'short',
       day: 'numeric',
+      year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
       hour12: true
@@ -185,6 +263,7 @@ function formatTimestamp(isoStr?: string) {
 
 onMounted(() => {
   loadRequests()
+  loadHistory()
 })
 </script>
 
@@ -197,303 +276,610 @@ onMounted(() => {
           <h1 class="text-2xl font-bold tracking-tight text-foreground font-sans">
             Manual Time
           </h1>
-          <span class="text-xs px-2.5 py-0.5 rounded-md border bg-muted/50 font-mono font-medium text-foreground">
+          <span
+            v-if="stats.pending > 0"
+            class="text-xs px-2.5 py-0.5 rounded-md border bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20 font-mono font-medium"
+          >
             {{ stats.pending }} Pending Review
+          </span>
+          <span
+            v-else
+            class="text-xs px-2.5 py-0.5 rounded-md border bg-muted/50 font-mono font-medium text-muted-foreground"
+          >
+            All Caught Up
           </span>
         </div>
         <p class="text-xs text-muted-foreground">
-          Dedicated workflow for reviewing, authorizing, and auditing manual attendance adjustments (missing punches, paper slips, and corrections).
+          Dedicated workflow for reviewing, authorizing, and auditing manual attendance adjustments and transaction history.
         </p>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <!-- Main Section Switcher: Requests vs History -->
+        <div class="flex items-center p-1 rounded-lg bg-muted/60 border text-xs">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 px-3 py-1 rounded-md font-semibold transition-all cursor-pointer"
+            :class="activeSection === 'requests' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeSection = 'requests'"
+          >
+            <FileText class="size-3.5" />
+            <span>Requests</span>
+            <span
+              v-if="stats.pending > 0"
+              class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold"
+            >
+              {{ stats.pending }}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="flex items-center gap-1.5 px-3 py-1 rounded-md font-semibold transition-all cursor-pointer"
+            :class="activeSection === 'history' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeSection = 'history'"
+          >
+            <History class="size-3.5" />
+            <span>History</span>
+            <span
+              v-if="historyTotal > 0"
+              class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-muted text-muted-foreground font-mono"
+            >
+              {{ historyTotal }}
+            </span>
+          </button>
+        </div>
+
         <Button
           variant="outline"
           size="sm"
           class="h-8 gap-1.5 text-xs font-medium"
-          :disabled="loading"
-          @click="loadRequests"
+          :disabled="loading || historyLoading"
+          @click="handleRefresh"
         >
-          <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
+          <RefreshCw :class="['size-3.5', (loading || historyLoading) ? 'animate-spin' : '']" />
           <span>Refresh</span>
         </Button>
       </div>
     </div>
 
-    <!-- Quick Stats Cards -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-      <div
-        class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
-        :class="activeTab === 'Pending' ? 'ring-2 ring-amber-500/50 border-amber-500/50 bg-amber-500/5' : 'hover:bg-muted/40'"
-        @click="activeTab = 'Pending'"
-      >
-        <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-          <Clock class="size-3 text-amber-600 dark:text-amber-400" />
-          Pending Approvals
-        </span>
-        <div class="text-xl font-bold text-amber-600 dark:text-amber-400 mt-1 font-mono">
-          {{ stats.pending }}
-        </div>
-      </div>
-
-      <div
-        class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
-        :class="activeTab === 'Approved' ? 'ring-2 ring-emerald-500/50 border-emerald-500/50 bg-emerald-500/5' : 'hover:bg-muted/40'"
-        @click="activeTab = 'Approved'"
-      >
-        <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-          <CheckCircle2 class="size-3 text-emerald-600 dark:text-emerald-400" />
-          Approved Adjustments
-        </span>
-        <div class="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
-          {{ stats.approved }}
-        </div>
-      </div>
-
-      <div
-        class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
-        :class="activeTab === 'Rejected' ? 'ring-2 ring-rose-500/50 border-rose-500/50 bg-rose-500/5' : 'hover:bg-muted/40'"
-        @click="activeTab = 'Rejected'"
-      >
-        <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-          <XCircle class="size-3 text-rose-600 dark:text-rose-400" />
-          Rejected Requests
-        </span>
-        <div class="text-xl font-bold text-rose-600 dark:text-rose-400 mt-1 font-mono">
-          {{ stats.rejected }}
-        </div>
-      </div>
-
-      <div
-        class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
-        :class="activeTab === 'all' ? 'ring-2 ring-primary/50 border-primary/50 bg-primary/5' : 'hover:bg-muted/40'"
-        @click="activeTab = 'all'"
-      >
-        <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-          <FileText class="size-3 text-primary" />
-          All Historical Requests
-        </span>
-        <div class="text-xl font-bold text-foreground mt-1 font-mono">
-          {{ stats.total }}
-        </div>
-      </div>
-    </div>
-
-    <!-- Filter & Search Toolbar -->
-    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-      <!-- Status Tabs -->
-      <div class="flex items-center gap-1 bg-muted/50 p-1 rounded-lg text-xs">
-        <button
-          type="button"
-          class="px-3 py-1.5 rounded-md font-medium transition-all"
-          :class="activeTab === 'Pending' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+    <!-- ========================================================================= -->
+    <!-- SECTION 1: REQUESTS WORKFLOW (Pending, Approved, Rejected, All)           -->
+    <!-- ========================================================================= -->
+    <template v-if="activeSection === 'requests'">
+      <!-- Quick Stats Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="activeTab === 'Pending' ? 'ring-2 ring-amber-500/50 border-amber-500/50 bg-amber-500/5' : 'hover:bg-muted/40'"
           @click="activeTab = 'Pending'"
         >
-          Pending ({{ stats.pending }})
-        </button>
-        <button
-          type="button"
-          class="px-3 py-1.5 rounded-md font-medium transition-all"
-          :class="activeTab === 'Approved' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <Clock class="size-3 text-amber-600 dark:text-amber-400" />
+            Pending Approvals
+          </span>
+          <div class="text-xl font-bold text-amber-600 dark:text-amber-400 mt-1 font-mono">
+            {{ stats.pending }}
+          </div>
+        </div>
+
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="activeTab === 'Approved' ? 'ring-2 ring-emerald-500/50 border-emerald-500/50 bg-emerald-500/5' : 'hover:bg-muted/40'"
           @click="activeTab = 'Approved'"
         >
-          Approved ({{ stats.approved }})
-        </button>
-        <button
-          type="button"
-          class="px-3 py-1.5 rounded-md font-medium transition-all"
-          :class="activeTab === 'Rejected' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <CheckCircle2 class="size-3 text-emerald-600 dark:text-emerald-400" />
+            Approved Adjustments
+          </span>
+          <div class="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
+            {{ stats.approved }}
+          </div>
+        </div>
+
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="activeTab === 'Rejected' ? 'ring-2 ring-rose-500/50 border-rose-500/50 bg-rose-500/5' : 'hover:bg-muted/40'"
           @click="activeTab = 'Rejected'"
         >
-          Rejected ({{ stats.rejected }})
-        </button>
-        <button
-          type="button"
-          class="px-3 py-1.5 rounded-md font-medium transition-all"
-          :class="activeTab === 'all' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <XCircle class="size-3 text-rose-600 dark:text-rose-400" />
+            Rejected Requests
+          </span>
+          <div class="text-xl font-bold text-rose-600 dark:text-rose-400 mt-1 font-mono">
+            {{ stats.rejected }}
+          </div>
+        </div>
+
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="activeTab === 'all' ? 'ring-2 ring-primary/50 border-primary/50 bg-primary/5' : 'hover:bg-muted/40'"
           @click="activeTab = 'all'"
         >
-          All ({{ stats.total }})
-        </button>
-      </div>
-
-      <!-- Search Field -->
-      <div class="relative w-full sm:w-72">
-        <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-        <Input
-          v-model="searchQuery"
-          placeholder="Search employee, ID, note, requester..."
-          class="pl-8 text-xs h-8 bg-card"
-        />
-      </div>
-    </div>
-
-    <!-- Manual Time Requests Table -->
-    <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
-      <!-- Loading State -->
-      <div v-if="loading" class="p-12 text-center text-xs text-muted-foreground space-y-2">
-        <RefreshCw class="size-6 animate-spin mx-auto text-primary" />
-        <p class="font-medium text-foreground">Loading manual time requests...</p>
-      </div>
-
-      <!-- Empty State -->
-      <div v-else-if="filteredRequests.length === 0" class="p-12 text-center text-xs space-y-3">
-        <div class="size-12 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground">
-          <FileText class="size-6 text-muted-foreground/60" />
-        </div>
-        <div class="space-y-1">
-          <p class="font-semibold text-foreground text-sm">
-            {{ activeTab === 'Pending' ? 'No pending manual time requests awaiting approval.' : 'No manual time records found.' }}
-          </p>
-          <p class="text-muted-foreground max-w-md mx-auto">
-            When missing attendance punches or adjustments are submitted via <strong>Daily Attendance → Adjust</strong>, they will appear here for review.
-          </p>
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <FileText class="size-3 text-primary" />
+            All Adjustment Requests
+          </span>
+          <div class="text-xl font-bold text-foreground mt-1 font-mono">
+            {{ stats.total }}
+          </div>
         </div>
       </div>
 
-      <!-- Table View -->
-      <div v-else class="overflow-x-auto">
-        <Table class="text-xs">
-          <TableHeader>
-            <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
-              <TableHead class="font-semibold text-foreground min-w-[170px]">Employee</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[100px]">Date</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[130px]">Current IN / OUT</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[170px]">Requested Adjustment</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[180px]">Reason / Notes</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[120px]">Requested By</TableHead>
-              <TableHead class="font-semibold text-foreground text-center w-[100px]">Status</TableHead>
-              <TableHead class="font-semibold text-foreground text-right w-[90px]">Action</TableHead>
-            </TableRow>
-          </TableHeader>
+      <!-- Filter & Search Toolbar -->
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+        <!-- Status Tabs -->
+        <div class="flex items-center gap-1 bg-muted/50 p-1 rounded-lg text-xs">
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="activeTab === 'Pending' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeTab = 'Pending'"
+          >
+            Pending ({{ stats.pending }})
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="activeTab === 'Approved' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeTab = 'Approved'"
+          >
+            Approved ({{ stats.approved }})
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="activeTab === 'Rejected' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeTab = 'Rejected'"
+          >
+            Rejected ({{ stats.rejected }})
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="activeTab === 'all' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeTab = 'all'"
+          >
+            All ({{ stats.total }})
+          </button>
+        </div>
 
-          <TableBody>
-            <TableRow
-              v-for="req in filteredRequests"
-              :key="req.id"
-              class="hover:bg-muted/30 transition-colors border-b last:border-b-0"
-              :class="req.status === 'Pending' ? 'bg-amber-500/5' : ''"
-            >
-              <!-- 1. Employee -->
-              <TableCell class="py-2.5">
-                <div class="flex flex-col gap-0.5">
-                  <span class="font-semibold text-foreground">{{ req.employeeName || `User #${req.bioId}` }}</span>
-                  <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                    <span class="font-mono">#{{ req.bioId }}</span>
-                    <span v-if="req.scheduleContext">· {{ req.scheduleContext }}</span>
-                  </div>
-                </div>
-              </TableCell>
-
-              <!-- 2. Target Date -->
-              <TableCell class="py-2.5 font-medium whitespace-nowrap">
-                <div class="flex flex-col">
-                  <span>{{ formatDateDisplay(req.date) }}</span>
-                  <span class="font-mono text-[10px] text-muted-foreground">{{ req.date }}</span>
-                </div>
-              </TableCell>
-
-              <!-- 3. Current / Original Captured Attendance -->
-              <TableCell class="py-2.5 font-mono text-[11px]">
-                <div class="flex flex-col gap-0.5">
-                  <div class="flex items-center gap-1">
-                    <span class="text-[10px] text-muted-foreground font-sans font-medium">IN:</span>
-                    <span :class="req.originalIn === '—' || !req.originalIn ? 'text-amber-600 font-sans' : 'text-foreground'">
-                      {{ cleanTime(req.originalIn) || '—' }}
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <span class="text-[10px] text-muted-foreground font-sans font-medium">OUT:</span>
-                    <span :class="req.originalOut === '—' || !req.originalOut ? 'text-muted-foreground' : 'text-foreground'">
-                      {{ cleanTime(req.originalOut) || '—' }}
-                    </span>
-                  </div>
-                </div>
-              </TableCell>
-
-              <!-- 4. Requested Adjustment (Distinguishes Adjusted vs No change) -->
-              <TableCell class="py-2.5 font-mono text-[11px]">
-                <div class="flex flex-col gap-1">
-                  <!-- IN Status -->
-                  <div v-if="hasInChanged(req)" class="flex items-center gap-1.5 flex-wrap">
-                    <span class="text-[10px] text-emerald-700 dark:text-emerald-400 font-sans font-bold">IN:</span>
-                    <span class="font-bold text-emerald-700 dark:text-emerald-400">{{ req.manualIn }}</span>
-                    <span class="text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300">
-                      Adjusted
-                    </span>
-                  </div>
-                  <div v-else class="flex items-center gap-1 text-muted-foreground text-[10px] font-sans">
-                    <span class="font-medium">IN:</span>
-                    <span class="font-mono text-[11px]">{{ cleanTime(req.originalIn) || '—' }}</span>
-                    <span class="text-[9px] text-muted-foreground/70 italic">(No change)</span>
-                  </div>
-
-                  <!-- OUT Status -->
-                  <div v-if="hasOutChanged(req)" class="flex items-center gap-1.5 flex-wrap">
-                    <span class="text-[10px] text-blue-700 dark:text-blue-400 font-sans font-bold">OUT:</span>
-                    <span class="font-bold text-blue-700 dark:text-blue-400">{{ req.manualOut }}</span>
-                    <span class="text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold bg-blue-500/15 text-blue-800 dark:text-blue-300">
-                      Adjusted
-                    </span>
-                  </div>
-                  <div v-else class="flex items-center gap-1 text-muted-foreground text-[10px] font-sans">
-                    <span class="font-medium">OUT:</span>
-                    <span class="font-mono text-[11px]">{{ cleanTime(req.originalOut) || '—' }}</span>
-                    <span class="text-[9px] text-muted-foreground/70 italic">(No change)</span>
-                  </div>
-                </div>
-              </TableCell>
-
-              <!-- 5. Reason / Notes -->
-              <TableCell class="py-2.5">
-                <div class="max-w-[240px]">
-                  <p class="font-medium text-foreground line-clamp-2" :title="req.reason">
-                    {{ req.reason || req.notes || 'Manual Adjustment Request' }}
-                  </p>
-                  <p v-if="req.rejectionReason" class="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5">
-                    Rejection note: {{ req.rejectionReason }}
-                  </p>
-                </div>
-              </TableCell>
-
-              <!-- 6. Requested By & Timestamp -->
-              <TableCell class="py-2.5 text-[11px]">
-                <div class="flex flex-col gap-0.5">
-                  <span class="font-medium text-foreground">{{ req.requestedBy || 'Admin' }}</span>
-                  <span class="text-[10px] text-muted-foreground font-mono">{{ formatTimestamp(req.requestedAt) }}</span>
-                </div>
-              </TableCell>
-
-              <!-- 7. Status Badge -->
-              <TableCell class="py-2.5 text-center">
-                <Badge
-                  :variant="req.status === 'Approved' ? 'success' : (req.status === 'Pending' ? 'warning' : 'destructive')"
-                  class="text-[10px] gap-1 font-medium whitespace-nowrap"
-                >
-                  <Clock v-if="req.status === 'Pending'" class="size-2.5" />
-                  <CheckCircle2 v-else-if="req.status === 'Approved'" class="size-2.5" />
-                  <XCircle v-else class="size-2.5" />
-                  <span>{{ req.status }}</span>
-                </Badge>
-              </TableCell>
-
-              <!-- 8. Action Button -->
-              <TableCell class="py-2.5 text-right">
-                <Button
-                  variant="default"
-                  size="sm"
-                  class="h-7 px-2.5 text-xs font-semibold shadow-2xs"
-                  :class="req.status === 'Pending' ? 'bg-primary text-primary-foreground border-primary hover:bg-primary/90' : 'hover:bg-muted'"
-                  @click="openReviewModal(req)"
-                >
-                  <span>{{ req.status === 'Pending' ? 'Review' : 'Details' }}</span>
-                </Button>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+        <!-- Search Field -->
+        <div class="relative w-full sm:w-72">
+          <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+          <Input
+            v-model="searchQuery"
+            placeholder="Search employee, ID, note, requester..."
+            class="pl-8 text-xs h-8 bg-card"
+          />
+        </div>
       </div>
-    </div>
+
+      <!-- Manual Time Requests Table -->
+      <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
+        <!-- Loading State -->
+        <div v-if="loading" class="p-12 text-center text-xs text-muted-foreground space-y-2">
+          <RefreshCw class="size-6 animate-spin mx-auto text-primary" />
+          <p class="font-medium text-foreground">Loading manual time requests...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div v-else-if="filteredRequests.length === 0" class="p-12 text-center text-xs space-y-3">
+          <div class="size-12 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground">
+            <FileText class="size-6 text-muted-foreground/60" />
+          </div>
+          <div class="space-y-1">
+            <p class="font-semibold text-foreground text-sm">
+              {{ activeTab === 'Pending' ? 'No pending manual time requests awaiting approval.' : 'No manual time records found.' }}
+            </p>
+            <p class="text-muted-foreground max-w-md mx-auto">
+              When missing attendance punches or adjustments are submitted via <strong>Daily Attendance → Adjust</strong>, they will appear here for review.
+            </p>
+          </div>
+        </div>
+
+        <!-- Table View -->
+        <div v-else class="overflow-x-auto">
+          <Table class="text-xs">
+            <TableHeader>
+              <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
+                <TableHead class="font-semibold text-foreground min-w-[170px]">Employee</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[100px]">Date</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[130px]">Current IN / OUT</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[170px]">Requested Adjustment</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[180px]">Reason / Notes</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[120px]">Requested By</TableHead>
+                <TableHead class="font-semibold text-foreground text-center w-[100px]">Status</TableHead>
+                <TableHead class="font-semibold text-foreground text-right w-[90px]">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+
+            <TableBody>
+              <TableRow
+                v-for="req in filteredRequests"
+                :key="req.id"
+                class="hover:bg-muted/30 transition-colors border-b last:border-b-0"
+                :class="req.status === 'Pending' ? 'bg-amber-500/5' : ''"
+              >
+                <!-- 1. Employee -->
+                <TableCell class="py-2.5">
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-semibold text-foreground">{{ req.employeeName || `User #${req.bioId}` }}</span>
+                    <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span class="font-mono">#{{ req.bioId }}</span>
+                      <span v-if="req.scheduleContext">· {{ req.scheduleContext }}</span>
+                    </div>
+                  </div>
+                </TableCell>
+
+                <!-- 2. Target Date -->
+                <TableCell class="py-2.5 font-medium whitespace-nowrap">
+                  <div class="flex flex-col">
+                    <span>{{ formatDateDisplay(req.date) }}</span>
+                    <span class="font-mono text-[10px] text-muted-foreground">{{ req.date }}</span>
+                  </div>
+                </TableCell>
+
+                <!-- 3. Current / Original Captured Attendance -->
+                <TableCell class="py-2.5 font-mono text-[11px]">
+                  <div class="flex flex-col gap-0.5">
+                    <div class="flex items-center gap-1">
+                      <span class="text-[10px] text-muted-foreground font-sans font-medium">IN:</span>
+                      <span :class="req.originalIn === '—' || !req.originalIn ? 'text-amber-600 font-sans' : 'text-foreground'">
+                        {{ cleanTime(req.originalIn) || '—' }}
+                      </span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <span class="text-[10px] text-muted-foreground font-sans font-medium">OUT:</span>
+                      <span :class="req.originalOut === '—' || !req.originalOut ? 'text-muted-foreground' : 'text-foreground'">
+                        {{ cleanTime(req.originalOut) || '—' }}
+                      </span>
+                    </div>
+                  </div>
+                </TableCell>
+
+                <!-- 4. Requested Adjustment (Distinguishes Adjusted vs No change) -->
+                <TableCell class="py-2.5 font-mono text-[11px]">
+                  <div class="flex flex-col gap-1">
+                    <!-- IN Status -->
+                    <div v-if="hasInChanged(req)" class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-[10px] text-emerald-700 dark:text-emerald-400 font-sans font-bold">IN:</span>
+                      <span class="font-bold text-emerald-700 dark:text-emerald-400">{{ req.manualIn }}</span>
+                      <span class="text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300">
+                        Adjusted
+                      </span>
+                    </div>
+                    <div v-else class="flex items-center gap-1 text-muted-foreground text-[10px] font-sans">
+                      <span class="font-medium">IN:</span>
+                      <span class="font-mono text-[11px]">{{ cleanTime(req.originalIn) || '—' }}</span>
+                      <span class="text-[9px] text-muted-foreground/70 italic">(No change)</span>
+                    </div>
+
+                    <!-- OUT Status -->
+                    <div v-if="hasOutChanged(req)" class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-[10px] text-blue-700 dark:text-blue-400 font-sans font-bold">OUT:</span>
+                      <span class="font-bold text-blue-700 dark:text-blue-400">{{ req.manualOut }}</span>
+                      <span class="text-[9px] px-1.5 py-0.2 rounded font-sans font-semibold bg-blue-500/15 text-blue-800 dark:text-blue-300">
+                        Adjusted
+                      </span>
+                    </div>
+                    <div v-else class="flex items-center gap-1 text-muted-foreground text-[10px] font-sans">
+                      <span class="font-medium">OUT:</span>
+                      <span class="font-mono text-[11px]">{{ cleanTime(req.originalOut) || '—' }}</span>
+                      <span class="text-[9px] text-muted-foreground/70 italic">(No change)</span>
+                    </div>
+                  </div>
+                </TableCell>
+
+                <!-- 5. Reason / Notes -->
+                <TableCell class="py-2.5">
+                  <div class="max-w-[240px]">
+                    <p class="font-medium text-foreground line-clamp-2" :title="req.reason">
+                      {{ req.reason || req.notes || 'Manual Adjustment Request' }}
+                    </p>
+                    <p v-if="req.rejectionReason" class="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5">
+                      Rejection note: {{ req.rejectionReason }}
+                    </p>
+                  </div>
+                </TableCell>
+
+                <!-- 6. Requested By & Timestamp -->
+                <TableCell class="py-2.5 text-[11px]">
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-medium text-foreground">{{ req.requestedBy || 'Admin' }}</span>
+                    <span class="text-[10px] text-muted-foreground font-mono">{{ formatTimestamp(req.requestedAt) }}</span>
+                  </div>
+                </TableCell>
+
+                <!-- 7. Status Badge -->
+                <TableCell class="py-2.5 text-center">
+                  <Badge
+                    :variant="req.status === 'Approved' ? 'success' : (req.status === 'Pending' ? 'warning' : 'destructive')"
+                    class="text-[10px] gap-1 font-medium whitespace-nowrap"
+                  >
+                    <Clock v-if="req.status === 'Pending'" class="size-2.5" />
+                    <CheckCircle2 v-else-if="req.status === 'Approved'" class="size-2.5" />
+                    <XCircle v-else class="size-2.5" />
+                    <span>{{ req.status }}</span>
+                  </Badge>
+                </TableCell>
+
+                <!-- 8. Action Button -->
+                <TableCell class="py-2.5 text-right">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    class="h-7 px-2.5 text-xs font-semibold shadow-2xs cursor-pointer"
+                    :class="req.status === 'Pending' ? 'bg-primary text-primary-foreground border-primary hover:bg-primary/90' : 'hover:bg-muted'"
+                    @click="openReviewModal(req)"
+                  >
+                    <span>{{ req.status === 'Pending' ? 'Review' : 'Details' }}</span>
+                  </Button>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    </template>
+
+    <!-- ========================================================================= -->
+    <!-- SECTION 2: TRANSACTION HISTORY (Persistent Approved & Rejected Log)       -->
+    <!-- ========================================================================= -->
+    <template v-else-if="activeSection === 'history'">
+      <!-- History Quick Stats Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="historyStatusFilter === 'all' ? 'ring-2 ring-primary/50 border-primary/50 bg-primary/5' : 'hover:bg-muted/40'"
+          @click="historyStatusFilter = 'all'"
+        >
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <History class="size-3 text-primary" />
+            Total Transactions
+          </span>
+          <div class="text-xl font-bold text-foreground mt-1 font-mono">
+            {{ historyTotal }}
+          </div>
+        </div>
+
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="historyStatusFilter === 'Approved' ? 'ring-2 ring-emerald-500/50 border-emerald-500/50 bg-emerald-500/5' : 'hover:bg-muted/40'"
+          @click="historyStatusFilter = 'Approved'"
+        >
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <CheckCircle2 class="size-3 text-emerald-600 dark:text-emerald-400" />
+            Approved Transactions
+          </span>
+          <div class="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 font-mono">
+            {{ historyApprovedCount }}
+          </div>
+        </div>
+
+        <div
+          class="rounded-xl border bg-card p-3 shadow-xs cursor-pointer transition-all"
+          :class="historyStatusFilter === 'Rejected' ? 'ring-2 ring-rose-500/50 border-rose-500/50 bg-rose-500/5' : 'hover:bg-muted/40'"
+          @click="historyStatusFilter = 'Rejected'"
+        >
+          <span class="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+            <XCircle class="size-3 text-rose-600 dark:text-rose-400" />
+            Rejected Transactions
+          </span>
+          <div class="text-xl font-bold text-rose-600 dark:text-rose-400 mt-1 font-mono">
+            {{ historyRejectedCount }}
+          </div>
+        </div>
+      </div>
+
+      <!-- History Filtering Toolbar -->
+      <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5">
+        <!-- Status Tabs: All, Approved, Rejected -->
+        <div class="flex items-center gap-1 bg-muted/50 p-1 rounded-lg text-xs">
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="historyStatusFilter === 'all' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="historyStatusFilter = 'all'"
+          >
+            All ({{ historyTotal }})
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="historyStatusFilter === 'Approved' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="historyStatusFilter = 'Approved'"
+          >
+            Approved ({{ historyApprovedCount }})
+          </button>
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer"
+            :class="historyStatusFilter === 'Rejected' ? 'bg-background text-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground'"
+            @click="historyStatusFilter = 'Rejected'"
+          >
+            Rejected ({{ historyRejectedCount }})
+          </button>
+        </div>
+
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <!-- Date Filter -->
+          <div class="flex items-center gap-1.5">
+            <div class="relative flex items-center">
+              <Calendar class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="date"
+                v-model="historyDateFilter"
+                class="pl-8 pr-7 text-xs h-8 rounded-md border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+              />
+              <button
+                v-if="historyDateFilter"
+                type="button"
+                class="absolute right-2 text-muted-foreground hover:text-foreground p-0.5"
+                title="Clear date filter"
+                @click="clearHistoryDateFilter"
+              >
+                <X class="size-3" />
+              </button>
+            </div>
+          </div>
+
+          <!-- Search Field -->
+          <div class="relative w-full sm:w-64">
+            <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+            <Input
+              v-model="historySearchQuery"
+              placeholder="Search ID, name, remarks, admin..."
+              class="pl-8 text-xs h-8 bg-card"
+              @input="onHistorySearchInput"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Transaction History Table -->
+      <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
+        <!-- Loading State -->
+        <div v-if="historyLoading" class="p-12 text-center text-xs text-muted-foreground space-y-2">
+          <RefreshCw class="size-6 animate-spin mx-auto text-primary" />
+          <p class="font-medium text-foreground">Loading transaction history...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div v-else-if="historyRecords.length === 0" class="p-12 text-center text-xs space-y-3">
+          <div class="size-12 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground">
+            <History class="size-6 text-muted-foreground/60" />
+          </div>
+          <div class="space-y-1">
+            <p class="font-semibold text-foreground text-sm">
+              No transaction history recorded.
+            </p>
+            <p class="text-muted-foreground max-w-md mx-auto">
+              Completed manual attendance approvals and rejections are permanently recorded here for audit compliance.
+            </p>
+          </div>
+        </div>
+
+        <!-- History Table View -->
+        <div v-else class="overflow-x-auto">
+          <Table class="text-xs">
+            <TableHeader>
+              <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
+                <TableHead class="font-semibold text-foreground min-w-[140px]">Date/Time</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[100px]">Employee ID</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[160px]">Employee Name</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[110px]">Attendance Date</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[150px]">Attendance Time</TableHead>
+                <TableHead class="font-semibold text-foreground w-[100px] text-center">Action</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[200px]">Remarks</TableHead>
+                <TableHead class="font-semibold text-foreground min-w-[120px]">Processed By</TableHead>
+              </TableRow>
+            </TableHeader>
+
+            <TableBody>
+              <TableRow
+                v-for="record in historyRecords"
+                :key="record.id"
+                class="hover:bg-muted/30 transition-colors border-b last:border-b-0"
+              >
+                <!-- 1. Processed Date/Time -->
+                <TableCell class="py-2.5 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
+                  {{ formatTimestamp(record.processedAt) }}
+                </TableCell>
+
+                <!-- 2. Employee ID -->
+                <TableCell class="py-2.5 font-mono text-xs font-semibold text-foreground whitespace-nowrap">
+                  #{{ record.employeeId }}
+                </TableCell>
+
+                <!-- 3. Employee Name -->
+                <TableCell class="py-2.5 font-medium text-foreground whitespace-nowrap">
+                  {{ record.employeeName }}
+                </TableCell>
+
+                <!-- 4. Attendance Date -->
+                <TableCell class="py-2.5 whitespace-nowrap">
+                  <div class="flex flex-col">
+                    <span class="font-medium text-foreground">{{ formatDateDisplay(record.attendanceDate) }}</span>
+                    <span class="font-mono text-[10px] text-muted-foreground">{{ record.attendanceDate }}</span>
+                  </div>
+                </TableCell>
+
+                <!-- 5. Attendance Time -->
+                <TableCell class="py-2.5 font-mono text-[11px] text-foreground">
+                  {{ record.attendanceTime || '—' }}
+                </TableCell>
+
+                <!-- 6. Action (Approved vs Rejected clearly distinguishable, NO unnecessary icons) -->
+                <TableCell class="py-2.5 text-center whitespace-nowrap">
+                  <span
+                    v-if="record.status === 'Approved'"
+                    class="inline-block px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30"
+                  >
+                    Approved
+                  </span>
+                  <span
+                    v-else
+                    class="inline-block px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-rose-500/15 text-rose-800 dark:text-rose-300 border border-rose-500/30"
+                  >
+                    Rejected
+                  </span>
+                </TableCell>
+
+                <!-- 7. Remarks -->
+                <TableCell class="py-2.5 text-foreground">
+                  <div class="max-w-[260px] line-clamp-2 text-xs" :title="record.remarks">
+                    {{ record.remarks || '—' }}
+                  </div>
+                </TableCell>
+
+                <!-- 8. Processed By -->
+                <TableCell class="py-2.5 text-xs font-medium text-foreground whitespace-nowrap">
+                  {{ record.processedBy || 'Admin' }}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+
+          <!-- History Pagination Controls -->
+          <div class="p-3 border-t flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground bg-muted/20">
+            <div>
+              Showing <span class="font-semibold text-foreground">{{ ((historyPage - 1) * historyPageSize) + (historyRecords.length ? 1 : 0) }}</span> to
+              <span class="font-semibold text-foreground">{{ Math.min(historyPage * historyPageSize, historyTotal) }}</span> of
+              <span class="font-semibold text-foreground">{{ historyTotal }}</span> transactions
+            </div>
+
+            <div class="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-7 px-2 text-xs cursor-pointer"
+                :disabled="historyPage <= 1"
+                @click="changeHistoryPage(historyPage - 1)"
+              >
+                <ChevronLeft class="size-3.5 mr-1" />
+                <span>Previous</span>
+              </Button>
+
+              <span class="px-2 font-mono text-[11px]">
+                {{ historyPage }} / {{ historyTotalPages }}
+              </span>
+
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-7 px-2 text-xs cursor-pointer"
+                :disabled="historyPage >= historyTotalPages"
+                @click="changeHistoryPage(historyPage + 1)"
+              >
+                <span>Next</span>
+                <ChevronRight class="size-3.5 ml-1" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
 
     <!-- Review & Authorization Dialog (Optimized layout, container bounds, and explicit field breakdown) -->
     <Dialog v-model:open="isReviewDialogOpen">
@@ -659,7 +1045,7 @@ onMounted(() => {
           <Button
             variant="ghost"
             size="sm"
-            class="h-8 text-xs text-destructive hover:bg-destructive/10"
+            class="h-8 text-xs text-destructive hover:bg-destructive/10 cursor-pointer"
             @click="selectedRequest && handleDelete(selectedRequest)"
           >
             <Trash2 class="size-3.5 mr-1" />
@@ -671,7 +1057,7 @@ onMounted(() => {
             <Button
               variant="outline"
               size="sm"
-              class="h-8 text-xs"
+              class="h-8 text-xs cursor-pointer"
               @click="isReviewDialogOpen = false"
             >
               Cancel
@@ -683,7 +1069,7 @@ onMounted(() => {
                 v-if="!showRejectionInput"
                 variant="destructive"
                 size="sm"
-                class="h-8 text-xs font-semibold"
+                class="h-8 text-xs font-semibold cursor-pointer"
                 @click="showRejectionInput = true"
               >
                 Reject
@@ -692,7 +1078,7 @@ onMounted(() => {
                 v-else
                 variant="destructive"
                 size="sm"
-                class="h-8 text-xs font-semibold"
+                class="h-8 text-xs font-semibold cursor-pointer"
                 :disabled="isSubmittingAction"
                 @click="handleReject"
               >
@@ -702,7 +1088,7 @@ onMounted(() => {
               <Button
                 variant="default"
                 size="sm"
-                class="h-8 text-xs font-semibold gap-1.5 shadow-xs"
+                class="h-8 text-xs font-semibold gap-1.5 shadow-xs cursor-pointer"
                 :disabled="isSubmittingAction"
                 @click="handleApprove"
               >

@@ -1,4 +1,4 @@
-import { db, type ManualAttendanceRecord } from '@/db'
+import { db, type ManualAttendanceRecord, type ManualAttendanceHistoryRecord } from '@/db'
 
 export const manualAttendanceRepository = {
   /**
@@ -131,12 +131,23 @@ export const manualAttendanceRepository = {
   },
 
   /**
-   * Approves a manual time adjustment request
+   * Approves a manual time adjustment request and records a single persistent history transaction
    */
   async approveAdjustment(idOrBioId: string, date?: string, approver = 'Admin'): Promise<ManualAttendanceRecord | undefined> {
     const id = date ? `${idOrBioId}_${date}` : idOrBioId
     const existing = await db.manualAdjustments.get(id)
     if (!existing) return undefined
+
+    // Data integrity check: Do not re-process or re-record already approved requests
+    if (existing.status === 'Approved') {
+      const existingTx = await db.manualAttendanceHistory
+        .where('requestId')
+        .equals(existing.id)
+        .first()
+      if (existingTx) {
+        return existing
+      }
+    }
 
     const now = new Date().toISOString()
     existing.status = 'Approved'
@@ -144,16 +155,77 @@ export const manualAttendanceRepository = {
     existing.approvedAt = now
     existing.updatedAt = now
     await db.manualAdjustments.put(existing)
+
+    // Build human-readable attendance time and type
+    let attendanceTime = ''
+    let attendanceType = 'Manual Adjustment'
+    if (existing.manualIn && existing.manualOut) {
+      attendanceTime = `IN: ${existing.manualIn}, OUT: ${existing.manualOut}`
+      attendanceType = 'Time IN & OUT'
+    } else if (existing.manualIn) {
+      attendanceTime = `IN: ${existing.manualIn}`
+      attendanceType = 'Time IN'
+    } else if (existing.manualOut) {
+      attendanceTime = `OUT: ${existing.manualOut}`
+      attendanceType = 'Time OUT'
+    } else {
+      attendanceTime = existing.originalIn || existing.originalOut || '—'
+    }
+
+    // Lookup full name if not set
+    let empName = existing.employeeName
+    if (!empName || empName.startsWith('User #')) {
+      const emp = await db.employees.get(existing.bioId)
+      if (emp?.fullName) {
+        empName = emp.fullName
+      }
+    }
+
+    // Duplicate transaction prevention check before insert
+    const alreadyLogged = await db.manualAttendanceHistory
+      .where('requestId')
+      .equals(existing.id)
+      .filter(h => h.status === 'Approved')
+      .first()
+
+    if (!alreadyLogged) {
+      const historyEntry: ManualAttendanceHistoryRecord = {
+        id: `tx-appr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        requestId: existing.id,
+        employeeId: existing.bioId,
+        employeeName: empName || existing.employeeName || `User #${existing.bioId}`,
+        attendanceDate: existing.date,
+        attendanceTime,
+        attendanceType,
+        status: 'Approved',
+        remarks: (existing.reason || existing.notes || 'Approved manual adjustment').trim(),
+        processedBy: approver,
+        processedAt: now
+      }
+      await db.manualAttendanceHistory.put(historyEntry)
+    }
+
     return existing
   },
 
   /**
-   * Rejects a manual time adjustment request
+   * Rejects a manual time adjustment request and records a single persistent history transaction
    */
   async rejectAdjustment(idOrBioId: string, date?: string, reviewer = 'Admin', reason = 'Disapproved by HR/Admin'): Promise<ManualAttendanceRecord | undefined> {
     const id = date ? `${idOrBioId}_${date}` : idOrBioId
     const existing = await db.manualAdjustments.get(id)
     if (!existing) return undefined
+
+    // Data integrity check: Do not re-process or re-record already rejected requests
+    if (existing.status === 'Rejected') {
+      const existingTx = await db.manualAttendanceHistory
+        .where('requestId')
+        .equals(existing.id)
+        .first()
+      if (existingTx) {
+        return existing
+      }
+    }
 
     const now = new Date().toISOString()
     existing.status = 'Rejected'
@@ -162,7 +234,124 @@ export const manualAttendanceRepository = {
     existing.rejectionReason = reason
     existing.updatedAt = now
     await db.manualAdjustments.put(existing)
+
+    // Build human-readable attendance time and type
+    let attendanceTime = ''
+    let attendanceType = 'Manual Adjustment'
+    if (existing.manualIn && existing.manualOut) {
+      attendanceTime = `IN: ${existing.manualIn}, OUT: ${existing.manualOut}`
+      attendanceType = 'Time IN & OUT'
+    } else if (existing.manualIn) {
+      attendanceTime = `IN: ${existing.manualIn}`
+      attendanceType = 'Time IN'
+    } else if (existing.manualOut) {
+      attendanceTime = `OUT: ${existing.manualOut}`
+      attendanceType = 'Time OUT'
+    } else {
+      attendanceTime = existing.originalIn || existing.originalOut || '—'
+    }
+
+    // Lookup full name if not set
+    let empName = existing.employeeName
+    if (!empName || empName.startsWith('User #')) {
+      const emp = await db.employees.get(existing.bioId)
+      if (emp?.fullName) {
+        empName = emp.fullName
+      }
+    }
+
+    // Duplicate transaction prevention check before insert
+    const alreadyLogged = await db.manualAttendanceHistory
+      .where('requestId')
+      .equals(existing.id)
+      .filter(h => h.status === 'Rejected')
+      .first()
+
+    if (!alreadyLogged) {
+      const historyEntry: ManualAttendanceHistoryRecord = {
+        id: `tx-rej-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        requestId: existing.id,
+        employeeId: existing.bioId,
+        employeeName: empName || existing.employeeName || `User #${existing.bioId}`,
+        attendanceDate: existing.date,
+        attendanceTime,
+        attendanceType,
+        status: 'Rejected',
+        remarks: reason.trim(),
+        processedBy: reviewer,
+        processedAt: now
+      }
+      await db.manualAttendanceHistory.put(historyEntry)
+    }
+
     return existing
+  },
+
+  /**
+   * Retrieves paginated transaction history with filtering
+   */
+  async getHistory(params: {
+    status?: 'all' | 'Approved' | 'Rejected'
+    search?: string
+    date?: string
+    page?: number
+    pageSize?: number
+  } = {}): Promise<{
+    records: ManualAttendanceHistoryRecord[]
+    total: number
+    approvedCount: number
+    rejectedCount: number
+    currentPage: number
+    totalPages: number
+    pageSize: number
+  }> {
+    const all = await db.manualAttendanceHistory.toArray()
+
+    // Sort newest processed transaction first
+    all.sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime())
+
+    const approvedCount = all.filter(r => r.status === 'Approved').length
+    const rejectedCount = all.filter(r => r.status === 'Rejected').length
+
+    let filtered = all
+
+    if (params.status && params.status !== 'all') {
+      filtered = filtered.filter(r => r.status === params.status)
+    }
+
+    if (params.date && params.date.trim()) {
+      filtered = filtered.filter(r => r.attendanceDate === params.date || r.processedAt.startsWith(params.date!))
+    }
+
+    if (params.search && params.search.trim()) {
+      const q = params.search.toLowerCase().trim()
+      filtered = filtered.filter(r =>
+        (r.employeeName && r.employeeName.toLowerCase().includes(q)) ||
+        r.employeeId.toLowerCase().includes(q) ||
+        (r.remarks && r.remarks.toLowerCase().includes(q)) ||
+        (r.processedBy && r.processedBy.toLowerCase().includes(q)) ||
+        r.attendanceDate.includes(q) ||
+        (r.attendanceTime && r.attendanceTime.toLowerCase().includes(q)) ||
+        (r.attendanceType && r.attendanceType.toLowerCase().includes(q))
+      )
+    }
+
+    const total = filtered.length
+    const page = Math.max(1, params.page || 1)
+    const pageSize = Math.max(1, params.pageSize || 10)
+    const totalPages = Math.ceil(total / pageSize) || 1
+    const startIdx = (page - 1) * pageSize
+    const records = filtered.slice(startIdx, startIdx + pageSize)
+
+    return {
+      records,
+      total,
+      approvedCount,
+      rejectedCount,
+      currentPage: page,
+      totalPages,
+      pageSize
+    }
   },
 
   /**

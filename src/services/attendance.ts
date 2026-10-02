@@ -87,6 +87,19 @@ export const attendanceService = {
   },
 
   /**
+   * Retrieves paginated transaction history for manual attendance approvals and rejections
+   */
+  async getManualAttendanceHistory(params?: {
+    status?: 'all' | 'Approved' | 'Rejected'
+    search?: string
+    date?: string
+    page?: number
+    pageSize?: number
+  }) {
+    return manualAttendanceRepository.getHistory(params)
+  },
+
+  /**
    * Deletes a manual adjustment record
    */
   async deleteManualAdjustment(bioIdOrId: string, date?: string) {

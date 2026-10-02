@@ -160,6 +160,20 @@ export interface ManualAttendanceRecord {
   updatedAt: string
 }
 
+export interface ManualAttendanceHistoryRecord {
+  id: string
+  requestId: string
+  employeeId: string
+  employeeName: string
+  attendanceDate: string
+  attendanceTime: string
+  attendanceType: string
+  status: 'Approved' | 'Rejected'
+  remarks: string
+  processedBy: string
+  processedAt: string
+}
+
 export class DMBBHRDatabase extends Dexie {
   workGroups!: Table<WorkGroupRecord, string>
   biometricPunches!: Table<BiometricPunchRecord, string>
@@ -171,6 +185,7 @@ export class DMBBHRDatabase extends Dexie {
   holidays!: Table<HolidayRecord, string>
   importJobs!: Table<ImportJobRecord, string>
   manualAdjustments!: Table<ManualAttendanceRecord, string>
+  manualAttendanceHistory!: Table<ManualAttendanceHistoryRecord, string>
 
   constructor() {
     super('DMBBHR_LocalDB')
@@ -187,6 +202,10 @@ export class DMBBHRDatabase extends Dexie {
       holidays: 'id, date',
       importJobs: 'id, importedAt',
       manualAdjustments: 'id, bioId, date, status, [bioId+date], [status+date]'
+    })
+
+    this.version(6).stores({
+      manualAttendanceHistory: 'id, requestId, employeeId, attendanceDate, status, processedAt, [status+processedAt]'
     })
   }
 }
