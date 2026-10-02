@@ -12,7 +12,7 @@ import {
   AlertCircle,
   AlertTriangle,
   X,
-  Users,
+  UsersRound,
   Save,
   Coffee,
   CalendarDays,
@@ -309,22 +309,13 @@ onMounted(() => {
                   </Badge>
                 </div>
                 <div class="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <Users class="size-3" />
+                  <UsersRound class="size-3" />
                   <span class="font-semibold text-foreground">{{ employeeCounts[wg.id] || 0 }}</span> employees assigned
                 </div>
               </div>
 
               <!-- Action icons -->
               <div class="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 w-7 p-0 rounded-md text-muted-foreground hover:text-foreground"
-                  title="Edit Group"
-                  @click="openEditModal(wg)"
-                >
-                  <Edit2 class="size-3.5" />
-                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
