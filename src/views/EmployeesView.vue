@@ -724,15 +724,6 @@ onUnmounted(() => {
               <TableCell class="text-right" @click.stop>
                 <div class="flex items-center justify-end gap-1.5">
                   <Button
-                    variant="outline"
-                    size="sm"
-                    class="h-7 px-2 text-xs gap-1 shadow-xs"
-                    @click="openProfile(emp, 'overview')"
-                  >
-                    <Eye class="size-3 text-muted-foreground" />
-                    <span>Profile</span>
-                  </Button>
-                  <Button
                     variant="ghost"
                     size="sm"
                     class="h-7 px-2 text-xs gap-1"
@@ -1062,7 +1053,11 @@ onUnmounted(() => {
           <!-- TAB 2: EDIT PROFILE FORM -->
           <!-- ============================================== -->
           <template v-else>
-            <form @submit.prevent="saveProfile" class="space-y-4">
+            <form
+              id="employee-profile-form"
+              @submit.prevent="saveProfile"
+              class="space-y-4"
+            >
               <!-- Section 1: Immutable Identifier (Bio ID = Employee ID) -->
               <div class="rounded-lg border bg-muted/40 p-3 space-y-1.5">
                 <div class="flex items-center justify-between text-xs font-semibold">
@@ -1364,29 +1359,6 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
-
-              <!-- Bottom Action Buttons inside Form -->
-              <div class="flex items-center justify-end gap-2 pt-2 border-t">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="h-8 text-xs"
-                  @click="closeProfileModal"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  size="sm"
-                  class="h-8 text-xs gap-1.5 font-medium shadow-xs"
-                  :disabled="profileSaving"
-                >
-                  <RefreshCw v-if="profileSaving" class="size-3.5 animate-spin" />
-                  <Save v-else class="size-3.5" />
-                  <span>{{ profileSaving ? 'Saving Changes...' : 'Save Profile Changes' }}</span>
-                </Button>
-              </div>
             </form>
           </template>
         </div>
@@ -1400,33 +1372,38 @@ onUnmounted(() => {
           </div>
 
           <div class="flex items-center gap-2">
-            <Button
-              v-if="activeProfileTab === 'overview'"
-              variant="default"
-              size="sm"
-              class="h-7 text-xs gap-1.5 font-medium"
-              @click="activeProfileTab = 'edit'"
-            >
-              <UserRoundPen class="size-3" />
-              <span>Edit Profile</span>
-            </Button>
-            <Button
-              v-else
-              variant="outline"
-              size="sm"
-              class="h-7 text-xs"
-              @click="closeProfileModal"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-7 text-xs"
-              @click="closeProfileModal"
-            >
-              Close
-            </Button>
+            <!-- Edit -->
+            <template v-if="activeProfileTab === 'edit'">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                class="h-7 text-xs"
+                @click="closeProfileModal"
+              >
+                Cancel
+              </Button>
+
+              <Button
+                type="submit"
+                form="employee-profile-form"
+                size="sm"
+                class="h-7 text-xs gap-1.5 font-medium shadow-xs"
+                :disabled="profileSaving"
+              >
+                <RefreshCw
+                  v-if="profileSaving"
+                  class="size-3 animate-spin"
+                />
+                <Save
+                  v-else
+                  class="size-3"
+                />
+                <span>
+                  {{ profileSaving ? 'Saving Changes...' : 'Save Changes' }}
+                </span>
+              </Button>
+            </template>
           </div>
         </div>
       </div>
