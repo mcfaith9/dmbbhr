@@ -357,11 +357,11 @@ onMounted(() => {
           <TableHeader>
             <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
               <TableHead class="font-semibold text-foreground min-w-[170px]">Employee</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[110px]">Date</TableHead>
+              <TableHead class="font-semibold text-foreground min-w-[100px]">Date</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[130px]">Current IN / OUT</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[180px]">Requested Adjustment</TableHead>
+              <TableHead class="font-semibold text-foreground min-w-[170px]">Requested Adjustment</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[180px]">Reason / Notes</TableHead>
-              <TableHead class="font-semibold text-foreground min-w-[130px]">Requested By</TableHead>
+              <TableHead class="font-semibold text-foreground min-w-[120px]">Requested By</TableHead>
               <TableHead class="font-semibold text-foreground text-center w-[100px]">Status</TableHead>
               <TableHead class="font-semibold text-foreground text-right w-[90px]">Action</TableHead>
             </TableRow>
