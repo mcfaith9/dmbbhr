@@ -79,12 +79,12 @@ type EditSection = 'people' | 'employment' | 'payroll' | 'government' | 'benefit
 const activeEditSection = ref<EditSection>('people')
 
 const editSections = [
-  { id: 'people' as const, label: 'People Details', icon: User },
+  { id: 'people' as const, label: 'Details', icon: User },
   { id: 'employment' as const, label: 'Employment', icon: Building },
   { id: 'payroll' as const, label: 'Payroll', icon: CreditCard },
   { id: 'government' as const, label: 'Government', icon: Landmark },
   { id: 'benefits' as const, label: 'Benefits', icon: Banknote },
-  { id: 'emergency' as const, label: 'Emergency Contact', icon: ShieldAlert },
+  { id: 'emergency' as const, label: 'Contacts', icon: ShieldAlert },
   { id: 'biometric' as const, label: 'Biometric', icon: Fingerprint }
 ]
 
@@ -925,24 +925,27 @@ onUnmounted(() => {
         <!-- Tab Toggle Bar -->
         <div class="px-4 py-2 border-b bg-muted/15 flex items-center justify-between gap-2">
           <div class="flex items-center gap-1 text-xs">
-            <button
+            <Button
               type="button"
-              class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5"
-              :class="activeProfileTab === 'overview' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              size="sm"
+              :variant="activeProfileTab === 'overview' ? 'default' : 'outline'"
+              class="h-7 gap-1.5 px-3 text-xs whitespace-nowrap border"
               @click="activeProfileTab = 'overview'"
             >
               <Eye class="size-3.5" />
               <span>Profile Overview</span>
-            </button>
-            <button
+            </Button>
+
+            <Button
               type="button"
-              class="px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5"
-              :class="activeProfileTab === 'edit' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              size="sm"
+              :variant="activeProfileTab === 'edit' ? 'default' : 'outline'"
+              class="h-7 gap-1.5 px-3 text-xs whitespace-nowrap border"
               @click="activeProfileTab = 'edit'"
             >
               <UserRoundPen class="size-3.5" />
               <span>Edit Profile</span>
-            </button>
+            </Button>
           </div>
 
           <div class="text-[11px] text-muted-foreground hidden sm:block">
@@ -955,23 +958,26 @@ onUnmounted(() => {
           v-if="activeProfileTab === 'edit'"
           class="px-3.5 py-2 border-b bg-muted/20 overflow-x-auto no-scrollbar flex items-center gap-1.5 shrink-0"
         >
-          <button
+          <Button
             v-for="sec in editSections"
             :key="sec.id"
             type="button"
-            class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 border cursor-pointer"
-            :class="activeEditSection === sec.id
-              ? 'bg-background text-primary border-primary/30 shadow-xs font-semibold ring-1 ring-primary/20'
-              : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/70'"
+            size="sm"
+            variant="outline"
+            class="h-7 shrink-0 gap-1.5 px-2.5 text-xs whitespace-nowrap border"
+            :class="
+              activeEditSection === sec.id
+                ? 'bg-primary text-primary-foreground border-primary hover:bg-primary/90 hover:text-primary-foreground'
+                : 'bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
+            "
             @click="setEditSection(sec.id)"
           >
             <component
               :is="sec.icon"
               class="size-3.5 shrink-0"
-              :class="activeEditSection === sec.id ? 'text-primary' : 'text-muted-foreground'"
             />
             <span>{{ sec.label }}</span>
-          </button>
+          </Button>
         </div>
 
         <!-- Success & Error Banners -->
@@ -2031,17 +2037,6 @@ onUnmounted(() => {
                 >
                   <span>Next Section</span>
                   <ChevronRight class="size-3" />
-                </Button>
-                <Button
-                  v-else
-                  type="submit"
-                  form="employee-profile-form"
-                  size="sm"
-                  class="h-7 text-xs gap-1.5"
-                  :disabled="profileSaving"
-                >
-                  <Save class="size-3" />
-                  <span>Save Changes</span>
                 </Button>
               </div>
             </form>
