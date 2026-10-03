@@ -26,7 +26,9 @@ import {
   Eye,
   Landmark,
   Banknote,
-  Calculator
+  Calculator,
+  ChevronLeft,
+  ChevronRight
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -71,6 +73,59 @@ const pageSize = ref(10)
 const showProfileModal = ref(false)
 const activeProfileTab = ref<'overview' | 'edit'>('overview')
 const selectedEmployee = ref<Employee | null>(null)
+
+type EditSection = 'people' | 'employment' | 'payroll' | 'government' | 'benefits' | 'emergency' | 'biometric'
+
+const activeEditSection = ref<EditSection>('people')
+
+const editSections = [
+  { id: 'people' as const, label: 'People Details', icon: User },
+  { id: 'employment' as const, label: 'Employment', icon: Building },
+  { id: 'payroll' as const, label: 'Payroll', icon: CreditCard },
+  { id: 'government' as const, label: 'Government', icon: Landmark },
+  { id: 'benefits' as const, label: 'Benefits', icon: Banknote },
+  { id: 'emergency' as const, label: 'Emergency Contact', icon: ShieldAlert },
+  { id: 'biometric' as const, label: 'Biometric', icon: Fingerprint }
+]
+
+function setEditSection(sec: EditSection) {
+  activeEditSection.value = sec
+}
+
+function nextEditSection() {
+  const idx = editSections.findIndex(s => s.id === activeEditSection.value)
+  if (idx < editSections.length - 1) {
+    activeEditSection.value = editSections[idx + 1].id
+  }
+}
+
+function prevEditSection() {
+  const idx = editSections.findIndex(s => s.id === activeEditSection.value)
+  if (idx > 0) {
+    activeEditSection.value = editSections[idx - 1].id
+  }
+}
+
+function openEditSection(sec: EditSection) {
+  activeProfileTab.value = 'edit'
+  activeEditSection.value = sec
+}
+
+function viewEmployeeAttendanceLogs() {
+  if (selectedEmployee.value) {
+    const id = selectedEmployee.value.biometric_user_id
+    closeProfileModal()
+    router.push({ path: '/attendance/logs', query: { q: id } })
+  }
+}
+
+function viewEmployeeDailyAttendance() {
+  if (selectedEmployee.value) {
+    const id = selectedEmployee.value.biometric_user_id
+    closeProfileModal()
+    router.push({ path: '/attendance/daily', query: { q: id } })
+  }
+}
 
 // Form fields for editing employee profile
 const formBioId = ref('')
@@ -291,9 +346,10 @@ function onPageChange(page: number) {
   currentPage.value = page
 }
 
-function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview') {
+function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initialSection: EditSection = 'people') {
   selectedEmployee.value = emp
   activeProfileTab.value = tab
+  activeEditSection.value = initialSection
 
   // Initialize form state
   formBioId.value = emp.biometric_user_id
@@ -347,6 +403,7 @@ function closeProfileModal() {
 async function saveProfile() {
   if (!formName.value.trim()) {
     profileErrorMsg.value = 'Employee Full Name is required.'
+    activeEditSection.value = 'people'
     return
   }
 
@@ -893,6 +950,30 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <!-- Compact Section Navigation Bar (Visible in Edit Profile Mode) -->
+        <div
+          v-if="activeProfileTab === 'edit'"
+          class="px-3.5 py-2 border-b bg-muted/20 overflow-x-auto no-scrollbar flex items-center gap-1.5 shrink-0"
+        >
+          <button
+            v-for="sec in editSections"
+            :key="sec.id"
+            type="button"
+            class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 border cursor-pointer"
+            :class="activeEditSection === sec.id
+              ? 'bg-background text-primary border-primary/30 shadow-xs font-semibold ring-1 ring-primary/20'
+              : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/70'"
+            @click="setEditSection(sec.id)"
+          >
+            <component
+              :is="sec.icon"
+              class="size-3.5 shrink-0"
+              :class="activeEditSection === sec.id ? 'text-primary' : 'text-muted-foreground'"
+            />
+            <span>{{ sec.label }}</span>
+          </button>
+        </div>
+
         <!-- Success & Error Banners -->
         <div v-if="profileSuccessMsg" class="p-3 mx-4 mt-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
           <CheckCircle2 class="size-4 shrink-0 text-emerald-600" />
@@ -919,7 +1000,17 @@ onUnmounted(() => {
                     <User class="size-3.5 text-primary" />
                     <span>Basic Information</span>
                   </div>
-                  <span class="text-[10px] text-muted-foreground">Personal</span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                      @click="openEditSection('people')"
+                    >
+                      <UserRoundPen class="size-3" />
+                      <span>Edit</span>
+                    </button>
+                    <span class="text-[10px] text-muted-foreground">• Personal</span>
+                  </div>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div>
@@ -956,7 +1047,17 @@ onUnmounted(() => {
                     <Phone class="size-3.5 text-primary" />
                     <span>Contact Information</span>
                   </div>
-                  <span class="text-[10px] text-muted-foreground">Reachability</span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                      @click="openEditSection('people')"
+                    >
+                      <UserRoundPen class="size-3" />
+                      <span>Edit</span>
+                    </button>
+                    <span class="text-[10px] text-muted-foreground">• Reachability</span>
+                  </div>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div>
@@ -985,7 +1086,17 @@ onUnmounted(() => {
                     <Building class="size-3.5 text-primary" />
                     <span>Employment Information</span>
                   </div>
-                  <span class="text-[10px] text-muted-foreground">Organizational</span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                      @click="openEditSection('employment')"
+                    >
+                      <UserRoundPen class="size-3" />
+                      <span>Edit</span>
+                    </button>
+                    <span class="text-[10px] text-muted-foreground">• Organizational</span>
+                  </div>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div>
@@ -1024,7 +1135,17 @@ onUnmounted(() => {
                     <ShieldAlert class="size-3.5 text-amber-500" />
                     <span>Emergency Contact</span>
                   </div>
-                  <span class="text-[10px] text-muted-foreground">Safety</span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                      @click="openEditSection('emergency')"
+                    >
+                      <UserRoundPen class="size-3" />
+                      <span>Edit</span>
+                    </button>
+                    <span class="text-[10px] text-muted-foreground">• Safety</span>
+                  </div>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div class="col-span-2">
@@ -1050,10 +1171,20 @@ onUnmounted(() => {
                   <Fingerprint class="size-4 text-primary" />
                   <span>Biometric Device Registration</span>
                 </div>
-                <Badge variant="outline" class="text-[10px] font-mono gap-1">
-                  <Lock class="size-2.5" />
-                  Read-Only Key
-                </Badge>
+                <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                    @click="openEditSection('biometric')"
+                  >
+                    <Eye class="size-3" />
+                    <span>Hardware Info</span>
+                  </button>
+                  <Badge variant="outline" class="text-[10px] font-mono gap-1">
+                    <Lock class="size-2.5" />
+                    Read-Only Key
+                  </Badge>
+                </div>
               </div>
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs pt-1">
                 <div class="space-y-0.5">
@@ -1079,6 +1210,22 @@ onUnmounted(() => {
                   <span>Payroll Profile</span>
                 </div>
                 <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium mr-1"
+                    @click="openEditSection('payroll')"
+                  >
+                    <UserRoundPen class="size-3" />
+                    <span>Edit Rates</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium mr-1"
+                    @click="openEditSection('government')"
+                  >
+                    <Landmark class="size-3" />
+                    <span>Edit Tax/Gov</span>
+                  </button>
                   <Badge variant="default" class="text-[10px] font-mono uppercase bg-primary text-primary-foreground">
                     {{ selectedEmployee.payroll_status || 'Configured' }}
                   </Badge>
@@ -1184,288 +1331,263 @@ onUnmounted(() => {
               @submit.prevent="saveProfile"
               class="space-y-4"
             >
-              <!-- Section 1: Immutable Identifier (Bio ID = Employee ID) -->
-              <div class="rounded-lg border bg-muted/40 p-3 space-y-1.5">
-                <div class="flex items-center justify-between text-xs font-semibold">
-                  <span class="flex items-center gap-1.5 text-foreground">
-                    <Fingerprint class="size-3.5 text-primary" />
-                    <span>Employee ID / Bio ID</span>
-                  </span>
-                  <span class="text-[10px] text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
-                    <Lock class="size-2.5" />
-                    Permanent Read-Only Identifier
-                  </span>
-                </div>
-                <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted font-mono text-xs font-bold text-foreground">
-                  <span>{{ formBioId }}</span>
-                  <span class="text-muted-foreground font-normal text-[11px]">— Matches Biometric Device User ID</span>
-                </div>
-              </div>
-
-              <!-- Section 2: Basic Information -->
-              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
-                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
-                  <User class="size-3.5 text-primary" />
-                  <span>Basic Personal Information</span>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">
-                      Full Name <span class="text-destructive">*</span>
-                    </label>
-                    <Input
-                      v-model="formName"
-                      type="text"
-                      required
-                      placeholder="e.g. Dela Cruz, Juan"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Preferred Name</label>
-                    <Input
-                      v-model="formPreferredName"
-                      type="text"
-                      placeholder="e.g. Johnny"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Birthday / Date of Birth</label>
-                    <DatePicker
-                      v-model="formDateOfBirth"
-                      placeholder="Pick birthday"
-                      class="w-full h-8 text-xs font-normal"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Gender</label>
-                    <Select v-model="formGender">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Gender" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="not_specified">Not Specified</SelectItem>
-                          <SelectItem value="Male">Male</SelectItem>
-                          <SelectItem value="Female">Female</SelectItem>
-                          <SelectItem value="Other">Other</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div class="space-y-1 sm:col-span-2">
-                    <label class="text-xs font-semibold text-foreground">Civil Status</label>
-                    <Select v-model="formCivilStatus">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Civil Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="not_specified">Not Specified</SelectItem>
-                          <SelectItem value="Single">Single</SelectItem>
-                          <SelectItem value="Married">Married</SelectItem>
-                          <SelectItem value="Widowed">Widowed</SelectItem>
-                          <SelectItem value="Separated">Separated</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Section 3: Contact Details -->
-              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
-                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
-                  <Phone class="size-3.5 text-primary" />
-                  <span>Contact Information</span>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Mobile / Contact Number</label>
-                    <Input
-                      v-model="formMobileNumber"
-                      type="text"
-                      placeholder="e.g. 0917-123-4567"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Alternate Contact Number</label>
-                    <Input
-                      v-model="formAlternateNumber"
-                      type="text"
-                      placeholder="e.g. 032-234-5678"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1 sm:col-span-2">
-                    <label class="text-xs font-semibold text-foreground">Email Address</label>
-                    <Input
-                      v-model="formEmail"
-                      type="email"
-                      placeholder="e.g. employee@dmbb.com"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1 sm:col-span-2">
-                    <label class="text-xs font-semibold text-foreground">Home Address</label>
-                    <Input
-                      v-model="formHomeAddress"
-                      type="text"
-                      placeholder="e.g. Cebu City, Philippines"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <!-- Section 4: Emergency Contact -->
-              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
-                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
-                  <ShieldAlert class="size-3.5 text-amber-500" />
-                  <span>Emergency Contact</span>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Contact Name</label>
-                    <Input
-                      v-model="formEmergencyName"
-                      type="text"
-                      placeholder="e.g. Maria Dela Cruz"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Relationship</label>
-                    <Input
-                      v-model="formEmergencyRelationship"
-                      type="text"
-                      placeholder="e.g. Spouse / Parent"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Contact Number</label>
-                    <Input
-                      v-model="formEmergencyNumber"
-                      type="text"
-                      placeholder="e.g. 0918-987-6543"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <!-- Section 5: Employment Details -->
-              <div class="rounded-xl border p-3.5 space-y-3 bg-card">
-                <div class="flex items-center gap-1.5 text-xs font-bold text-foreground pb-1 border-b">
-                  <Building class="size-3.5 text-primary" />
-                  <span>Employment & Schedule</span>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Department</label>
-                    <Input
-                      v-model="formDepartment"
-                      type="text"
-                      placeholder="Operations"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Position / Role</label>
-                    <Input
-                      v-model="formPosition"
-                      type="text"
-                      placeholder="Staff"
-                      class="h-8 text-xs"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Branch Location</label>
-                    <Select v-model="formLocation">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Location" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
-                            {{ loc }}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Assigned Work Group</label>
-                    <Select v-model="formWorkGroupId">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Work Group" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
-                            {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Date Hired</label>
-                    <DatePicker
-                      v-model="formHireDate"
-                      placeholder="Pick hire date"
-                      class="w-full h-8 text-xs font-normal"
-                    />
-                  </div>
-                  <div class="space-y-1">
-                    <label class="text-xs font-semibold text-foreground">Date Regularized</label>
-                    <DatePicker
-                      v-model="formRegularizationDate"
-                      placeholder="Pick regularization date"
-                      class="w-full h-8 text-xs font-normal"
-                    />
-                  </div>
-                  <div class="space-y-1 sm:col-span-2">
-                    <label class="text-xs font-semibold text-foreground">Employment Status</label>
-                    <Select v-model="formStatus">
-                      <SelectTrigger class="h-8 text-xs w-full bg-card">
-                        <SelectValue placeholder="Select Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="on_leave">On Leave</SelectItem>
-                          <SelectItem value="inactive">Inactive</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Section 6: Complete Master Payroll Profile Information -->
-              <div class="rounded-xl border p-3.5 space-y-4 bg-card">
-                <div class="flex items-center justify-between pb-1.5 border-b">
-                  <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
-                    <CreditCard class="size-3.5 text-primary" />
-                    <span>Payroll Information</span>
-                  </div>
-                  <span class="text-[10px] text-muted-foreground">Compensation & Statutory</span>
-                </div>
-
-                <!-- 6.1 Salary & Rate Information -->
-                <div class="space-y-2">
-                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                    <span class="flex items-center gap-1.5">
-                      <Banknote class="size-3 text-primary" />
-                      <span>Salary Information</span>
+              <!-- ============================================== -->
+              <!-- SECTION 1: PEOPLE DETAILS -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'people'" class="space-y-3.5">
+                <!-- Permanent Read-Only Identifier -->
+                <div class="rounded-lg border bg-muted/40 p-3 space-y-1.5">
+                  <div class="flex items-center justify-between text-xs font-semibold">
+                    <span class="flex items-center gap-1.5 text-foreground">
+                      <Fingerprint class="size-3.5 text-primary" />
+                      <span>Employee ID / Bio ID</span>
                     </span>
+                    <span class="text-[10px] text-amber-600 dark:text-amber-400 font-mono flex items-center gap-1">
+                      <Lock class="size-2.5" />
+                      Permanent Hardware Key
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted font-mono text-xs font-bold text-foreground">
+                    <span>{{ formBioId }}</span>
+                    <span class="text-muted-foreground font-normal text-[11px]">— Matches Biometric Device User ID</span>
+                  </div>
+                </div>
+
+                <!-- Personal Information -->
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <User class="size-3.5 text-primary" />
+                      <span>Personal Information</span>
+                    </div>
+                    <span class="text-[10px] text-muted-foreground">Basic Profile</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">
+                        Full Name <span class="text-destructive">*</span>
+                      </label>
+                      <Input
+                        v-model="formName"
+                        type="text"
+                        required
+                        placeholder="e.g. Dela Cruz, Juan"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Preferred Name</label>
+                      <Input
+                        v-model="formPreferredName"
+                        type="text"
+                        placeholder="e.g. Johnny"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Birthday / Date of Birth</label>
+                      <DatePicker
+                        v-model="formDateOfBirth"
+                        placeholder="Pick birthday"
+                        class="w-full h-8 text-xs font-normal"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Gender</label>
+                      <Select v-model="formGender">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Gender" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="not_specified">Not Specified</SelectItem>
+                            <SelectItem value="Male">Male</SelectItem>
+                            <SelectItem value="Female">Female</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                      <label class="text-xs font-semibold text-foreground">Civil Status</label>
+                      <Select v-model="formCivilStatus">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Civil Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="not_specified">Not Specified</SelectItem>
+                            <SelectItem value="Single">Single</SelectItem>
+                            <SelectItem value="Married">Married</SelectItem>
+                            <SelectItem value="Widowed">Widowed</SelectItem>
+                            <SelectItem value="Separated">Separated</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Contact & Reachability -->
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Phone class="size-3.5 text-primary" />
+                      <span>Contact & Reachability</span>
+                    </div>
+                    <span class="text-[10px] text-muted-foreground">Addresses & Numbers</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Mobile / Contact Number</label>
+                      <Input
+                        v-model="formMobileNumber"
+                        type="text"
+                        placeholder="e.g. 0917-123-4567"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Alternate Contact Number</label>
+                      <Input
+                        v-model="formAlternateNumber"
+                        type="text"
+                        placeholder="e.g. 032-234-5678"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                      <label class="text-xs font-semibold text-foreground">Email Address</label>
+                      <Input
+                        v-model="formEmail"
+                        type="email"
+                        placeholder="e.g. employee@dmbb.com"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                      <label class="text-xs font-semibold text-foreground">Home Address</label>
+                      <Input
+                        v-model="formHomeAddress"
+                        type="text"
+                        placeholder="e.g. Cebu City, Philippines"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ============================================== -->
+              <!-- SECTION 2: EMPLOYMENT -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'employment'" class="space-y-3.5">
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Building class="size-3.5 text-primary" />
+                      <span>Organizational & Shift Assignment</span>
+                    </div>
+                    <span class="text-[10px] text-muted-foreground">Company Records</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Department</label>
+                      <Input
+                        v-model="formDepartment"
+                        type="text"
+                        placeholder="Operations"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Position / Role</label>
+                      <Input
+                        v-model="formPosition"
+                        type="text"
+                        placeholder="Staff"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Branch Location</label>
+                      <Select v-model="formLocation">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Location" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem v-for="loc in VALID_LOCATIONS" :key="loc" :value="loc">
+                              {{ loc }}
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Assigned Work Group Schedule</label>
+                      <Select v-model="formWorkGroupId">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Work Group" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem v-for="wg in workGroups" :key="wg.id" :value="wg.id">
+                              {{ wg.name }} ({{ wg.standard_in }}–{{ wg.expected_out }})
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Date Hired</label>
+                      <DatePicker
+                        v-model="formHireDate"
+                        placeholder="Pick hire date"
+                        class="w-full h-8 text-xs font-normal"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Date Regularized</label>
+                      <DatePicker
+                        v-model="formRegularizationDate"
+                        placeholder="Pick regularization date"
+                        class="w-full h-8 text-xs font-normal"
+                      />
+                    </div>
+                    <div class="space-y-1 sm:col-span-2">
+                      <label class="text-xs font-semibold text-foreground">Employment Status</label>
+                      <Select v-model="formStatus">
+                        <SelectTrigger class="h-8 text-xs w-full bg-card">
+                          <SelectValue placeholder="Select Status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="on_leave">On Leave</SelectItem>
+                            <SelectItem value="inactive">Inactive</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ============================================== -->
+              <!-- SECTION 3: PAYROLL -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'payroll'" class="space-y-3.5">
+                <!-- Salary & Compensation Rates -->
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Banknote class="size-3.5 text-primary" />
+                      <span>Compensation & Rates</span>
+                    </div>
                     <button
                       type="button"
-                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                      class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
                       @click="autoCalculateRates"
                       title="Calculate Daily and Hourly rates based on Basic Salary"
                     >
@@ -1573,48 +1695,14 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <!-- 6.2 Allowances & Benefits -->
-                <div class="space-y-2 pt-1 border-t">
-                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Allowances & Benefits (Optional)
-                  </div>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div class="space-y-1">
-                      <label class="text-xs font-semibold text-foreground">Fixed Allowances (Monthly)</label>
-                      <div class="relative">
-                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
-                        <Input
-                          v-model.number="formAllowances"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          class="h-8 text-xs pl-6 font-mono"
-                        />
-                      </div>
+                <!-- Payment Method & Banking -->
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Landmark class="size-3.5 text-primary" />
+                      <span>Payment Method & Banking</span>
                     </div>
-                    <div class="space-y-1">
-                      <label class="text-xs font-semibold text-foreground">De Minimis Benefits</label>
-                      <div class="relative">
-                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
-                        <Input
-                          v-model.number="formDeMinimis"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          class="h-8 text-xs pl-6 font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 6.3 Payment & Disbursement -->
-                <div class="space-y-2 pt-1 border-t">
-                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <Landmark class="size-3 text-primary" />
-                    <span>Payment Method & Banking</span>
+                    <span class="text-[10px] text-muted-foreground">Disbursement</span>
                   </div>
                   <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div class="space-y-1">
@@ -1654,12 +1742,19 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
+              </div>
 
-                <!-- 6.4 Statutory & Government IDs -->
-                <div class="space-y-2 pt-1 border-t">
-                  <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <Fingerprint class="size-3 text-primary" />
-                    <span>Statutory & Tax Identification</span>
+              <!-- ============================================== -->
+              <!-- SECTION 4: GOVERNMENT -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'government'" class="space-y-3.5">
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Landmark class="size-3.5 text-primary" />
+                      <span>Statutory & Tax Identification</span>
+                    </div>
+                    <span class="text-[10px] text-muted-foreground">Government Compliance</span>
                   </div>
                   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     <div class="space-y-1">
@@ -1720,7 +1815,234 @@ onUnmounted(() => {
                       </Select>
                     </div>
                   </div>
+
+                  <!-- Explanatory compliance note -->
+                  <div class="pt-2 text-[11px] text-muted-foreground border-t flex items-start gap-1.5">
+                    <CheckCircle2 class="size-3.5 text-primary shrink-0 mt-0.5" />
+                    <span>
+                      Statutory IDs are utilized for mandatory Philippine government remittal schedules including SSS R-1A/R-3, PhilHealth EPRS RF-1, HDMF MCRF, and BIR Form 2316 Certificate of Compensation.
+                    </span>
+                  </div>
                 </div>
+              </div>
+
+              <!-- ============================================== -->
+              <!-- SECTION 5: BENEFITS -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'benefits'" class="space-y-3.5">
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Banknote class="size-3.5 text-primary" />
+                      <span>Allowances & De Minimis Benefits</span>
+                    </div>
+                    <span class="text-[10px] text-muted-foreground">Compensation Supplements</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Fixed Allowances (Monthly)</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formAllowances"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                      <p class="text-[10px] text-muted-foreground">
+                        Recurring monthly allowances (transportation, meals, representation) added to pay.
+                      </p>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">De Minimis Benefits</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formDeMinimis"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                      <p class="text-[10px] text-muted-foreground">
+                        Non-taxable benefits under statutory ceilings (rice subsidy, clothing allowance).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground space-y-1 border">
+                    <div class="font-semibold text-foreground text-[11px] flex items-center gap-1.5">
+                      <CreditCard class="size-3.5 text-primary" />
+                      <span>Payroll Integration</span>
+                    </div>
+                    <p class="text-[11px]">
+                      Configured allowances and de minimis values will automatically populate in regular semi-monthly payroll generations for this employee.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ============================================== -->
+              <!-- SECTION 6: EMERGENCY CONTACT -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'emergency'" class="space-y-3.5">
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <ShieldAlert class="size-3.5 text-amber-500" />
+                      <span>Emergency Contact Person</span>
+                    </div>
+                    <span class="text-[10px] text-muted-foreground">Workplace Safety</span>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Contact Name</label>
+                      <Input
+                        v-model="formEmergencyName"
+                        type="text"
+                        placeholder="e.g. Maria Dela Cruz"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Relationship</label>
+                      <Input
+                        v-model="formEmergencyRelationship"
+                        type="text"
+                        placeholder="e.g. Spouse / Parent"
+                        class="h-8 text-xs"
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Contact Number</label>
+                      <Input
+                        v-model="formEmergencyNumber"
+                        type="text"
+                        placeholder="e.g. 0918-987-6543"
+                        class="h-8 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg bg-amber-500/10 border border-amber-500/20 p-2.5 text-xs text-amber-800 dark:text-amber-300">
+                    <span>
+                      This individual will be immediately notified in case of medical emergencies, occupational accidents, or disaster triage.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ============================================== -->
+              <!-- SECTION 7: BIOMETRIC -->
+              <!-- ============================================== -->
+              <div v-show="activeEditSection === 'biometric'" class="space-y-3.5">
+                <div class="rounded-xl border bg-muted/20 p-3.5 space-y-3">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <Fingerprint class="size-4 text-primary" />
+                      <span>Biometric Hardware Scanner Key</span>
+                    </div>
+                    <Badge variant="outline" class="text-[10px] font-mono gap-1">
+                      <Lock class="size-2.5" />
+                      Permanent Hardware Key
+                    </Badge>
+                  </div>
+
+                  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs pt-1">
+                    <div class="space-y-1">
+                      <div class="font-mono font-semibold text-foreground text-sm flex items-center gap-2">
+                        <span>Bio ID: {{ formBioId }}</span>
+                        <span class="text-muted-foreground font-normal text-xs">= Employee ID</span>
+                      </div>
+                      <p class="text-muted-foreground text-[11px] max-w-lg">
+                        Directly links this employee profile to physical punches received from the BISMAC BISBIO B-29b hardware terminal (Port 4370 TCP).
+                      </p>
+                    </div>
+                    <div class="text-[11px] px-2.5 py-1.5 rounded bg-muted text-muted-foreground font-mono shrink-0">
+                      Terminal Key: {{ formBioId }}
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg bg-card p-3 border space-y-2 text-xs">
+                    <div class="font-semibold text-foreground text-[11px]">Hardware Integrity Rule</div>
+                    <p class="text-muted-foreground text-[11px]">
+                      The Bio ID cannot be changed here because all historic biometric clockings and daily attendance interpretations in IndexedDB are indexed by this key. To alter the hardware registration, adjust the user enrollment on the physical terminal and perform a biometric sync.
+                    </p>
+                  </div>
+
+                  <div class="pt-1 flex items-center gap-2 flex-wrap">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      class="h-7 text-xs gap-1.5"
+                      @click="viewEmployeeAttendanceLogs"
+                    >
+                      <Fingerprint class="size-3 text-primary" />
+                      <span>View Attendance Logs</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      class="h-7 text-xs gap-1.5"
+                      @click="viewEmployeeDailyAttendance"
+                    >
+                      <CheckCircle2 class="size-3 text-primary" />
+                      <span>View Daily Attendance</span>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Section Navigation Bottom Controls -->
+              <div class="pt-3 flex items-center justify-between border-t text-xs">
+                <Button
+                  v-if="activeEditSection !== 'people'"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="h-7 text-xs gap-1"
+                  @click="prevEditSection"
+                >
+                  <ChevronLeft class="size-3" />
+                  <span>Previous Section</span>
+                </Button>
+                <div v-else />
+
+                <div class="text-[11px] text-muted-foreground font-mono hidden sm:block">
+                  Section {{ editSections.findIndex(s => s.id === activeEditSection) + 1 }} of {{ editSections.length }}:
+                  <span class="font-semibold text-foreground">{{ editSections.find(s => s.id === activeEditSection)?.label }}</span>
+                </div>
+
+                <Button
+                  v-if="activeEditSection !== 'biometric'"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="h-7 text-xs gap-1"
+                  @click="nextEditSection"
+                >
+                  <span>Next Section</span>
+                  <ChevronRight class="size-3" />
+                </Button>
+                <Button
+                  v-else
+                  type="submit"
+                  form="employee-profile-form"
+                  size="sm"
+                  class="h-7 text-xs gap-1.5"
+                  :disabled="profileSaving"
+                >
+                  <Save class="size-3" />
+                  <span>Save Changes</span>
+                </Button>
               </div>
             </form>
           </template>
