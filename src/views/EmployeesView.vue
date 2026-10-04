@@ -114,16 +114,18 @@ function openEditSection(sec: EditSection) {
 function viewEmployeeAttendanceLogs() {
   if (selectedEmployee.value) {
     const id = selectedEmployee.value.biometric_user_id
+    const name = selectedEmployee.value.full_name
     closeProfileModal()
-    router.push({ path: '/attendance/logs', query: { q: id } })
+    router.push({ path: '/attendance/logs', query: { bioId: id, name } })
   }
 }
 
 function viewEmployeeDailyAttendance() {
   if (selectedEmployee.value) {
     const id = selectedEmployee.value.biometric_user_id
+    const name = selectedEmployee.value.full_name
     closeProfileModal()
-    router.push({ path: '/attendance/daily', query: { q: id } })
+    router.push({ path: '/attendance/daily', query: { bioId: id, name } })
   }
 }
 

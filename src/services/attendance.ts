@@ -36,14 +36,26 @@ export const attendanceService = {
 
   /**
    * Generates Daily Attendance for a given date with Location & Work Group filters.
+   * Can be filtered specifically to a single employee bioId.
    */
   async getDailyAttendance(
     targetDate?: string,
     locationFilter: string = 'all',
     workGroupFilter: string = 'all',
+    customConfig: Partial<AttendanceEngineConfig> = {},
+    bioIdFilter?: string
+  ): Promise<DailyAttendanceRecord[]> {
+    return attendanceRepository.getDailyAttendance(targetDate, locationFilter, workGroupFilter, customConfig, bioIdFilter)
+  },
+
+  /**
+   * Generates all historical daily attendance records for a specific employee.
+   */
+  async getEmployeeDailyAttendanceHistory(
+    bioId: string,
     customConfig: Partial<AttendanceEngineConfig> = {}
   ): Promise<DailyAttendanceRecord[]> {
-    return attendanceRepository.getDailyAttendance(targetDate, locationFilter, workGroupFilter, customConfig)
+    return attendanceRepository.getEmployeeDailyAttendanceHistory(bioId, customConfig)
   },
 
   /**

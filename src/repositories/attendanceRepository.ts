@@ -22,14 +22,19 @@ export const attendanceRepository = {
     targetDate?: string,
     locationFilter: string = 'all',
     workGroupFilter: string = 'all',
-    customConfig: Partial<AttendanceEngineConfig> = {}
+    customConfig: Partial<AttendanceEngineConfig> = {},
+    bioIdFilter?: string
   ): Promise<DailyAttendanceRecord[]> {
+    if (bioIdFilter && targetDate === 'all') {
+      return this.getEmployeeDailyAttendanceHistory(bioIdFilter, customConfig)
+    }
+
     const selectedDate = targetDate || getManilaDateString(new Date())
 
     // 1. Fetch only this single day's raw punches via indexed query
-    const dayPunches = await punchRepository.getPunchesByDate(selectedDate)
-    if (dayPunches.length === 0) {
-      return []
+    let dayPunches = await punchRepository.getPunchesByDate(selectedDate)
+    if (bioIdFilter && bioIdFilter.trim()) {
+      dayPunches = dayPunches.filter(p => p.user_id.toLowerCase() === bioIdFilter.trim().toLowerCase())
     }
 
     // 2. Group punches by Bio ID
@@ -232,5 +237,93 @@ export const attendanceRepository = {
     }
 
     return summaryMap
+  },
+
+  /**
+   * Retrieves an employee's historical daily attendance records across all dates.
+   * Utilizes the indexed bioId lookup to quickly fetch that employee's punches.
+   */
+  async getEmployeeDailyAttendanceHistory(
+    bioId: string,
+    customConfig: Partial<AttendanceEngineConfig> = {}
+  ): Promise<DailyAttendanceRecord[]> {
+    const cleanBioId = String(bioId).trim()
+    const rawPunches = await db.biometricPunches.where('bioId').equals(cleanBioId).toArray()
+    const [employeeMap, workGroupMap, adjustments, leaves] = await Promise.all([
+      employeeRepository.getEmployeeMap(),
+      workGroupRepository.getMap(),
+      db.manualAdjustments.where('bioId').equals(cleanBioId).toArray().catch(() => []),
+      db.leaveRecords.where('bioId').equals(cleanBioId).toArray().catch(() => [])
+    ])
+
+    const emp = employeeMap.get(cleanBioId)
+    const empLocation = emp?.location || rawPunches[0]?.locationName || 'DBB CEBU'
+    const empWgId = emp?.workGroupId || 'wg-group-c'
+    const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
+
+    const adjustmentsByDate = new Map<string, any>()
+    for (const a of adjustments) {
+      adjustmentsByDate.set(a.date, a)
+    }
+
+    const leavesByDate = new Map<string, any>()
+    for (const l of leaves) {
+      if (l.status === 'Approved') {
+        leavesByDate.set(l.startDate, l)
+      }
+    }
+
+    // Group punches by date
+    const dateMap = new Map<string, AttendanceLog[]>()
+    for (const r of rawPunches) {
+      const log = punchRepository.toLog(r)
+      if (emp) {
+        log.employee_name = emp.fullName
+        log.department = emp.department || ''
+        log.location_name = emp.location
+        log.work_group_id = emp.workGroupId || 'wg-group-c'
+      }
+      if (!dateMap.has(r.date)) {
+        dateMap.set(r.date, [])
+      }
+      dateMap.get(r.date)!.push(log)
+    }
+
+    // Also include dates with manual adjustments or approved leaves
+    for (const d of adjustmentsByDate.keys()) {
+      if (!dateMap.has(d)) dateMap.set(d, [])
+    }
+    for (const d of leavesByDate.keys()) {
+      if (!dateMap.has(d)) dateMap.set(d, [])
+    }
+
+    const records: DailyAttendanceRecord[] = []
+
+    for (const [dateStr, punches] of dateMap.entries()) {
+      const empContext: EmployeeScheduleContext = {
+        bioId: cleanBioId,
+        name: emp?.fullName || `User ${cleanBioId}`,
+        department: emp?.department || '',
+        location: empLocation,
+        workGroupId: empWgId,
+        workGroupName: wg?.name || 'GROUP C',
+        standardIn: wg?.standardIn || '08:00',
+        requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
+        lunchStart: wg?.lunchStart || '12:00',
+        lunchEnd: wg?.lunchEnd || '13:00',
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
+        manualAdjustment: adjustmentsByDate.get(dateStr),
+        approvedLeave: leavesByDate.get(dateStr)
+      }
+
+      const rec = processEmployeeDayPunches(cleanBioId, punches, dateStr, empContext, customConfig)
+      if (rec) {
+        records.push(rec)
+      }
+    }
+
+    // Sort descending by date (newest first)
+    records.sort((a, b) => b.raw_date.localeCompare(a.raw_date))
+    return records
   }
 }

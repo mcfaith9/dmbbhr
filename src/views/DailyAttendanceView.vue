@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Clock,
   RefreshCw,
@@ -24,7 +25,7 @@ import {
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { authService } from '@/services/auth'
-import { VALID_LOCATIONS } from '@/services/employees'
+import { employeeService, VALID_LOCATIONS } from '@/services/employees'
 import type { WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -53,6 +54,12 @@ import {
   DialogDescription,
   DialogFooter
 } from '@/components/ui/dialog'
+
+const route = useRoute()
+const router = useRouter()
+
+const activeEmployeeFilter = ref<{ bioId: string; name?: string } | null>(null)
+const employeeViewMode = ref<'selected_date' | 'all_dates'>('selected_date')
 
 // Real device status and sync state
 const deviceStatus = liveAttendanceService.deviceStatus
@@ -105,11 +112,26 @@ async function executeDailyAttendance() {
   hasPendingReload = false
   loading.value = true
   try {
-    const records = await attendanceService.getDailyAttendance(
-      selectedDate.value,
-      selectedLocation.value,
-      selectedWorkGroup.value
-    )
+    let records: DailyAttendanceRecord[] = []
+    if (activeEmployeeFilter.value) {
+      if (employeeViewMode.value === 'all_dates') {
+        records = await attendanceService.getEmployeeDailyAttendanceHistory(activeEmployeeFilter.value.bioId)
+      } else {
+        records = await attendanceService.getDailyAttendance(
+          selectedDate.value,
+          selectedLocation.value,
+          selectedWorkGroup.value,
+          {},
+          activeEmployeeFilter.value.bioId
+        )
+      }
+    } else {
+      records = await attendanceService.getDailyAttendance(
+        selectedDate.value,
+        selectedLocation.value,
+        selectedWorkGroup.value
+      )
+    }
     dailyRecords.value = records
   } finally {
     loading.value = false
@@ -120,6 +142,51 @@ async function executeDailyAttendance() {
     }
   }
 }
+
+async function syncFilterFromRoute() {
+  const candidateId = (route.query.bioId || route.query.userId || route.query.q) as string | undefined
+  const candidateName = route.query.name as string | undefined
+
+  if (candidateId && String(candidateId).trim()) {
+    const cleanBioId = String(candidateId).trim()
+    let empName = candidateName ? String(candidateName).trim() : ''
+
+    if (!empName) {
+      try {
+        const emp = await employeeService.getEmployeeByBioId(cleanBioId)
+        if (emp) empName = emp.full_name
+      } catch {
+        // ignore
+      }
+    }
+
+    activeEmployeeFilter.value = {
+      bioId: cleanBioId,
+      name: empName || `Employee ${cleanBioId}`
+    }
+  } else {
+    activeEmployeeFilter.value = null
+  }
+}
+
+function clearEmployeeFilter() {
+  activeEmployeeFilter.value = null
+  employeeViewMode.value = 'selected_date'
+  router.replace({ path: '/attendance/daily', query: {} })
+  triggerCoalescedRefresh(true)
+}
+
+watch(
+  () => [route.query.bioId, route.query.userId, route.query.q],
+  async () => {
+    await syncFilterFromRoute()
+    triggerCoalescedRefresh(true)
+  }
+)
+
+watch(employeeViewMode, () => {
+  triggerCoalescedRefresh(true)
+})
 
 function triggerCoalescedRefresh(immediate = false) {
   if (refreshTimer) {
@@ -331,6 +398,7 @@ let unSubScan: (() => void) | null = null
 
 onMounted(async () => {
   await loadLookups()
+  await syncFilterFromRoute()
   executeDailyAttendance()
   liveAttendanceService.connect()
 
@@ -359,8 +427,11 @@ onUnmounted(() => {
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
       <div class="space-y-1">
         <div class="flex items-center gap-2.5 flex-wrap">
-          <h1 class="text-2xl font-bold tracking-tight text-foreground font-sans">
-            Daily Attendance
+          <h1 class="text-2xl font-bold tracking-tight text-foreground font-sans flex items-center gap-2">
+            <span>Daily Attendance</span>
+            <Badge v-if="activeEmployeeFilter" variant="default" class="text-xs font-mono font-semibold">
+              {{ activeEmployeeFilter.name }}
+            </Badge>
           </h1>
           <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border bg-muted/50 text-xs font-medium text-foreground">
             <CalendarIcon class="size-3 text-primary" />
@@ -454,6 +525,61 @@ onUnmounted(() => {
         >
           <X class="size-3.5" />
         </button>
+      </div>
+    </div>
+
+    <!-- Active Employee Filter Context Banner -->
+    <div
+      v-if="activeEmployeeFilter"
+      class="rounded-xl border border-primary/30 bg-primary/10 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in slide-in-from-top-1 duration-200"
+    >
+      <div class="flex items-center gap-3">
+        <div class="size-9 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+          <Fingerprint class="size-4" />
+        </div>
+        <div>
+          <div class="text-xs font-semibold text-foreground flex items-center gap-2 flex-wrap">
+            <span class="text-muted-foreground">Filtered by Employee:</span>
+            <span class="font-bold text-foreground text-sm">{{ activeEmployeeFilter.name }}</span>
+            <span class="inline-flex items-center gap-1 font-mono text-xs bg-card border border-primary/30 text-primary font-semibold px-2 py-0.5 rounded-md">
+              Bio ID / Employee ID: {{ activeEmployeeFilter.bioId }}
+            </span>
+          </div>
+          <p class="text-[11px] text-muted-foreground mt-0.5">
+            Displaying only calculated daily attendance and shifts for this employee.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
+        <div class="flex items-center rounded-lg border bg-card p-0.5 shadow-2xs text-xs">
+          <button
+            type="button"
+            class="px-2.5 py-1 rounded text-xs transition-colors"
+            :class="employeeViewMode === 'selected_date' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+            @click="employeeViewMode = 'selected_date'"
+          >
+            Target Date ({{ displayDateTitle }})
+          </button>
+          <button
+            type="button"
+            class="px-2.5 py-1 rounded text-xs transition-colors"
+            :class="employeeViewMode === 'all_dates' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+            @click="employeeViewMode = 'all_dates'"
+          >
+            All Recorded Dates
+          </button>
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-7 text-xs gap-1.5 bg-card hover:bg-muted font-medium border-primary/30 shadow-2xs"
+          @click="clearEmployeeFilter"
+        >
+          <X class="size-3.5 text-muted-foreground" />
+          <span>Clear Employee Filter</span>
+        </Button>
       </div>
     </div>
 
@@ -659,10 +785,29 @@ onUnmounted(() => {
           <Clock class="size-6 text-muted-foreground/60" />
         </div>
         <div class="space-y-1">
-          <p class="font-semibold text-foreground text-sm">No attendance records found for {{ displayDateTitle }}.</p>
-          <p class="text-muted-foreground max-w-md mx-auto">
-            Try switching filter tabs, selecting another date, or click <strong>Sync Attendance</strong> to fetch raw records from the device.
+          <p class="font-semibold text-foreground text-sm">
+            <span v-if="activeEmployeeFilter">
+              No attendance records found for {{ activeEmployeeFilter.name }}
+              {{ employeeViewMode === 'selected_date' ? `on ${displayDateTitle}` : '' }}.
+            </span>
+            <span v-else>
+              No attendance records found for {{ displayDateTitle }}.
+            </span>
           </p>
+          <p class="text-muted-foreground max-w-md mx-auto">
+            <span v-if="activeEmployeeFilter && employeeViewMode === 'selected_date'">
+              This employee may not have clocked in on this specific date. Click below to view all historical dates with records for this employee.
+            </span>
+            <span v-else>
+              Try switching filter tabs, selecting another date, or click <strong>Sync Attendance</strong> to fetch raw records from the device.
+            </span>
+          </p>
+          <div v-if="activeEmployeeFilter && employeeViewMode === 'selected_date'" class="pt-2">
+            <Button size="sm" variant="default" class="h-8 text-xs gap-1.5 shadow-xs" @click="employeeViewMode = 'all_dates'">
+              <CalendarIcon class="size-3.5" />
+              <span>Show All Historical Dates for {{ activeEmployeeFilter.name }}</span>
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -671,6 +816,7 @@ onUnmounted(() => {
         <Table class="text-xs">
           <TableHeader>
             <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
+              <TableHead v-if="employeeViewMode === 'all_dates'" class="font-semibold text-foreground min-w-[100px]">Date</TableHead>
               <TableHead class="w-[100px] text-foreground font-semibold">BIO ID</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[190px]">Employee</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[140px]">Work Schedule</TableHead>
@@ -688,6 +834,11 @@ onUnmounted(() => {
               :key="row.id"
               class="hover:bg-muted/30 transition-colors border-b last:border-b-0"
             >
+              <!-- Date (when viewing multiple dates for employee) -->
+              <TableCell v-if="employeeViewMode === 'all_dates'" class="font-mono text-xs font-semibold text-foreground whitespace-nowrap">
+                {{ row.date || row.raw_date }}
+              </TableCell>
+
               <!-- 0. BIO ID -->
               <TableCell class="font-mono font-medium text-foreground">                
                 <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">

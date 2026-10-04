@@ -269,6 +269,11 @@ export const punchRepository = {
 
         if (userQ && r.bioId.toLowerCase() !== userQ) return false
 
+        // If date filter was applied alongside userId
+        if (params.date && r.date !== params.date) return false
+        if (params.startDate && r.date < params.startDate) return false
+        if (params.endDate && r.date > params.endDate) return false
+
         if (locTarget && locTarget !== 'all') {
           const matchLoc =
             empLoc === locTarget ||

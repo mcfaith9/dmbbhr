@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Download,
   Upload,
@@ -18,6 +19,7 @@ import * as XLSX from 'xlsx'
 import { attendanceService } from '@/services/attendance'
 import { deviceService } from '@/services/devices'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { employeeService } from '@/services/employees'
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta, Location, BiometricDevice, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
@@ -34,6 +36,10 @@ import {
 } from '@/components/ui/select'
 import { DatePicker } from '@/components/ui/date-picker'
 
+const route = useRoute()
+const router = useRouter()
+
+const activeEmployeeFilter = ref<{ bioId: string; name?: string } | null>(null)
 const logs = ref<AttendanceLog[]>([])
 const loading = ref(false)
 const locations = ref<Location[]>([])
@@ -205,8 +211,10 @@ function setQuickRange(range: 'today' | 'yesterday' | 'this_week' | 'this_month'
 }
 
 function resetFilters() {
+  const currentBio = activeEmployeeFilter.value?.bioId || ''
   filters.value = {
     search: '',
+    userId: currentBio,
     locationId: 'all',
     workGroupId: 'all',
     deviceId: 'all',
@@ -220,6 +228,56 @@ function resetFilters() {
   }
   loadData()
 }
+
+async function syncFilterFromRoute() {
+  const candidateId = (route.query.bioId || route.query.userId || route.query.q) as string | undefined
+  const candidateName = route.query.name as string | undefined
+
+  if (candidateId && String(candidateId).trim()) {
+    const cleanBioId = String(candidateId).trim()
+    let empName = candidateName ? String(candidateName).trim() : ''
+
+    if (!empName) {
+      try {
+        const emp = await employeeService.getEmployeeByBioId(cleanBioId)
+        if (emp) empName = emp.full_name
+      } catch {
+        // ignore
+      }
+    }
+
+    activeEmployeeFilter.value = {
+      bioId: cleanBioId,
+      name: empName || `Employee ${cleanBioId}`
+    }
+    filters.value.userId = cleanBioId
+    filters.value.quickRange = 'all'
+    filters.value.startDate = ''
+    filters.value.endDate = ''
+    filters.value.page = 1
+  } else {
+    activeEmployeeFilter.value = null
+    if (filters.value.userId) {
+      filters.value.userId = ''
+    }
+  }
+}
+
+function clearEmployeeFilter() {
+  activeEmployeeFilter.value = null
+  filters.value.userId = ''
+  filters.value.page = 1
+  router.replace({ path: '/attendance/logs', query: {} })
+  loadData()
+}
+
+watch(
+  () => [route.query.bioId, route.query.userId, route.query.q],
+  async () => {
+    await syncFilterFromRoute()
+    loadData()
+  }
+)
 
 function onPageChange(page: number) {
   filters.value.page = page
@@ -431,8 +489,9 @@ function handleNewBiometricScan(newLog: AttendanceLog) {
   }, 8000)
 }
 
-onMounted(() => {
-  loadLookups()
+onMounted(async () => {
+  await loadLookups()
+  await syncFilterFromRoute()
   executeLoadData()
 
   liveAttendanceService.connect()
@@ -460,8 +519,11 @@ onUnmounted(() => {
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
       <div class="space-y-1">
         <div class="flex items-center gap-2.5 flex-wrap">
-          <h1 class="text-2xl font-bold tracking-tight text-foreground font-sans">
-            Attendance Logs
+          <h1 class="text-2xl font-bold tracking-tight text-foreground font-sans flex items-center gap-2">
+            <span>Attendance Logs</span>
+            <Badge v-if="activeEmployeeFilter" variant="default" class="text-xs font-mono font-semibold">
+              {{ activeEmployeeFilter.name }}
+            </Badge>
           </h1>
           <span class="text-xs px-2.5 py-0.5 rounded-md border bg-muted/50 font-mono font-medium text-foreground">
             {{ meta.totalItems.toLocaleString() }} Stored Captures
@@ -545,6 +607,40 @@ onUnmounted(() => {
       </div>
       <Button variant="ghost" size="sm" class="h-7 text-xs" @click="latestLiveScan = null">
         <X class="size-3.5" />
+      </Button>
+    </div>
+
+    <!-- Active Employee Filter Context Banner -->
+    <div
+      v-if="activeEmployeeFilter"
+      class="rounded-xl border border-primary/30 bg-primary/10 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in slide-in-from-top-1 duration-200"
+    >
+      <div class="flex items-center gap-3">
+        <div class="size-9 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+          <Fingerprint class="size-4" />
+        </div>
+        <div>
+          <div class="text-xs font-semibold text-foreground flex items-center gap-2 flex-wrap">
+            <span class="text-muted-foreground">Filtered by Employee:</span>
+            <span class="font-bold text-foreground text-sm">{{ activeEmployeeFilter.name }}</span>
+            <span class="inline-flex items-center gap-1 font-mono text-xs bg-card border border-primary/30 text-primary font-semibold px-2 py-0.5 rounded-md">
+              Bio ID / Employee ID: {{ activeEmployeeFilter.bioId }}
+            </span>
+          </div>
+          <p class="text-[11px] text-muted-foreground mt-0.5">
+            Displaying only biometric logs and raw terminal clockings recorded for this employee.
+          </p>
+        </div>
+      </div>
+
+      <Button
+        variant="outline"
+        size="sm"
+        class="h-7 text-xs gap-1.5 bg-card hover:bg-muted font-medium self-start sm:self-auto shrink-0 shadow-2xs border-primary/30"
+        @click="clearEmployeeFilter"
+      >
+        <X class="size-3.5 text-muted-foreground" />
+        <span>Clear Employee Filter</span>
       </Button>
     </div>
 
