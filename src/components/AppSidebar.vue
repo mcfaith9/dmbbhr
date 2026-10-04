@@ -120,7 +120,7 @@ const navSections: NavItem[] = [
     children: [
       { title: "Settings Overview", url: "/settings", description: "Application configuration dashboard" },
       { title: "User Accounts", url: "/settings/users", description: "Manage admin & HR accounts, roles, and security credentials" },
-      { title: "Attendance Configuration", url: "/settings/attendance", description: "Configure work groups, attendance rules, holidays, and other attendance-related settings." },
+      { title: "Attendance Config", url: "/settings/attendance", description: "Configure work groups, attendance rules, holidays, and other attendance-related settings." },
       { title: "System & Integrations", url: "/settings/system", description: "Manage biometric devices, network configuration, and external system integrations." },
     ],
   },

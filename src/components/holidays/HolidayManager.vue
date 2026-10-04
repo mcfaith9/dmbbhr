@@ -295,7 +295,7 @@ function getTypeBadgeClass(type: string, scope?: string): string {
           <TableHeader>
             <TableRow class="bg-muted/40 hover:bg-muted/40">
               <TableHead class="font-semibold text-foreground w-[160px]">Date</TableHead>
-              <TableHead class="font-semibold text-foreground w-[110px]">Day</TableHead>
+              <TableHead class="font-semibold text-foreground w-[90px]">Day</TableHead>
               <TableHead class="font-semibold text-foreground">Holiday Name</TableHead>
               <TableHead class="font-semibold text-foreground">Classification</TableHead>
               <TableHead class="font-semibold text-foreground">Scope</TableHead>
