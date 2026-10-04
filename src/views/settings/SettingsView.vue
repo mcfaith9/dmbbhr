@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
+  UserCheck,
   Layers,
   Cpu,
   Clock,
@@ -12,7 +13,8 @@ import {
   ArrowRight,
   Sparkles,
   Sliders,
-  CheckCircle2
+  ShieldCheck,
+  KeyRound
 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,7 +34,7 @@ onMounted(() => {
   } else if (cat === 'system' || sec === 'devices' || sec === 'network' || sec === 'integrations') {
     router.replace({ path: '/settings/system', query: sec ? { tab: sec } : undefined })
   } else if (cat === 'accounts' || sec === 'users' || sec === 'roles') {
-    router.replace('/users')
+    router.replace({ path: '/settings/users', query: sec ? { tab: sec } : undefined })
   }
 })
 
@@ -49,11 +51,11 @@ function navigateTo(path: string) {
         <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <span>Application Settings</span>
           <span class="text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium font-mono">
-            Configuration
+            Administration
           </span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Dedicated system configuration for attendance policies, work groups, biometric hardware, and integrations.
+          Centralized configuration for user accounts, attendance business rules, biometric hardware, and system integrations.
         </p>
       </div>
 
@@ -77,7 +79,7 @@ function navigateTo(path: string) {
             </span>
           </div>
           <p class="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-            Select a configuration category below to customize shift parameters, manage public holidays, monitor biometric listeners, and configure enterprise integration protocols. User accounts are managed under the top-level <strong>Accounts</strong> navigation.
+            Select a configuration category below to manage authorized user accounts and credentials, customize shift parameters and public holidays, or monitor biometric readers and network bridges.
           </p>
         </div>
 
@@ -95,21 +97,91 @@ function navigateTo(path: string) {
       </div>
     </div>
 
-    <!-- Main Settings Categories Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-      <!-- 1. Attendance Configuration Card -->
+    <!-- Main Settings Categories Grid (3 Cards) -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <!-- 1. User Accounts Card -->
       <div
-        class="group relative rounded-xl border bg-card p-6 shadow-xs hover:shadow-md transition-all duration-200 hover:border-primary/50 cursor-pointer flex flex-col justify-between"
+        class="group relative rounded-xl border bg-card p-5 shadow-xs hover:shadow-md transition-all duration-200 hover:border-primary/50 cursor-pointer flex flex-col justify-between"
+        @click="navigateTo('/settings/users')"
+      >
+        <div class="space-y-4">
+          <!-- Icon & Header -->
+          <div class="flex items-start justify-between gap-3">
+            <div class="size-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20 group-hover:scale-105 transition-transform duration-200">
+              <UserCheck class="size-5.5 text-primary" />
+            </div>
+            <Badge variant="outline" class="text-[11px] font-mono bg-muted/30">
+              Users • Passwords
+            </Badge>
+          </div>
+
+          <!-- Title & Description -->
+          <div class="space-y-1.5">
+            <h2 class="text-base font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-2">
+              <span>User Accounts</span>
+            </h2>
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              Manage users, roles, password policies, and security credentials.
+            </p>
+          </div>
+
+          <!-- Feature Highlights List -->
+          <div class="space-y-2 pt-2 border-t text-xs">
+            <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
+              <span class="text-muted-foreground flex items-center gap-2">
+                <UserCheck class="size-3.5 text-primary" />
+                Account Directory
+              </span>
+              <span class="font-medium text-foreground text-[11px]">Admin & HR access</span>
+            </div>
+
+            <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
+              <span class="text-muted-foreground flex items-center gap-2">
+                <KeyRound class="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                Password Management
+              </span>
+              <span class="font-medium text-foreground text-[11px]">Own & Admin Reset</span>
+            </div>
+
+            <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
+              <span class="text-muted-foreground flex items-center gap-2">
+                <ShieldCheck class="size-3.5 text-amber-600 dark:text-amber-400" />
+                Roles & Permissions
+              </span>
+              <span class="font-medium text-foreground text-[11px]">Privilege matrix</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Link -->
+        <div class="mt-5 pt-3.5 border-t flex items-center justify-between">
+          <span class="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+            Manage user accounts
+          </span>
+          <Button
+            size="sm"
+            class="h-8 gap-1.5 text-xs font-medium cursor-pointer"
+            @click.stop="navigateTo('/settings/users')"
+          >
+            <span>Open Accounts</span>
+            <ArrowRight class="size-3.5 transition-transform group-hover:translate-x-0.5" />
+          </Button>
+        </div>
+      </div>
+
+      <!-- 2. Attendance Configuration Card -->
+      <div
+        class="group relative rounded-xl border bg-card p-5 shadow-xs hover:shadow-md transition-all duration-200 hover:border-primary/50 cursor-pointer flex flex-col justify-between"
         @click="navigateTo('/settings/attendance')"
       >
         <div class="space-y-4">
           <!-- Icon & Header -->
           <div class="flex items-start justify-between gap-3">
-            <div class="size-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20 group-hover:scale-105 transition-transform duration-200">
-              <Layers class="size-6 text-primary" />
+            <div class="size-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20 group-hover:scale-105 transition-transform duration-200">
+              <Layers class="size-5.5 text-primary" />
             </div>
-            <Badge variant="outline" class="text-xs font-mono bg-muted/30">
-              Work Groups • Rules • Holidays
+            <Badge variant="outline" class="text-[11px] font-mono bg-muted/30">
+              Shifts • Rules • Holidays
             </Badge>
           </div>
 
@@ -130,7 +202,7 @@ function navigateTo(path: string) {
                 <Clock class="size-3.5 text-emerald-600 dark:text-emerald-400" />
                 Work Groups & Shifts
               </span>
-              <span class="font-medium text-foreground text-[11px]">Standard IN, Lunch & Auto OUT</span>
+              <span class="font-medium text-foreground text-[11px]">Standard IN & Auto OUT</span>
             </div>
 
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
@@ -138,7 +210,7 @@ function navigateTo(path: string) {
                 <Sliders class="size-3.5 text-primary" />
                 Attendance Rules
               </span>
-              <span class="font-medium text-foreground text-[11px]">Grace periods & single-punch policy</span>
+              <span class="font-medium text-foreground text-[11px]">Grace periods & policies</span>
             </div>
 
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
@@ -146,39 +218,39 @@ function navigateTo(path: string) {
                 <CalendarDays class="size-3.5 text-amber-600 dark:text-amber-400" />
                 Holidays Calendar
               </span>
-              <span class="font-medium text-foreground text-[11px]">Regular & Special Non-Working days</span>
+              <span class="font-medium text-foreground text-[11px]">Cebu City & Philippine DOLE</span>
             </div>
           </div>
         </div>
 
         <!-- Action Link -->
-        <div class="mt-6 pt-4 border-t flex items-center justify-between">
+        <div class="mt-5 pt-3.5 border-t flex items-center justify-between">
           <span class="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-            Configure attendance policies
+            Configure shifts & rules
           </span>
           <Button
             size="sm"
             class="h-8 gap-1.5 text-xs font-medium cursor-pointer"
             @click.stop="navigateTo('/settings/attendance')"
           >
-            <span>Open Attendance Configuration</span>
+            <span>Open Attendance</span>
             <ArrowRight class="size-3.5 transition-transform group-hover:translate-x-0.5" />
           </Button>
         </div>
       </div>
 
-      <!-- 2. System & Integrations Card -->
+      <!-- 3. System & Integrations Card -->
       <div
-        class="group relative rounded-xl border bg-card p-6 shadow-xs hover:shadow-md transition-all duration-200 hover:border-primary/50 cursor-pointer flex flex-col justify-between"
+        class="group relative rounded-xl border bg-card p-5 shadow-xs hover:shadow-md transition-all duration-200 hover:border-primary/50 cursor-pointer flex flex-col justify-between"
         @click="navigateTo('/settings/system')"
       >
         <div class="space-y-4">
           <!-- Icon & Header -->
           <div class="flex items-start justify-between gap-3">
-            <div class="size-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20 group-hover:scale-105 transition-transform duration-200">
-              <Cpu class="size-6 text-primary" />
+            <div class="size-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20 group-hover:scale-105 transition-transform duration-200">
+              <Cpu class="size-5.5 text-primary" />
             </div>
-            <Badge variant="outline" class="text-xs font-mono bg-muted/30">
+            <Badge variant="outline" class="text-[11px] font-mono bg-muted/30">
               Hardware • Network • APIs
             </Badge>
           </div>
@@ -200,7 +272,7 @@ function navigateTo(path: string) {
                 <Server class="size-3.5 text-primary" />
                 Biometric Devices
               </span>
-              <span class="font-medium text-foreground text-[11px]">TCP/IP 4370 hardware & ping test</span>
+              <span class="font-medium text-foreground text-[11px]">TCP/IP 4370 hardware ping</span>
             </div>
 
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
@@ -208,7 +280,7 @@ function navigateTo(path: string) {
                 <Cable class="size-3.5 text-emerald-600 dark:text-emerald-400" />
                 Network Settings
               </span>
-              <span class="font-medium text-foreground text-[11px]">Socket bridge, Dexie DB & timezone</span>
+              <span class="font-medium text-foreground text-[11px]">Socket bridge & Dexie DB</span>
             </div>
 
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
@@ -216,13 +288,13 @@ function navigateTo(path: string) {
                 <Globe class="size-3.5 text-amber-600 dark:text-amber-400" />
                 External Integrations
               </span>
-              <span class="font-medium text-foreground text-[11px]">Holiday API, Payroll & Cloud sync</span>
+              <span class="font-medium text-foreground text-[11px]">Holiday API & Cloud sync</span>
             </div>
           </div>
         </div>
 
         <!-- Action Link -->
-        <div class="mt-6 pt-4 border-t flex items-center justify-between">
+        <div class="mt-5 pt-3.5 border-t flex items-center justify-between">
           <span class="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
             Manage hardware & network
           </span>
@@ -231,28 +303,11 @@ function navigateTo(path: string) {
             class="h-8 gap-1.5 text-xs font-medium cursor-pointer"
             @click.stop="navigateTo('/settings/system')"
           >
-            <span>Open System & Integrations</span>
+            <span>Open System</span>
             <ArrowRight class="size-3.5 transition-transform group-hover:translate-x-0.5" />
           </Button>
         </div>
       </div>
-    </div>
-
-    <!-- Quick Accounts Reference Footer Notice -->
-    <div class="rounded-lg border bg-muted/30 p-3.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-muted-foreground">
-      <div class="flex items-center gap-2">
-        <CheckCircle2 class="size-4 text-emerald-600 shrink-0" />
-        <span>
-          Looking for User Accounts, Roles & Permissions, or Password resets?
-        </span>
-      </div>
-      <router-link
-        to="/users"
-        class="inline-flex items-center gap-1 font-semibold text-primary hover:underline self-start sm:self-auto text-xs"
-      >
-        <span>Go to Accounts Navigation</span>
-        <ArrowRight class="size-3" />
-      </router-link>
     </div>
   </div>
 </template>

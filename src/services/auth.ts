@@ -244,6 +244,22 @@ export const authService = {
    * Reset password for an account (by Administrator)
    */
   async adminResetPassword(username: string, newPassword: string): Promise<void> {
+    const caller = currentUserState.value || loadInitialUser()
+    if (!caller) {
+      throw new Error('Authentication required.')
+    }
+    if (caller.role !== 'admin') {
+      throw new Error('Permission denied: Only administrators can reset another user\'s password.')
+    }
+
+    const cleanPwd = (newPassword || '').trim()
+    if (!cleanPwd) {
+      throw new Error('New password cannot be empty.')
+    }
+    if (cleanPwd.length < 4) {
+      throw new Error('Password must be at least 4 characters long.')
+    }
+
     const cleanUsername = username.trim().toLowerCase()
     const accounts = await getStoredAccounts()
     let matchedKey: string | null = null
@@ -258,10 +274,22 @@ export const authService = {
     }
     const targetAccount = accounts[matchedKey]
     const newSalt = generateSalt()
-    const newPasswordHash = await hashPassword(newPassword, newSalt)
+    const newPasswordHash = await hashPassword(cleanPwd, newSalt)
     targetAccount.salt = newSalt
     targetAccount.passwordHash = newPasswordHash
     await saveStoredAccounts(accounts)
+  },
+
+  /**
+   * Get all registered application accounts
+   */
+  async getAllAccounts(): Promise<User[]> {
+    const accounts = await getStoredAccounts()
+    const list = Object.values(accounts).map(a => a.user)
+    if (list.length === 0) {
+      return [...SEED_USERS]
+    }
+    return list
   },
 
   getCurrentUser(): User | null {

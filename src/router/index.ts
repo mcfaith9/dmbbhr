@@ -15,7 +15,7 @@ const HolidaysView = () => import('@/views/HolidaysView.vue')
 const PayrollPeriodsView = () => import('@/views/PayrollPeriodsView.vue')
 const PayrollRecordsView = () => import('@/views/PayrollRecordsView.vue')
 const ReportsView = () => import('@/views/ReportsView.vue')
-const UsersView = () => import('@/views/UsersView.vue')
+const UserAccountsView = () => import('@/views/settings/UserAccountsView.vue')
 const SettingsView = () => import('@/views/settings/SettingsView.vue')
 const AttendanceConfigurationView = () => import('@/views/settings/AttendanceConfigurationView.vue')
 const SystemIntegrationsView = () => import('@/views/settings/SystemIntegrationsView.vue')
@@ -128,15 +128,20 @@ export const router = createRouter({
         },
         {
           path: 'users',
-          name: 'users',
-          component: UsersView,
-          meta: { title: 'Accounts', breadcrumb: ['Accounts', 'User Management'] }
+          redirect: '/settings/users'
         },
         {
           path: 'settings',
           name: 'settings',
           component: SettingsView,
           meta: { title: 'Settings', breadcrumb: ['Settings', 'Overview'] }
+        },
+        {
+          path: 'settings/users',
+          name: 'settings-users',
+          component: UserAccountsView,
+          alias: ['settings/accounts'],
+          meta: { title: 'User Accounts', breadcrumb: ['Settings', 'User Accounts'] }
         },
         {
           path: 'settings/attendance',
