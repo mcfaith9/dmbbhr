@@ -287,9 +287,10 @@ function parseAndValidateAttendance(rawBuffer, libraryRecords = [], config = {},
   console.log(`[DMBBHR Parser] Selected Best Strategy: "${selectedStrategyName}"`);
   console.log('========================================================\n');
 
-  // Filter and normalize valid records only
+  // Filter and normalize valid records only with occurrence-aware identity
   const validRecords = [];
   const invalidRecords = [];
+  const batchOccurrenceMap = new Map();
 
   const rawCandidateList = bestStrategy ? bestStrategy.records : [];
   for (const item of rawCandidateList) {
@@ -300,20 +301,28 @@ function parseAndValidateAttendance(rawBuffer, libraryRecords = [], config = {},
       const uid = String(item.userId).trim();
       const empName = userMap.get(uid) || 'Biometric User';
       const sn = Number(item.sn || 0);
+      const timeSec = Math.floor(item.date.getTime() / 1000);
+      const type = Number(item.type ?? 1);
+      const state = Number(item.state ?? 1);
+      const ip = config.ip || '192.168.1.201';
+
+      const sig = `${ip}:${uid}:${timeSec}:${type}:${state}`;
+      const occIndex = (batchOccurrenceMap.get(sig) || 0) + 1;
+      batchOccurrenceMap.set(sig, occIndex);
 
       validRecords.push({
-        id: `dev-${config.serial || config.ip || 'b29b'}-${sn || `${uid}-${item.date.getTime()}`}`,
+        id: `punch_${sig}_occ${occIndex}`,
         user_id: uid,
         employee_id: undefined,
         employee_name: empName,
         attendance_time: item.date.toISOString(),
         philippines_time: formatPhilippineDate(item.date),
-        type: Number(item.type ?? 1),
-        state: Number(item.state ?? 1),
+        type,
+        state,
         serial_number: sn,
         device_id: 'dev-1',
         device_name: config.name || 'BISMAC BISBIO B-29b',
-        device_ip: config.ip || '192.168.1.201',
+        device_ip: ip,
         location_id: config.location_id || 'loc-cebu',
         location_name: config.location || 'DBB Cebu',
         is_duplicate: false,
@@ -323,8 +332,8 @@ function parseAndValidateAttendance(rawBuffer, libraryRecords = [], config = {},
         timestamp: item.date.toISOString(),
         deviceId: config.serial || '0476141400046',
         deviceName: config.name || 'BISMAC BISBIO B-29b',
-        verificationMethod: Number(item.type ?? 1),
-        status: Number(item.state ?? 1),
+        verificationMethod: type,
+        status: state,
         source: 'manual_sync',
         created_at: new Date().toISOString()
       });

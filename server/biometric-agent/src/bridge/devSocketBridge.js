@@ -80,13 +80,11 @@ class DevSocketBridge {
 
   setDeviceLogs(logs = []) {
     this.deviceLogs = Array.isArray(logs) ? logs : [];
-    // Populate deduplication registry
+    // Populate deduplication registry using record IDs
     for (const log of this.deviceLogs) {
-      const uid = String(log.user_id || log.userId || '').trim();
-      const timeMs = new Date(log.attendance_time || log.timestamp).getTime();
-      const timeSec = Math.floor(timeMs / 1000);
-      const ip = log.device_ip || '192.168.1.201';
-      this.seenEventKeys.add(`${ip}:${uid}:${timeSec}`);
+      if (log.id) {
+        this.seenEventKeys.add(log.id);
+      }
     }
 
     // Broadcast updated device logs to connected Vue browser instances
@@ -283,13 +281,11 @@ class DevSocketBridge {
 
   broadcastScan(scanRecord) {
     const uid = String(scanRecord.user_id || scanRecord.userId || '').trim();
-    const timeMs = new Date(scanRecord.attendance_time || scanRecord.timestamp).getTime();
-    const timeSec = Math.floor(timeMs / 1000);
-    const ip = scanRecord.device_ip || '192.168.1.201';
-    const key = `${ip}:${uid}:${timeSec}`;
 
-    // Track in seen keys
-    this.seenEventKeys.add(key);
+    // Track in seen keys by record ID
+    if (scanRecord.id) {
+      this.seenEventKeys.add(scanRecord.id);
+    }
 
     // Prepend to deviceLogs if not already present
     if (!this.deviceLogs.some(l => l.id === scanRecord.id)) {

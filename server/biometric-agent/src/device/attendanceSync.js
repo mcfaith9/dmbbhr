@@ -213,23 +213,26 @@ async function syncBiometricAttendance(deviceOrNull, config, onProgress = () => 
     });
 
     const existingLocalStore = loadLocalStore();
-    const existingKeys = new Set(
-      existingLocalStore.map(l => {
-        const timeSec = Math.floor(new Date(l.attendance_time).getTime() / 1000);
-        const ip = l.device_ip || config.ip || '192.168.1.201';
-        const uid = String(l.user_id || l.userId || '').trim();
-        const type = Number(l.type ?? 1);
-        const state = Number(l.state ?? 1);
-        return `${ip}:${uid}:${timeSec}:${type}:${state}`;
-      })
-    );
-    const existingIds = new Set(existingLocalStore.map(l => l.id));
+    const existingSignatureCounts = new Map();
+    const existingIds = new Set();
+
+    for (const l of existingLocalStore) {
+      if (l.id) existingIds.add(l.id);
+      const timeSec = Math.floor(new Date(l.attendance_time || l.timestamp).getTime() / 1000);
+      const ip = l.device_ip || config.ip || '192.168.1.201';
+      const uid = String(l.user_id || l.userId || '').trim();
+      const type = Number(l.type ?? 1);
+      const state = Number(l.state ?? 1);
+      const sig = `${ip}:${uid}:${timeSec}:${type}:${state}`;
+      existingSignatureCounts.set(sig, (existingSignatureCounts.get(sig) || 0) + 1);
+    }
 
     let parsedCount = 0;
     let rejectedCount = 0;
     let duplicatesCount = 0;
     let newCount = 0;
     const newRecordsToAdd = [];
+    const batchOccurrenceMap = new Map();
 
     for (let i = 0; i < rawRecords.length; i++) {
       const r = rawRecords[i];
@@ -250,16 +253,33 @@ async function syncBiometricAttendance(deviceOrNull, config, onProgress = () => 
       const sn = Number(r.sn ?? r.serial ?? 0);
       const ip = r.ip || config.ip || '192.168.1.201';
 
-      // Stable unique record key based on device, user, timestamp, type, and state
-      const key = `${ip}:${uid}:${timeSec}:${type}:${state}`;
-      const id = `dev-${config.serial || '0476141400046'}-${uid}-${timeSec}-${type}-${state}`;
+      // Punch signature representing physical event attributes
+      const sig = `${ip}:${uid}:${timeSec}:${type}:${state}`;
+      const occIndex = (batchOccurrenceMap.get(sig) || 0) + 1;
+      batchOccurrenceMap.set(sig, occIndex);
 
-      if (existingKeys.has(key) || existingIds.has(id)) {
+      // Priority 1: Check for device-provided unique transaction / log identifier
+      const candidateTx = r.transactionId ?? r.transaction_id ?? r.logId ?? r.recordId;
+      let id;
+      let isTxId = false;
+
+      if (candidateTx !== undefined && candidateTx !== null && String(candidateTx).trim() && String(candidateTx).trim() !== '0') {
+        id = `dev-${config.serial || '0476141400046'}-tx-${String(candidateTx).trim()}`;
+        isTxId = true;
+      } else {
+        // Priority 3: Occurrence-aware composite ID
+        id = `punch_${sig}_occ${occIndex}`;
+      }
+
+      const existingForSig = existingSignatureCounts.get(sig) || 0;
+      const isAlreadySynced = existingIds.has(id) || (!isTxId && occIndex <= existingForSig);
+
+      if (isAlreadySynced) {
         duplicatesCount++;
       } else {
         newCount++;
-        existingKeys.add(key);
         existingIds.add(id);
+        existingSignatureCounts.set(sig, Math.max(existingForSig, occIndex));
 
         const empName = userMap.get(uid) || (uid ? `User ${uid}` : 'Biometric User');
 
