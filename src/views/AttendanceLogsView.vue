@@ -35,6 +35,14 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { DatePicker } from '@/components/ui/date-picker'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from '@/components/ui/dialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -456,10 +464,21 @@ async function confirmImport() {
   reader.readAsArrayBuffer(importFile.value)
 }
 
-async function handleClearAll() {
-  if (confirm('Are you sure you want to clear all stored attendance records from local storage? This action cannot be undone.')) {
+const isClearAllDialogOpen = ref(false)
+const isClearingAll = ref(false)
+
+function handleClearAll() {
+  isClearAllDialogOpen.value = true
+}
+
+async function confirmClearAll() {
+  isClearingAll.value = true
+  try {
     await attendanceService.clearAllLogs()
+    isClearAllDialogOpen.value = false
     loadData()
+  } finally {
+    isClearingAll.value = false
   }
 }
 
@@ -1098,5 +1117,42 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Clear All Attendance Confirmation Dialog -->
+    <Dialog v-model:open="isClearAllDialogOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2 text-base font-bold text-destructive">
+            <Trash2 class="size-4 text-destructive" />
+            <span>Clear All Attendance Records?</span>
+          </DialogTitle>
+          <DialogDescription class="text-xs text-muted-foreground">
+            This will permanently remove all stored attendance records from this device. This action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogFooter class="border-t pt-3 flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs cursor-pointer"
+            :disabled="isClearingAll"
+            @click="isClearAllDialogOpen = false"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            class="h-8 text-xs font-semibold cursor-pointer"
+            :disabled="isClearingAll"
+            @click="confirmClearAll"
+          >
+            <span v-if="isClearingAll">Clearing...</span>
+            <span v-else>Clear All</span>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

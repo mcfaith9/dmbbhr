@@ -14,15 +14,27 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
-  X
+  X,
+  Plus,
+  Send
 } from '@lucide/vue'
 import { attendanceService } from '@/services/attendance'
 import { authService } from '@/services/auth'
+import { employeeService } from '@/services/employees'
+import type { Employee } from '@/types'
 import type { ManualAttendanceRecord, ManualAttendanceHistoryRecord } from '@/db'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -32,6 +44,13 @@ import {
   DialogFooter
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  isValidTimeString,
+  normalizeTimeToHHMM,
+  hasTimeChanged,
+  formatHHMMTo12Hour,
+  formatOriginalTimeDisplay
+} from '@/lib/timeUtils'
 
 // Top-level View Section: 'requests' (active workflow) vs 'history' (persistent completed log)
 const activeSection = ref<'requests' | 'history'>('requests')
@@ -165,25 +184,13 @@ function cleanTime(t?: string) {
 }
 
 function hasInChanged(req?: ManualAttendanceRecord | null) {
-  if (!req) return false
-  if (!req.manualIn) return false
-  const manual = cleanTime(req.manualIn)
-  const orig = cleanTime(req.originalIn)
-  if (!orig || orig === '—' || orig === '-' || orig.toLowerCase().includes('missing')) {
-    return true
-  }
-  return manual.toLowerCase() !== orig.toLowerCase()
+  if (!req || !req.manualIn) return false
+  return hasTimeChanged(req.originalIn, req.manualIn)
 }
 
 function hasOutChanged(req?: ManualAttendanceRecord | null) {
-  if (!req) return false
-  if (!req.manualOut) return false
-  const manual = cleanTime(req.manualOut)
-  const orig = cleanTime(req.originalOut)
-  if (!orig || orig === '—' || orig === '-' || orig.toLowerCase().includes('awaiting') || orig.toLowerCase().includes('missing') || orig.toLowerCase().includes('no out')) {
-    return true
-  }
-  return manual.toLowerCase() !== orig.toLowerCase()
+  if (!req || !req.manualOut) return false
+  return hasTimeChanged(req.originalOut, req.manualOut)
 }
 
 function openReviewModal(req: ManualAttendanceRecord) {
@@ -220,13 +227,249 @@ async function handleReject() {
   }
 }
 
-async function handleDelete(req: ManualAttendanceRecord) {
-  if (confirm(`Are you sure you want to delete the manual time adjustment record for ${req.employeeName || req.bioId} on ${req.date}?`)) {
-    await attendanceService.deleteManualAdjustment(req.id)
-    if (selectedRequest.value?.id === req.id) {
+// Delete confirmation dialog state (shadcn-vue Dialog)
+const isDeleteDialogOpen = ref(false)
+const requestToDelete = ref<ManualAttendanceRecord | null>(null)
+const isDeleting = ref(false)
+
+function handleDelete(req: ManualAttendanceRecord) {
+  requestToDelete.value = req
+  isDeleteDialogOpen.value = true
+}
+
+async function confirmDelete() {
+  if (!requestToDelete.value) return
+  isDeleting.value = true
+  try {
+    const targetId = requestToDelete.value.id
+    await attendanceService.deleteManualAdjustment(targetId)
+    if (selectedRequest.value?.id === targetId) {
       isReviewDialogOpen.value = false
+      selectedRequest.value = null
     }
-    await loadRequests()
+    isDeleteDialogOpen.value = false
+    requestToDelete.value = null
+    await Promise.all([loadRequests(), loadHistory()])
+  } finally {
+    isDeleting.value = false
+  }
+}
+
+// New Manual Time Adjustment Workflow State
+const isNewAdjustmentDialogOpen = ref(false)
+const allEmployees = ref<Employee[]>([])
+const newAdjustmentEmployeeId = ref('')
+const newAdjustmentDate = ref(new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Manila',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+}).format(new Date()))
+const newAdjustmentOrigIn = ref('—')
+const newAdjustmentOrigOut = ref('—')
+const newAdjustmentSchedule = ref('')
+const newAdjustmentIn = ref('')
+const newAdjustmentOut = ref('')
+const newAdjustmentNotes = ref('')
+const isFetchingOriginalAttendance = ref(false)
+const isSubmittingNewAdjustment = ref(false)
+const newAdjustmentError = ref('')
+const newAdjustmentSuccess = ref('')
+
+async function openNewAdjustmentModal() {
+  newAdjustmentError.value = ''
+  newAdjustmentSuccess.value = ''
+  newAdjustmentIn.value = ''
+  newAdjustmentOut.value = ''
+  newAdjustmentNotes.value = ''
+  newAdjustmentOrigIn.value = '—'
+  newAdjustmentOrigOut.value = '—'
+  newAdjustmentSchedule.value = ''
+
+  if (allEmployees.value.length === 0) {
+    try {
+      allEmployees.value = await employeeService.getEmployees()
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!newAdjustmentEmployeeId.value && allEmployees.value.length > 0) {
+    newAdjustmentEmployeeId.value = allEmployees.value[0].biometric_user_id
+  }
+
+  isNewAdjustmentDialogOpen.value = true
+  if (newAdjustmentEmployeeId.value) {
+    fetchOriginalAttendance()
+  }
+}
+
+async function fetchOriginalAttendance() {
+  if (!newAdjustmentEmployeeId.value || !newAdjustmentDate.value) return
+  isFetchingOriginalAttendance.value = true
+  try {
+    const records = await attendanceService.getDailyAttendance(
+      newAdjustmentDate.value,
+      'all',
+      'all',
+      {},
+      newAdjustmentEmployeeId.value
+    )
+    if (records && records.length > 0) {
+      const rec = records[0]
+      newAdjustmentOrigIn.value = rec.actual_in
+      newAdjustmentOrigOut.value = rec.actual_out
+      newAdjustmentSchedule.value = `${rec.expected_in} → ${rec.expected_out} (${rec.work_group_name})`
+      newAdjustmentIn.value = normalizeTimeToHHMM(rec.actual_in) || ''
+      newAdjustmentOut.value = normalizeTimeToHHMM(rec.actual_out) || ''
+    } else {
+      newAdjustmentOrigIn.value = '—'
+      newAdjustmentOrigOut.value = '—'
+      newAdjustmentSchedule.value = ''
+      newAdjustmentIn.value = ''
+      newAdjustmentOut.value = ''
+    }
+  } finally {
+    isFetchingOriginalAttendance.value = false
+  }
+}
+
+watch([newAdjustmentEmployeeId, newAdjustmentDate], () => {
+  if (isNewAdjustmentDialogOpen.value) {
+    fetchOriginalAttendance()
+  }
+})
+
+const newInStatus = computed(() => {
+  const orig = newAdjustmentOrigIn.value
+  const requested = newAdjustmentIn.value.trim()
+  if (!requested) {
+    return { state: 'empty', label: 'Not specified', changed: false, valid: true }
+  }
+  if (!isValidTimeString(requested)) {
+    return { state: 'invalid', label: 'Invalid time. Please enter a valid time.', changed: false, valid: false }
+  }
+  const changed = hasTimeChanged(orig, requested)
+  if (changed) {
+    return { state: 'changed', label: '✓ Changed', changed: true, valid: true }
+  }
+  return { state: 'unchanged', label: 'No change', changed: false, valid: true }
+})
+
+const newOutStatus = computed(() => {
+  const orig = newAdjustmentOrigOut.value
+  const requested = newAdjustmentOut.value.trim()
+  if (!requested) {
+    return { state: 'empty', label: 'Not specified', changed: false, valid: true }
+  }
+  if (!isValidTimeString(requested)) {
+    return { state: 'invalid', label: 'Invalid time. Please enter a valid time.', changed: false, valid: false }
+  }
+  const changed = hasTimeChanged(orig, requested)
+  if (changed) {
+    return { state: 'changed', label: '✓ Changed', changed: true, valid: true }
+  }
+  return { state: 'unchanged', label: 'No change', changed: false, valid: true }
+})
+
+const hasNewAdjustmentChange = computed(() => {
+  return newInStatus.value.changed || newOutStatus.value.changed
+})
+
+const hasNewInvalidTime = computed(() => {
+  return !newInStatus.value.valid || !newOutStatus.value.valid
+})
+
+const canSubmitNewAdjustment = computed(() => {
+  if (isSubmittingNewAdjustment.value || !!newAdjustmentSuccess.value) return false
+  if (!newAdjustmentEmployeeId.value || !newAdjustmentDate.value) return false
+  if (hasNewInvalidTime.value) return false
+  if (!newAdjustmentIn.value.trim() && !newAdjustmentOut.value.trim()) return false
+  return hasNewAdjustmentChange.value
+})
+
+async function submitNewAdjustment() {
+  newAdjustmentError.value = ''
+  if (!newAdjustmentEmployeeId.value) {
+    newAdjustmentError.value = 'Please select an employee.'
+    return
+  }
+  if (!newAdjustmentDate.value) {
+    newAdjustmentError.value = 'Please select an attendance date.'
+    return
+  }
+
+  const inVal = newAdjustmentIn.value.trim()
+  const outVal = newAdjustmentOut.value.trim()
+
+  if (!inVal && !outVal) {
+    newAdjustmentError.value = 'Please provide at least a Time IN or Time OUT adjustment.'
+    return
+  }
+
+  if (inVal && !isValidTimeString(inVal)) {
+    newAdjustmentError.value = 'Invalid Time IN. Please enter a valid time.'
+    return
+  }
+
+  if (outVal && !isValidTimeString(outVal)) {
+    newAdjustmentError.value = 'Invalid Time OUT. Please enter a valid time.'
+    return
+  }
+
+  const inChanged = inVal ? hasTimeChanged(newAdjustmentOrigIn.value, inVal) : false
+  const outChanged = outVal ? hasTimeChanged(newAdjustmentOrigOut.value, outVal) : false
+
+  if (!inChanged && !outChanged) {
+    newAdjustmentError.value = 'No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.'
+    return
+  }
+
+  isSubmittingNewAdjustment.value = true
+  try {
+    const requesterName = currentUser.value?.name || currentUser.value?.username || 'Admin'
+    const emp = allEmployees.value.find(e => e.biometric_user_id === newAdjustmentEmployeeId.value)
+    const empName = emp?.full_name || `Employee #${newAdjustmentEmployeeId.value}`
+
+    const formattedIn = inVal ? formatHHMMTo12Hour(inVal) : undefined
+    const formattedOut = outVal ? formatHHMMTo12Hour(outVal) : undefined
+
+    await attendanceService.submitManualTimeRequest({
+      bioId: newAdjustmentEmployeeId.value,
+      employeeName: empName,
+      date: newAdjustmentDate.value,
+      scheduleContext: newAdjustmentSchedule.value || undefined,
+      originalIn: newAdjustmentOrigIn.value.replace(/\s*\(Manual\)/gi, '').trim(),
+      originalOut: newAdjustmentOrigOut.value.replace(/\s*\(Manual\)/gi, '').trim(),
+      manualIn: formattedIn,
+      manualOut: formattedOut,
+      notes: newAdjustmentNotes.value.trim() || 'Manual attendance adjustment request',
+      requestedBy: requesterName
+    })
+
+    newAdjustmentSuccess.value = 'Manual adjustment request submitted successfully.'
+    setTimeout(() => {
+      isNewAdjustmentDialogOpen.value = false
+      loadRequests()
+    }, 900)
+  } catch (err: any) {
+    newAdjustmentError.value = err?.message || 'Failed to submit adjustment request.'
+  } finally {
+    isSubmittingNewAdjustment.value = false
+  }
+}
+
+function formatLongDate(dateStr?: string) {
+  if (!dateStr) return '—'
+  try {
+    const parts = dateStr.split('-')
+    if (parts.length === 3) {
+      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+      return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    }
+    return dateStr
+  } catch {
+    return dateStr
   }
 }
 
@@ -329,6 +572,16 @@ onMounted(() => {
             </span>
           </button>
         </div>
+
+        <Button
+          variant="default"
+          size="sm"
+          class="h-8 gap-1.5 text-xs font-semibold shadow-xs cursor-pointer"
+          @click="openNewAdjustmentModal"
+        >
+          <Plus class="size-3.5" />
+          <span>New Adjustment</span>
+        </Button>
 
         <Button
           variant="outline"
@@ -1097,6 +1350,267 @@ onMounted(() => {
               </Button>
             </template>
           </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- Delete Confirmation Dialog (shadcn-vue Dialog) -->
+    <Dialog v-model:open="isDeleteDialogOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2 text-base font-bold text-destructive">
+            <Trash2 class="size-4 text-destructive" />
+            <span>Delete Manual Time Adjustment?</span>
+          </DialogTitle>
+          <DialogDescription class="text-xs text-muted-foreground">
+            Are you sure you want to delete this manual time adjustment?
+          </DialogDescription>
+        </DialogHeader>
+
+        <div v-if="requestToDelete" class="p-3 my-2 rounded-lg border bg-muted/40 space-y-1.5 text-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground">Employee:</span>
+            <span class="font-semibold text-foreground">{{ requestToDelete.employeeName || `User #${requestToDelete.bioId}` }}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground">Bio ID:</span>
+            <span class="font-mono font-medium text-foreground">{{ requestToDelete.bioId }}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground">Date:</span>
+            <span class="font-medium text-foreground">{{ formatLongDate(requestToDelete.date) }}</span>
+          </div>
+        </div>
+
+        <DialogFooter class="border-t pt-3 flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs cursor-pointer"
+            :disabled="isDeleting"
+            @click="isDeleteDialogOpen = false"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            class="h-8 text-xs font-semibold cursor-pointer"
+            :disabled="isDeleting"
+            @click="confirmDelete"
+          >
+            <span v-if="isDeleting">Deleting...</span>
+            <span v-else>Delete</span>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- New Manual Time Adjustment Dialog -->
+    <Dialog v-model:open="isNewAdjustmentDialogOpen">
+      <DialogContent class="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2 font-bold text-base">
+            <Clock class="size-5 text-primary" />
+            <span>Create Manual Time Adjustment</span>
+          </DialogTitle>
+          <DialogDescription class="text-xs">
+            Submit an attendance time adjustment request for HR/Admin approval.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-3.5 py-1 text-xs">
+          <!-- Employee Selection -->
+          <div class="space-y-1.5">
+            <label class="font-semibold text-foreground text-xs block">
+              Select Employee
+            </label>
+            <Select v-model="newAdjustmentEmployeeId">
+              <SelectTrigger class="h-8 text-xs w-full bg-background">
+                <SelectValue placeholder="Choose an employee..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="emp in allEmployees"
+                    :key="emp.biometric_user_id"
+                    :value="emp.biometric_user_id"
+                  >
+                    {{ emp.full_name }} (#{{ emp.biometric_user_id }}) - {{ emp.location }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <!-- Date Selection -->
+          <div class="space-y-1.5">
+            <label class="font-semibold text-foreground text-xs block">
+              Attendance Date
+            </label>
+            <input
+              v-model="newAdjustmentDate"
+              type="date"
+              class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs text-foreground shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </div>
+
+          <!-- Original Attendance Display Context -->
+          <div class="p-3 rounded-lg border bg-muted/40 space-y-1.5">
+            <div class="flex items-center justify-between font-semibold text-foreground text-xs">
+              <span>Original Attendance on Selected Date</span>
+              <span v-if="isFetchingOriginalAttendance" class="text-primary text-[10px] animate-pulse">Loading...</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground pt-1">
+              <div>
+                <span>Original IN: </span>
+                <strong class="text-foreground font-mono">{{ formatOriginalTimeDisplay(newAdjustmentOrigIn) }}</strong>
+              </div>
+              <div>
+                <span>Original OUT: </span>
+                <strong class="text-foreground font-mono">{{ formatOriginalTimeDisplay(newAdjustmentOrigOut) }}</strong>
+              </div>
+            </div>
+            <div v-if="newAdjustmentSchedule" class="text-[10px] text-muted-foreground pt-1 border-t border-muted/60">
+              Schedule: <strong class="text-foreground">{{ newAdjustmentSchedule }}</strong>
+            </div>
+          </div>
+
+          <!-- Error & Success messages -->
+          <div v-if="newAdjustmentError" class="p-2.5 rounded-md border border-destructive/50 bg-destructive/10 text-destructive text-xs">
+            {{ newAdjustmentError }}
+          </div>
+
+          <div v-if="newAdjustmentSuccess" class="p-2.5 rounded-md border border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-1.5">
+            <CheckCircle2 class="size-4 shrink-0 text-emerald-600" />
+            <span>{{ newAdjustmentSuccess }}</span>
+          </div>
+
+          <!-- Adjusted Time IN and Time OUT fields -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Time IN -->
+            <div class="space-y-2 p-3 rounded-lg border bg-card">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-foreground text-xs uppercase tracking-wider">
+                  Time IN
+                </label>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded font-semibold font-sans"
+                  :class="[
+                    newInStatus.state === 'changed' ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-300' :
+                    newInStatus.state === 'invalid' ? 'bg-destructive/20 text-destructive' :
+                    'bg-muted text-muted-foreground'
+                  ]"
+                >
+                  {{ newInStatus.label }}
+                </span>
+              </div>
+
+              <div class="space-y-1 text-[11px]">
+                <div class="flex items-center justify-between text-muted-foreground">
+                  <span>Original:</span>
+                  <span class="font-mono font-medium text-foreground">{{ formatOriginalTimeDisplay(newAdjustmentOrigIn) }}</span>
+                </div>
+                <div class="text-muted-foreground pt-1">
+                  <span>Adjusted:</span>
+                </div>
+              </div>
+
+              <input
+                v-model="newAdjustmentIn"
+                type="time"
+                step="60"
+                class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              />
+
+              <div v-if="newInStatus.state === 'invalid'" class="text-[11px] text-destructive font-medium">
+                Invalid time. Please enter a valid time.
+              </div>
+            </div>
+
+            <!-- Time OUT -->
+            <div class="space-y-2 p-3 rounded-lg border bg-card">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-foreground text-xs uppercase tracking-wider">
+                  Time OUT
+                </label>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded font-semibold font-sans"
+                  :class="[
+                    newOutStatus.state === 'changed' ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-300' :
+                    newOutStatus.state === 'invalid' ? 'bg-destructive/20 text-destructive' :
+                    'bg-muted text-muted-foreground'
+                  ]"
+                >
+                  {{ newOutStatus.label }}
+                </span>
+              </div>
+
+              <div class="space-y-1 text-[11px]">
+                <div class="flex items-center justify-between text-muted-foreground">
+                  <span>Original:</span>
+                  <span class="font-mono font-medium text-foreground">{{ formatOriginalTimeDisplay(newAdjustmentOrigOut) }}</span>
+                </div>
+                <div class="text-muted-foreground pt-1">
+                  <span>Adjusted:</span>
+                </div>
+              </div>
+
+              <input
+                v-model="newAdjustmentOut"
+                type="time"
+                step="60"
+                class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              />
+
+              <div v-if="newOutStatus.state === 'invalid'" class="text-[11px] text-destructive font-medium">
+                Invalid time. Please enter a valid time.
+              </div>
+            </div>
+          </div>
+
+          <!-- Unchanged Notice if both valid but no change -->
+          <div
+            v-if="!hasNewAdjustmentChange && (newAdjustmentIn || newAdjustmentOut) && !hasNewInvalidTime"
+            class="p-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-1.5"
+          >
+            <span>No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.</span>
+          </div>
+
+          <!-- Reason / Notes -->
+          <div class="space-y-1.5">
+            <label class="font-semibold text-foreground text-xs flex items-center justify-between">
+              <span>Reason / Notes</span>
+              <span class="text-[10px] font-normal text-muted-foreground">Required explanation</span>
+            </label>
+            <Textarea
+              v-model="newAdjustmentNotes"
+              placeholder="e.g. Employee forgot to punch IN on terminal due to orientation"
+              class="h-16 text-xs resize-none"
+            />
+          </div>
+        </div>
+
+        <DialogFooter class="border-t pt-3 flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs cursor-pointer"
+            @click="isNewAdjustmentDialogOpen = false"
+          >
+            Cancel
+          </Button>
+
+          <Button
+            variant="default"
+            size="sm"
+            class="h-8 text-xs font-semibold gap-1.5 shadow-xs cursor-pointer"
+            :disabled="!canSubmitNewAdjustment"
+            @click="submitNewAdjustment"
+          >
+            <Send class="size-3.5" />
+            <span>{{ isSubmittingNewAdjustment ? 'Submitting...' : 'Submit Adjustment' }}</span>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

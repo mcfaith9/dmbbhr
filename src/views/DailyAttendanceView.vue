@@ -54,6 +54,13 @@ import {
   DialogDescription,
   DialogFooter
 } from '@/components/ui/dialog'
+import {
+  isValidTimeString,
+  normalizeTimeToHHMM,
+  hasTimeChanged,
+  formatHHMMTo12Hour,
+  formatOriginalTimeDisplay
+} from '@/lib/timeUtils'
 
 const route = useRoute()
 const router = useRouter()
@@ -302,22 +309,60 @@ function openAdjustmentModal(row: DailyAttendanceRecord) {
   adjustmentError.value = ''
   submitSuccessMsg.value = ''
 
-  // Pre-fill valid existing values or leave empty for missing
-  if (row.is_missing_in || row.actual_in === '-' || row.actual_in.includes('Missing')) {
-    manualInTime.value = row.expected_in || '08:00 AM'
-  } else {
-    manualInTime.value = row.actual_in.replace(/\s*\(Manual\)/i, '').trim()
-  }
-
-  if (row.actual_out === '-' || row.actual_out.includes('Awaiting') || row.actual_out.includes('Missing')) {
-    manualOutTime.value = row.expected_out || '05:00 PM'
-  } else {
-    manualOutTime.value = row.actual_out.replace(/\s*\(Manual\)/i, '').trim()
-  }
+  // Pre-fill normalized 24h values (HH:mm) if present, or blank if missing
+  manualInTime.value = normalizeTimeToHHMM(row.actual_in) || ''
+  manualOutTime.value = normalizeTimeToHHMM(row.actual_out) || ''
 
   manualNotes.value = row.manual_adjustment_reason || ''
   isAdjustmentDialogOpen.value = true
 }
+
+const inTimeStatus = computed(() => {
+  const orig = adjustmentRow.value?.actual_in
+  const requested = manualInTime.value.trim()
+  if (!requested) {
+    return { state: 'empty', label: 'Not specified', changed: false, valid: true }
+  }
+  if (!isValidTimeString(requested)) {
+    return { state: 'invalid', label: 'Invalid time. Please enter a valid time.', changed: false, valid: false }
+  }
+  const changed = hasTimeChanged(orig, requested)
+  if (changed) {
+    return { state: 'changed', label: '✓ Changed', changed: true, valid: true }
+  }
+  return { state: 'unchanged', label: 'No change', changed: false, valid: true }
+})
+
+const outTimeStatus = computed(() => {
+  const orig = adjustmentRow.value?.actual_out
+  const requested = manualOutTime.value.trim()
+  if (!requested) {
+    return { state: 'empty', label: 'Not specified', changed: false, valid: true }
+  }
+  if (!isValidTimeString(requested)) {
+    return { state: 'invalid', label: 'Invalid time. Please enter a valid time.', changed: false, valid: false }
+  }
+  const changed = hasTimeChanged(orig, requested)
+  if (changed) {
+    return { state: 'changed', label: '✓ Changed', changed: true, valid: true }
+  }
+  return { state: 'unchanged', label: 'No change', changed: false, valid: true }
+})
+
+const hasAnyAdjustmentChange = computed(() => {
+  return inTimeStatus.value.changed || outTimeStatus.value.changed
+})
+
+const hasAnyInvalidTime = computed(() => {
+  return !inTimeStatus.value.valid || !outTimeStatus.value.valid
+})
+
+const canSubmitAdjustment = computed(() => {
+  if (isSavingAdjustment.value || !!submitSuccessMsg.value) return false
+  if (hasAnyInvalidTime.value) return false
+  if (!manualInTime.value.trim() && !manualOutTime.value.trim()) return false
+  return hasAnyAdjustmentChange.value
+})
 
 /**
  * Validates and submits manual time request for approval
@@ -335,10 +380,36 @@ async function handleSubmitForApproval() {
     return
   }
 
+  // Reject invalid Time IN
+  if (inVal && !isValidTimeString(inVal)) {
+    adjustmentError.value = 'Invalid Time IN. Please enter a valid time.'
+    return
+  }
+
+  // Reject invalid Time OUT
+  if (outVal && !isValidTimeString(outVal)) {
+    adjustmentError.value = 'Invalid Time OUT. Please enter a valid time.'
+    return
+  }
+
+  const origIn = adjustmentRow.value.actual_in
+  const origOut = adjustmentRow.value.actual_out
+
+  const inChanged = inVal ? hasTimeChanged(origIn, inVal) : false
+  const outChanged = outVal ? hasTimeChanged(origOut, outVal) : false
+
+  if (!inChanged && !outChanged) {
+    adjustmentError.value = 'No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.'
+    return
+  }
+
   isSavingAdjustment.value = true
   try {
     const requesterName = currentUser.value?.name || currentUser.value?.username || 'Admin'
     const row = adjustmentRow.value
+
+    const formattedIn = inVal ? formatHHMMTo12Hour(inVal) : undefined
+    const formattedOut = outVal ? formatHHMMTo12Hour(outVal) : undefined
 
     await attendanceService.submitManualTimeRequest({
       bioId: row.biometric_user_id,
@@ -347,8 +418,8 @@ async function handleSubmitForApproval() {
       scheduleContext: `${row.expected_in} → ${row.expected_out} (${row.work_group_name})`,
       originalIn: row.actual_in.replace(/\s*\(Manual\)/i, '').trim(),
       originalOut: row.actual_out.replace(/\s*\(Manual\)/i, '').trim(),
-      manualIn: inVal || undefined,
-      manualOut: outVal || undefined,
+      manualIn: formattedIn,
+      manualOut: formattedOut,
       notes: notesVal || 'Manual attendance adjustment request',
       requestedBy: requesterName
     })
@@ -1255,32 +1326,94 @@ onUnmounted(() => {
           </div>
 
           <!-- IN and OUT Adjustment Fields in ONE Dialog -->
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <!-- IN Field -->
-            <div class="space-y-1.5">
-              <label class="font-semibold text-foreground text-xs flex items-center justify-between">
-                <span>Time IN</span>
-                <span class="text-[10px] font-normal text-muted-foreground">Optional</span>
-              </label>
-              <Input
+            <div class="space-y-2 p-3 rounded-lg border bg-card">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-foreground text-xs uppercase tracking-wider">
+                  Time IN
+                </label>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded font-semibold font-sans"
+                  :class="[
+                    inTimeStatus.state === 'changed' ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-300' :
+                    inTimeStatus.state === 'invalid' ? 'bg-destructive/20 text-destructive' :
+                    'bg-muted text-muted-foreground'
+                  ]"
+                >
+                  {{ inTimeStatus.label }}
+                </span>
+              </div>
+
+              <div class="space-y-1 text-[11px]">
+                <div class="flex items-center justify-between text-muted-foreground">
+                  <span>Original:</span>
+                  <span class="font-mono font-medium text-foreground">{{ formatOriginalTimeDisplay(adjustmentRow.actual_in) }}</span>
+                </div>
+                <div class="text-muted-foreground pt-1">
+                  <span>Adjusted:</span>
+                </div>
+              </div>
+
+              <input
                 v-model="manualInTime"
-                placeholder="e.g. 08:00 AM"
-                class="h-8 text-xs font-mono"
+                type="time"
+                step="60"
+                class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               />
+
+              <div v-if="inTimeStatus.state === 'invalid'" class="text-[11px] text-destructive font-medium">
+                Invalid time. Please enter a valid time.
+              </div>
             </div>
 
             <!-- OUT Field -->
-            <div class="space-y-1.5">
-              <label class="font-semibold text-foreground text-xs flex items-center justify-between">
-                <span>Time OUT</span>
-                <span class="text-[10px] font-normal text-muted-foreground">Optional</span>
-              </label>
-              <Input
+            <div class="space-y-2 p-3 rounded-lg border bg-card">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-foreground text-xs uppercase tracking-wider">
+                  Time OUT
+                </label>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded font-semibold font-sans"
+                  :class="[
+                    outTimeStatus.state === 'changed' ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-300' :
+                    outTimeStatus.state === 'invalid' ? 'bg-destructive/20 text-destructive' :
+                    'bg-muted text-muted-foreground'
+                  ]"
+                >
+                  {{ outTimeStatus.label }}
+                </span>
+              </div>
+
+              <div class="space-y-1 text-[11px]">
+                <div class="flex items-center justify-between text-muted-foreground">
+                  <span>Original:</span>
+                  <span class="font-mono font-medium text-foreground">{{ formatOriginalTimeDisplay(adjustmentRow.actual_out) }}</span>
+                </div>
+                <div class="text-muted-foreground pt-1">
+                  <span>Adjusted:</span>
+                </div>
+              </div>
+
+              <input
                 v-model="manualOutTime"
-                placeholder="e.g. 05:00 PM"
-                class="h-8 text-xs font-mono"
+                type="time"
+                step="60"
+                class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               />
+
+              <div v-if="outTimeStatus.state === 'invalid'" class="text-[11px] text-destructive font-medium">
+                Invalid time. Please enter a valid time.
+              </div>
             </div>
+          </div>
+
+          <!-- Unchanged Notice if both valid but no change -->
+          <div
+            v-if="!hasAnyAdjustmentChange && (manualInTime || manualOutTime) && !hasAnyInvalidTime"
+            class="p-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-1.5"
+          >
+            <span>No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.</span>
           </div>
 
           <!-- Optional Notes using shadcn-vue Textarea -->
@@ -1325,7 +1458,7 @@ onUnmounted(() => {
               variant="default"
               size="sm"
               class="h-8 text-xs font-semibold gap-1.5 shadow-xs"
-              :disabled="isSavingAdjustment || !!submitSuccessMsg"
+              :disabled="!canSubmitAdjustment"
               @click="handleSubmitForApproval"
             >
               <Send class="size-3.5" />
