@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Shield,
-  User,
+  UserRound,
   KeyRound,
   CheckCircle2,
   AlertCircle,
@@ -147,7 +147,7 @@ function handleClose() {
         <div class="space-y-2">
           <div class="flex items-center justify-between border-b pb-1.5">
             <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <User class="size-3.5 text-primary" />
+              <UserRound class="size-3.5 text-primary" />
               Account
             </span>
           </div>
