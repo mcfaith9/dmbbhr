@@ -240,6 +240,30 @@ export const authService = {
     }
   },
 
+  /**
+   * Reset password for an account (by Administrator)
+   */
+  async adminResetPassword(username: string, newPassword: string): Promise<void> {
+    const cleanUsername = username.trim().toLowerCase()
+    const accounts = await getStoredAccounts()
+    let matchedKey: string | null = null
+    for (const [key, acc] of Object.entries(accounts)) {
+      if (key === cleanUsername || acc.user.username.toLowerCase() === cleanUsername) {
+        matchedKey = key
+        break
+      }
+    }
+    if (!matchedKey) {
+      throw new Error(`Account "${username}" was not found.`)
+    }
+    const targetAccount = accounts[matchedKey]
+    const newSalt = generateSalt()
+    const newPasswordHash = await hashPassword(newPassword, newSalt)
+    targetAccount.salt = newSalt
+    targetAccount.passwordHash = newPasswordHash
+    await saveStoredAccounts(accounts)
+  },
+
   getCurrentUser(): User | null {
     if (!currentUserState.value) {
       currentUserState.value = loadInitialUser()

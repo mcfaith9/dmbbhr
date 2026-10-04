@@ -9,6 +9,7 @@ import {
   WalletCards,
   ChartPie,
   Settings,
+  UserCheck,
 } from "@lucide/vue"
 import { h, ref, computed } from "vue"
 import { useRoute, useRouter } from 'vue-router'
@@ -113,12 +114,23 @@ const navSections: NavItem[] = [
     icon: ChartPie,
   },
   {
-    id: "administration",
-    title: "Administration",
+    id: "accounts",
+    title: "Accounts",
+    url: "/users",
+    icon: UserCheck,
+    children: [
+      { title: "User Accounts", url: "/users", description: "Manage admin & HR accounts, roles, and security credentials" },
+    ],
+  },
+  {
+    id: "settings",
+    title: "Settings",
+    url: "/settings",
     icon: Settings,
     children: [
-      { title: "Accounts", url: "/users", description: "Manage user accounts, roles, and access" },
-      { title: "Settings", url: "/settings", description: "System & branch preferences" },
+      { title: "Settings Overview", url: "/settings", description: "Application configuration dashboard" },
+      { title: "Attendance Configuration", url: "/settings/attendance", description: "Configure work groups, attendance rules, holidays, and other attendance-related settings." },
+      { title: "System & Integrations", url: "/settings/system", description: "Manage biometric devices, network configuration, and external system integrations." },
     ],
   },
 ]
@@ -135,9 +147,8 @@ const activeItem = computed(() => {
   }
   if (currentPath.startsWith('/payroll')) return navSections.find(s => s.id === 'payroll')!
   if (currentPath.startsWith('/reports')) return navSections.find(s => s.id === 'reports')!
-  if (currentPath.startsWith('/users') || currentPath.startsWith('/settings')) {
-    return navSections.find(s => s.id === 'administration')!
-  }
+  if (currentPath.startsWith('/users')) return navSections.find(s => s.id === 'accounts')!
+  if (currentPath.startsWith('/settings')) return navSections.find(s => s.id === 'settings')!
   return navSections.find(s => s.id === 'dashboard')!
 })
 

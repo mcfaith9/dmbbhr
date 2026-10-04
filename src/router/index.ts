@@ -16,7 +16,9 @@ const PayrollPeriodsView = () => import('@/views/PayrollPeriodsView.vue')
 const PayrollRecordsView = () => import('@/views/PayrollRecordsView.vue')
 const ReportsView = () => import('@/views/ReportsView.vue')
 const UsersView = () => import('@/views/UsersView.vue')
-const SettingsView = () => import('@/views/SettingsView.vue')
+const SettingsView = () => import('@/views/settings/SettingsView.vue')
+const AttendanceConfigurationView = () => import('@/views/settings/AttendanceConfigurationView.vue')
+const SystemIntegrationsView = () => import('@/views/settings/SystemIntegrationsView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
 const AppLayout = () => import('@/layouts/AppLayout.vue')
 
@@ -128,13 +130,27 @@ export const router = createRouter({
           path: 'users',
           name: 'users',
           component: UsersView,
-          meta: { title: 'User Management', breadcrumb: ['Administration', 'Users'] }
+          meta: { title: 'Accounts', breadcrumb: ['Accounts', 'User Management'] }
         },
         {
           path: 'settings',
           name: 'settings',
           component: SettingsView,
-          meta: { title: 'Settings', breadcrumb: ['Administration', 'Settings'] }
+          meta: { title: 'Settings', breadcrumb: ['Settings', 'Overview'] }
+        },
+        {
+          path: 'settings/attendance',
+          name: 'settings-attendance',
+          component: AttendanceConfigurationView,
+          alias: ['settings/attendance-configuration', 'settings/attendance_configuration'],
+          meta: { title: 'Attendance Configuration', breadcrumb: ['Settings', 'Attendance Configuration'] }
+        },
+        {
+          path: 'settings/system',
+          name: 'settings-system',
+          component: SystemIntegrationsView,
+          alias: ['settings/system-integrations', 'settings/system_integrations'],
+          meta: { title: 'System & Integrations', breadcrumb: ['Settings', 'System & Integrations'] }
         }
       ]
     },
