@@ -347,6 +347,7 @@ onMounted(() => {
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
+                  <SelectItem value="2">2 seconds</SelectItem>
                   <SelectItem value="3">3 seconds</SelectItem>
                   <SelectItem value="5">5 seconds (Default)</SelectItem>
                   <SelectItem value="8">8 seconds</SelectItem>

@@ -24,6 +24,18 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     updatedAt: new Date().toISOString()
   },
   {
+    bioId: '25069',
+    employeeNumber: '25069',
+    fullName: 'Alfanta, Cristine',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
     bioId: '50291',
     employeeNumber: '50291',
     fullName: 'Alfanta, Cristine',

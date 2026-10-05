@@ -67,7 +67,7 @@ const currentTimeStr = ref('')
 const currentDateStr = ref('')
 let clockTimer: any = null
 
-// Auto-dismiss timer & progress
+// Auto-dismiss timer & progress bar
 let dismissTimer: any = null
 const dismissProgress = ref(100)
 let dismissProgressInterval: any = null
@@ -243,8 +243,7 @@ function triggerSubtleConfetti() {
   confettiAnimationId = requestAnimationFrame(animate)
 }
 
-// Watch incoming punch to handle auto-dismiss and confetti
-watch(() => currentPunch.value, (newPunch) => {
+function cancelDisplayTimer() {
   if (dismissTimer) {
     clearTimeout(dismissTimer)
     dismissTimer = null
@@ -253,16 +252,13 @@ watch(() => currentPunch.value, (newPunch) => {
     clearInterval(dismissProgressInterval)
     dismissProgressInterval = null
   }
+}
 
-  if (!newPunch) return
-
-  // Trigger celebration only for qualifying positive IN (early / on-time)
-  if (settings.value.confettiEnabled && !newPunch.isLate && (newPunch.statusCategory === 'early' || newPunch.statusCategory === 'on_time') && newPunch.direction === 'IN') {
-    triggerSubtleConfetti()
-  }
+function startDisplayTimer() {
+  cancelDisplayTimer()
 
   const durationSec = settings.value.displayDurationSeconds || 5
-  if (durationSec > 0) {
+  if (durationSec > 0 && currentPunch.value) {
     const totalMs = durationSec * 1000
     const start = Date.now()
     dismissProgress.value = 100
@@ -274,17 +270,45 @@ watch(() => currentPunch.value, (newPunch) => {
 
     dismissTimer = setTimeout(() => {
       currentPunch.value = null
-      if (dismissProgressInterval) {
-        clearInterval(dismissProgressInterval)
-        dismissProgressInterval = null
-      }
+      cancelDisplayTimer()
     }, totalMs)
   }
-})
+}
+
+// Watch incoming punch to handle immediate replacement and timer reset
+watch(
+  () => currentPunch.value?.eventId || currentPunch.value?.id,
+  (newEventId) => {
+    cancelDisplayTimer()
+
+    if (!newEventId || !currentPunch.value) {
+      dismissProgress.value = 100
+      return
+    }
+
+    const punch = currentPunch.value
+
+    // Trigger celebration only for qualifying positive IN (early / on-time)
+    if (
+      settings.value.confettiEnabled &&
+      !punch.isLate &&
+      (punch.statusCategory === 'early' || punch.statusCategory === 'on_time') &&
+      punch.direction === 'IN'
+    ) {
+      triggerSubtleConfetti()
+    }
+
+    // Start fresh display timer for this punch
+    startDisplayTimer()
+  }
+)
+
+// Internal test counter to produce incrementing seconds for demo tests
+let testSeq = 0
 
 // Interactive Test Punch simulation for demo & comprehensive test verification
 async function triggerTestPunch(
-  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'unknown',
+  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown',
   rawUserId: string = 'user25065'
 ) {
   if (employees.value.length === 0) {
@@ -301,41 +325,47 @@ async function triggerTestPunch(
 
   const mockDate = new Date()
   let direction: 'IN' | 'OUT' = 'IN'
+  testSeq++
 
   switch (scenario) {
+    case 'same_employee':
+      // Dynamic advancing seconds: 8:05:01, 8:05:08, 8:05:15...
+      mockDate.setHours(8, 5, (testSeq * 7) % 60, 0)
+      direction = 'IN'
+      break
     case 'late_in':
-      mockDate.setHours(8, 35, 14, 0) // 8:35:14 AM -> LATE IN
+      mockDate.setHours(8, 35, (testSeq * 3) % 60, 0) // 8:35 AM -> LATE IN
       direction = 'IN'
       break
     case 'ontime_in':
-      mockDate.setHours(8, 5, 20, 0) // 8:05:20 AM -> ON TIME IN
+      mockDate.setHours(8, 5, (testSeq * 4) % 60, 0) // 8:05 AM -> ON TIME IN
       direction = 'IN'
       break
     case 'early_in':
-      mockDate.setHours(7, 48, 22, 0) // 7:48:22 AM -> EARLY IN
+      mockDate.setHours(7, 48, (testSeq * 5) % 60, 0) // 7:48 AM -> EARLY IN
       direction = 'IN'
       break
     case 'normal_out':
-      mockDate.setHours(17, 10, 45, 0) // 5:10:45 PM -> TIME OUT (Normal OUT on or after 5pm)
+      mockDate.setHours(17, 10, (testSeq * 2) % 60, 0) // 5:10 PM -> TIME OUT (Normal OUT on or after 5pm)
       direction = 'OUT'
       break
     case 'early_out':
-      mockDate.setHours(16, 30, 0, 0) // 4:30:00 PM -> EARLY OUT (Before 5pm)
+      mockDate.setHours(16, 30, (testSeq * 2) % 60, 0) // 4:30 PM -> EARLY OUT (Before 5pm)
       direction = 'OUT'
       break
     case 'late_then_out':
       // Test scenario F: employee was late in morning, now punches OUT at 5:10 PM
-      mockDate.setHours(17, 10, 0, 0)
+      mockDate.setHours(17, 10, (testSeq * 3) % 60, 0)
       direction = 'OUT'
       break
     case 'unknown':
-      mockDate.setHours(8, 2, 0, 0)
+      mockDate.setHours(8, 2, (testSeq * 6) % 60, 0)
       direction = 'IN'
       break
   }
 
   const log: AttendanceLog = {
-    id: `test-punch-${normalizedId}-${Date.now()}`,
+    id: `test-punch-${normalizedId}-${Date.now()}-${testSeq}`,
     user_id: rawUserId,
     employee_name: rawUserId,
     employee_id: normalizedId,
@@ -382,8 +412,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
-  if (dismissTimer) clearTimeout(dismissTimer)
-  if (dismissProgressInterval) clearInterval(dismissProgressInterval)
+  cancelDisplayTimer()
   if (confettiAnimationId) cancelAnimationFrame(confettiAnimationId)
 })
 </script>
@@ -500,9 +529,10 @@ onUnmounted(() => {
       
       <!-- Primary Active Punch / Idle Display Card -->
       <section class="flex-1 w-full max-w-2xl mx-auto">
-        <!-- CURRENT PUNCH CARD (Matches DMBBHR Visual Hierarchy with Photo Placeholder) -->
+        <!-- CURRENT PUNCH CARD (Keyed by unique eventId so consecutive punches for the same employee visibly refresh!) -->
         <div
           v-if="currentPunch && settings.enabled"
+          :key="currentPunch.eventId || currentPunch.id"
           class="bg-card text-card-foreground border rounded-xl md:rounded-2xl shadow-xs overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-200"
         >
           <!-- Card Header Banner -->
@@ -656,6 +686,26 @@ onUnmounted(() => {
             </div>
             <div class="flex flex-wrap items-center justify-center gap-2">
               <Button
+                variant="default"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer shadow-xs"
+                title="Test same employee punching repeatedly - verifies immediate refresh with advancing time"
+                @click="triggerTestPunch('same_employee', 'user25065')"
+              >
+                <Play class="size-3" />
+                <span>Simulate 25065 (Cantillas) Punch</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test Person B punching - verifies immediate replacement from Person A to Person B"
+                @click="triggerTestPunch('same_employee', 'user25069')"
+              >
+                <Play class="size-3 text-blue-600" />
+                <span>Simulate 25069 (Alfanta) Punch</span>
+              </Button>
+              <Button
                 variant="outline"
                 size="sm"
                 class="h-8 text-xs gap-1.5 cursor-pointer"
@@ -752,7 +802,7 @@ onUnmounted(() => {
         <div v-else class="space-y-2">
           <div
             v-for="punch in recentPunches"
-            :key="punch.id"
+            :key="punch.eventId || punch.id"
             class="p-2.5 rounded-lg border bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between gap-3 text-xs"
           >
             <div class="min-w-0">
@@ -815,7 +865,7 @@ onUnmounted(() => {
             <Switch v-model="formEnabled" />
           </div>
 
-          <!-- Display Duration -->
+          <!-- Display Duration (Includes 2 seconds, 3 seconds, 5 seconds, 8 seconds, 10 seconds) -->
           <div class="space-y-1.5">
             <Label class="text-xs font-semibold text-foreground">Screen Display Duration</Label>
             <Select v-model="formDuration">
@@ -824,6 +874,7 @@ onUnmounted(() => {
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
+                  <SelectItem value="2">2 seconds</SelectItem>
                   <SelectItem value="3">3 seconds</SelectItem>
                   <SelectItem value="5">5 seconds (Default)</SelectItem>
                   <SelectItem value="8">8 seconds</SelectItem>
@@ -832,7 +883,7 @@ onUnmounted(() => {
               </SelectContent>
             </Select>
             <p class="text-[11px] text-muted-foreground">
-              How long the employee confirmation card stays visible before returning to idle.
+              Minimum duration to hold screen when no new punch arrives. Any new punch immediately replaces the screen.
             </p>
           </div>
 

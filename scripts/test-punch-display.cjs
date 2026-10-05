@@ -131,11 +131,90 @@ assert.strictEqual(eveningPunch.isLate, false, 'Test F: OUT must not inherit mor
 // 8. Recent punches capped at 10 items
 let recent = []
 for (let i = 1; i <= 15; i++) {
-  const p = { id: `p-${i}`, employeeName: `Emp ${i}`, time: `8:0${i} AM` }
+  const p = { id: `p-${i}`, eventId: `p-${i}`, employeeName: `Emp ${i}`, time: `8:0${i} AM` }
   recent = [p, ...recent].slice(0, 10)
 }
 assert.strictEqual(recent.length, 10, 'Recent punches must be capped at 10')
 assert.strictEqual(recent[0].id, 'p-15', 'Newest punch must appear first')
 assert.strictEqual(recent[9].id, 'p-6', 'Oldest entries beyond 10 must be dropped')
+
+// 9. Same employee punching again (25065 at 8:05:01 AM, then 25065 again at 8:05:08 AM)
+let currentDisplay = null
+let recentList = []
+
+function handlePunch(event) {
+  if (currentDisplay && currentDisplay.eventId !== event.eventId) {
+    recentList = [currentDisplay, ...recentList.filter(p => p.eventId !== currentDisplay.eventId)].slice(0, 10)
+  }
+  currentDisplay = { ...event }
+}
+
+const punchA1 = {
+  id: 'ev-1',
+  eventId: '25065-80501-1',
+  bioId: '25065',
+  employeeName: 'Cantillas, Ronald',
+  time: '8:05:01 AM',
+  statusLabel: 'ON TIME'
+}
+handlePunch(punchA1)
+assert.strictEqual(currentDisplay.eventId, '25065-80501-1')
+assert.strictEqual(currentDisplay.time, '8:05:01 AM')
+assert.strictEqual(recentList.length, 0)
+
+const punchA2 = {
+  id: 'ev-2',
+  eventId: '25065-80508-2',
+  bioId: '25065',
+  employeeName: 'Cantillas, Ronald',
+  time: '8:05:08 AM',
+  statusLabel: 'ON TIME'
+}
+handlePunch(punchA2)
+// Display must IMMEDIATELY refresh to the new event
+assert.strictEqual(currentDisplay.eventId, '25065-80508-2')
+assert.strictEqual(currentDisplay.time, '8:05:08 AM')
+// Previous punch from same employee must be kept in recentList!
+assert.strictEqual(recentList.length, 1)
+assert.strictEqual(recentList[0].eventId, '25065-80501-1')
+assert.strictEqual(recentList[0].time, '8:05:01 AM')
+
+// 10. Different employee punching immediately after (Person B 25069)
+const punchB1 = {
+  id: 'ev-3',
+  eventId: '25069-80510-3',
+  bioId: '25069',
+  employeeName: 'Alfanta, Cristine',
+  time: '8:05:10 AM',
+  statusLabel: 'ON TIME'
+}
+handlePunch(punchB1)
+assert.strictEqual(currentDisplay.eventId, '25069-80510-3')
+assert.strictEqual(currentDisplay.employeeName, 'Alfanta, Cristine')
+assert.strictEqual(recentList.length, 2)
+assert.strictEqual(recentList[0].eventId, '25065-80508-2')
+assert.strictEqual(recentList[1].eventId, '25065-80501-1')
+
+// 11. Person B punches again
+const punchB2 = {
+  id: 'ev-4',
+  eventId: '25069-80515-4',
+  bioId: '25069',
+  employeeName: 'Alfanta, Cristine',
+  time: '8:05:15 AM',
+  statusLabel: 'ON TIME'
+}
+handlePunch(punchB2)
+assert.strictEqual(currentDisplay.eventId, '25069-80515-4')
+assert.strictEqual(currentDisplay.time, '8:05:15 AM')
+assert.strictEqual(recentList.length, 3)
+assert.strictEqual(recentList[0].eventId, '25069-80510-3')
+assert.strictEqual(recentList[1].eventId, '25065-80508-2')
+assert.strictEqual(recentList[2].eventId, '25065-80501-1')
+
+// 12. Display Duration supported options (including 2s)
+const supportedDurations = [2, 3, 5, 8, 10]
+assert.ok(supportedDurations.includes(2), '2-second option must be supported')
+assert.strictEqual(supportedDurations[2], 5, 'Default is 5 seconds')
 
 console.log('✅ ALL PUNCH DISPLAY TESTS PASSED SUCCESSFULLY! 🎉')

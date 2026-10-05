@@ -14,6 +14,7 @@ import { getManilaDateString } from '@/services/attendanceEngine'
 
 export interface CompactRecentPunch {
   id: string
+  eventId: string
   employeeName: string
   bioId: string
   direction: string // "TIME IN" | "TIME OUT"
@@ -26,7 +27,9 @@ export interface CompactRecentPunch {
 
 export interface PunchDisplayEvent {
   id: string
+  eventId: string // Unique UI event identity to distinguish consecutive scans from same employee
   userId: string
+  bioId: string // Canonical Bio ID alias
   employeeName: string
   employeeId?: string
   photoUrl?: string
@@ -36,12 +39,15 @@ export interface PunchDisplayEvent {
   locationName?: string
   deviceName?: string
   timestamp: string
+  time: string // Formatted time e.g. "8:05:08 AM"
+  date: string // Formatted date e.g. "October 5, 2026"
   type: number // 1: Fingerprint, 2: Face, 3: Password, 4: Card, etc.
   state: number // 1: Time In, 2: Break Out, 3: Break In, 4: Time Out, 5: OT In, 6: OT Out
   direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT'
   stateLabel: string
   stateColor: 'emerald' | 'amber' | 'blue' | 'rose' | 'purple' | 'slate'
   statusCategory: 'early' | 'on_time' | 'late' | 'undertime' | 'regular' | 'time_out'
+  status: string // Canonical status alias e.g. "EARLY" | "ON TIME" | "LATE" | "TIME OUT" | "EARLY OUT"
   statusLabel: string
   statusDetail: string
   statusVariant: 'success' | 'warning' | 'destructive' | 'secondary' | 'outline' | 'default'
@@ -52,7 +58,7 @@ export interface PunchDisplayEvent {
 
 export interface PunchDisplaySettings {
   enabled: boolean // Enable Punch Display = ON / OFF (default: true)
-  displayDurationSeconds: number // Supported values: 3, 5, 8, 10 (default: 5)
+  displayDurationSeconds: number // Supported values: 2, 3, 5, 8, 10 (default: 5)
   soundEnabled: boolean // Audio chime ON / OFF (default: true)
   confettiEnabled: boolean // Confetti = ON / OFF (default: true)
   lateVisualEnabled: boolean // Late Visual = ON / OFF (default: true)
@@ -69,13 +75,15 @@ export function normalizeBioId(value: unknown): string {
   return match?.[0] ?? raw
 }
 
+let eventCounter = 0
+
 const PRIMARY_CHANNEL_NAME = 'dmbbhr-punch-display'
 const FALLBACK_CHANNEL_NAME = 'dmbbhr-punch-channel'
 const SETTINGS_KEY = 'dmbbhr_punch_display_settings'
 
 const DEFAULT_SETTINGS: PunchDisplaySettings = {
   enabled: true,
-  displayDurationSeconds: 5, // Default: 5 seconds as specified
+  displayDurationSeconds: 5, // Default: 5 seconds
   soundEnabled: true,
   confettiEnabled: true,
   lateVisualEnabled: true,
@@ -89,7 +97,7 @@ class PunchDisplayService {
   public isChannelSupported = typeof window !== 'undefined' && 'BroadcastChannel' in window
   public currentPunch = ref<PunchDisplayEvent | null>(null)
   
-  // Maximum 10 recent punches for visual lineup (increased from 5 to 10)
+  // Maximum 10 recent punches for visual lineup
   public recentPunches = ref<CompactRecentPunch[]>([])
   public punchHistory = ref<CompactRecentPunch[]>([]) // alias for backward compatibility
   
@@ -370,32 +378,45 @@ class PunchDisplayService {
     }
   }
 
+  /**
+   * Core rule: Every real biometric event is a NEW punch event.
+   * Do NOT deduplicate by employee/Bio ID.
+   * Same employee punching again creates a distinct event and pushes previous punch to recent history.
+   */
   public handleIncomingPunch = (event: PunchDisplayEvent) => {
     // If Punch Display is turned OFF in preferences, do not accept punches
     if (!this.settings.value.enabled) return
 
     // When a new punch arrives, convert previous current punch to compact recent punch (max 10)
-    if (this.currentPunch.value && this.currentPunch.value.id !== event.id) {
+    // Even if it's the exact same employee, the previous punch is archived into recent punches!
+    if (this.currentPunch.value) {
       const prev = this.currentPunch.value
-      const compactPrev: CompactRecentPunch = {
-        id: prev.id,
-        employeeName: prev.employeeName,
-        bioId: prev.userId,
-        direction: prev.stateLabel,
-        time: this.formatTimeDisplay(prev.timestamp),
-        date: this.formatDateDisplay(prev.timestamp),
-        status: prev.statusLabel,
-        statusVariant: prev.statusVariant,
-        isLate: prev.isLate
-      }
+      // Check if previous event is different from incoming event
+      if (prev.id !== event.id && prev.eventId !== event.eventId) {
+        const compactPrev: CompactRecentPunch = {
+          id: prev.id,
+          eventId: prev.eventId || prev.id,
+          employeeName: prev.employeeName,
+          bioId: prev.bioId || prev.userId,
+          direction: prev.stateLabel,
+          time: prev.time || this.formatTimeDisplay(prev.timestamp),
+          date: prev.date || this.formatDateDisplay(prev.timestamp),
+          status: prev.statusLabel,
+          statusVariant: prev.statusVariant,
+          isLate: prev.isLate
+        }
 
-      this.recentPunches.value = [
-        compactPrev,
-        ...this.recentPunches.value.filter(p => p.id !== compactPrev.id && p.id !== event.id)
-      ].slice(0, 10) // Maximum 10 entries
+        // Insert newest at the top. DO NOT deduplicate by Bio ID!
+        // Consecutive punches from the same employee must both be kept in recent punches.
+        this.recentPunches.value = [
+          compactPrev,
+          ...this.recentPunches.value.filter(p => p.id !== compactPrev.id && p.eventId !== compactPrev.eventId)
+        ].slice(0, 10) // Maximum 10 entries
+      }
     }
 
-    this.currentPunch.value = event
+    // Always replace current punch with a fresh object reference
+    this.currentPunch.value = { ...event }
     this.punchHistory.value = this.recentPunches.value
 
     if (this.settings.value.soundEnabled) {
@@ -409,6 +430,7 @@ class PunchDisplayService {
         timeZone: 'Asia/Manila',
         hour: 'numeric',
         minute: '2-digit',
+        second: '2-digit',
         hour12: true
       }).format(new Date(isoStr))
     } catch {
@@ -420,7 +442,7 @@ class PunchDisplayService {
     try {
       return new Intl.DateTimeFormat('en-PH', {
         timeZone: 'Asia/Manila',
-        month: 'short',
+        month: 'long',
         day: 'numeric',
         year: 'numeric'
       }).format(new Date(isoStr))
@@ -558,9 +580,19 @@ class PunchDisplayService {
       expOut
     )
 
+    // Generate guaranteed unique event identity so repeated punches from same employee are distinct
+    const seq = ++eventCounter
+    const eventTimestamp = new Date(log.attendance_time || Date.now()).getTime()
+    const uniqueEventId = `punch-${normalizedBioId}-${eventTimestamp}-${seq}`
+
+    const formattedTime = this.formatTimeDisplay(log.attendance_time || new Date().toISOString())
+    const formattedDate = this.formatDateDisplay(log.attendance_time || new Date().toISOString())
+
     const event: PunchDisplayEvent = {
-      id: log.id || `punch-${normalizedBioId}-${Date.now()}`,
+      id: uniqueEventId,
+      eventId: uniqueEventId,
       userId: normalizedBioId,
+      bioId: normalizedBioId,
       employeeName: resolvedName,
       employeeId: normalizedBioId,
       photoUrl: extra?.photoUrl,
@@ -570,12 +602,15 @@ class PunchDisplayService {
       locationName: employee?.location || log.location_name || 'DBB Cebu',
       deviceName: log.device_name || 'BISMAC BISBIO B-29b',
       timestamp: log.attendance_time || new Date().toISOString(),
+      time: formattedTime,
+      date: formattedDate,
       type: log.type ?? 1,
       state: stateNumber,
       direction,
       stateLabel: label,
       stateColor: color,
       statusCategory: status.statusCategory,
+      status: status.statusLabel,
       statusLabel: status.statusLabel,
       statusDetail: status.statusDetail,
       statusVariant: status.statusVariant,
