@@ -7,13 +7,13 @@
 import { ref } from 'vue'
 import type { AttendanceLog } from '@/types'
 import { formatDuration } from '@/lib/timeUtils'
+import { employeeService } from '@/services/employees'
 
 export interface PunchDisplayEvent {
   id: string
   userId: string
   employeeName: string
   employeeId?: string
-  photoUrl?: string
   workGroup?: string
   workGroupCode?: string
   department?: string
@@ -41,6 +41,16 @@ export interface PunchDisplaySettings {
   customLateImageUrl: string
 }
 
+/**
+ * Normalizes any raw biometric user ID (e.g., "user25065", "25065", 25065, "  user_50044  ")
+ * into a clean digits-only identifier ("25065", "50044").
+ */
+export function normalizeBioId(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  const match = raw.match(/\d+/)
+  return match?.[0] ?? raw
+}
+
 const CHANNEL_NAME = 'dmbbhr-punch-channel'
 const SETTINGS_KEY = 'dmbbhr_punch_display_settings'
 
@@ -48,7 +58,7 @@ const DEFAULT_SETTINGS: PunchDisplaySettings = {
   displayDurationSeconds: 8,
   soundEnabled: true,
   confettiEnabled: true,
-  lateImageEnabled: true,
+  lateImageEnabled: false,
   customLateImageUrl: ''
 }
 
@@ -57,7 +67,10 @@ class PunchDisplayService {
   private punchDisplayWindow: Window | null = null
   public isChannelSupported = typeof window !== 'undefined' && 'BroadcastChannel' in window
   public currentPunch = ref<PunchDisplayEvent | null>(null)
-  public punchHistory = ref<PunchDisplayEvent[]>([])
+  
+  // Maximum 5 recent punches for visual lineup
+  public recentPunches = ref<PunchDisplayEvent[]>([])
+  public punchHistory = ref<PunchDisplayEvent[]>([]) // alias for backward compatibility
   
   // Persistent Settings
   public settings = ref<PunchDisplaySettings>(this.loadSettings())
@@ -94,7 +107,7 @@ class PunchDisplayService {
     try {
       this.channel = new BroadcastChannel(CHANNEL_NAME)
       this.channel.onmessage = (event: MessageEvent) => {
-        if (event.data && event.data.type === 'PUNCH_EVENT' && event.data.payload) {
+        if (event.data && (event.data.type === 'PUNCH_EVENT' || event.data.type === 'PUNCH_DETECTED') && event.data.payload) {
           this.handleIncomingPunch(event.data.payload)
         }
       }
@@ -138,7 +151,6 @@ class PunchDisplayService {
     diffMinutes: number
   } => {
     const punchDate = new Date(timestampStr)
-    // Extract local hours and minutes in Manila / local context
     let hours = punchDate.getHours()
     let minutes = punchDate.getMinutes()
     try {
@@ -286,27 +298,67 @@ class PunchDisplayService {
   }
 
   public handleIncomingPunch = (event: PunchDisplayEvent) => {
+    // When a new punch arrives, the previous current punch moves into recent punches (max 5)
+    if (this.currentPunch.value && this.currentPunch.value.id !== event.id) {
+      const prev = this.currentPunch.value
+      this.recentPunches.value = [
+        prev,
+        ...this.recentPunches.value.filter(p => p.id !== prev.id && p.id !== event.id)
+      ].slice(0, 5)
+    }
+
     this.currentPunch.value = event
-    // Keep max 20 records in memory for session history
-    this.punchHistory.value = [event, ...this.punchHistory.value.filter(p => p.id !== event.id)].slice(0, 20)
-    
+    this.punchHistory.value = this.recentPunches.value
+
     if (this.settings.value.soundEnabled) {
       this.playChime()
     }
   }
 
-  public broadcastPunchFromLog = (
+  /**
+   * Resolves the employee by normalized Bio ID and broadcasts the authoritative punch event.
+   */
+  public broadcastPunchFromLog = async (
     log: AttendanceLog,
     extra?: {
       workGroup?: string
       workGroupCode?: string
       department?: string
-      photoUrl?: string
       standardIn?: string
       gracePeriod?: number
       expectedOut?: string
     }
   ) => {
+    const rawUserId = log.user_id || log.employee_id || ''
+    const normalizedBioId = normalizeBioId(rawUserId)
+
+    // Lookup employee from the existing employee directory
+    let employee = undefined
+    if (normalizedBioId) {
+      try {
+        employee = await employeeService.getEmployeeByBioId(normalizedBioId)
+      } catch {
+        // ignore
+      }
+    }
+
+    // Authoritative employee name resolution:
+    // If employee exists in directory: use full_name
+    // If not found in directory: use 'Unknown Employee' (never raw "user25065")
+    let resolvedName = 'Unknown Employee'
+    if (employee?.full_name) {
+      resolvedName = employee.full_name
+    } else if (log.employee_name && !/^user\d+$/i.test(log.employee_name.trim()) && !/^user_\d+$/i.test(log.employee_name.trim()) && log.employee_name !== 'Biometric User') {
+      resolvedName = log.employee_name.trim()
+    } else {
+      resolvedName = 'Unknown Employee'
+    }
+
+    const resolvedWorkGroup = employee?.work_group_name || extra?.workGroup || employee?.work_group_id || 'Standard Crew'
+    const resolvedWorkGroupCode = employee?.work_group_code || extra?.workGroupCode || 'C'
+    const resolvedDepartment = employee?.department || extra?.department || 'Operations'
+    const resolvedLocation = employee?.location || log.location_name || 'DBB Cebu'
+
     const { label, color } = this.getStateLabelAndColor(log.state ?? 1)
     const status = this.evaluateAttendanceStatus(
       log.attendance_time || new Date().toISOString(),
@@ -317,15 +369,14 @@ class PunchDisplayService {
     )
 
     const event: PunchDisplayEvent = {
-      id: log.id || `punch-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      userId: String(log.user_id),
-      employeeName: log.employee_name || 'Biometric User',
-      employeeId: log.employee_id,
-      photoUrl: extra?.photoUrl,
-      workGroup: extra?.workGroup || 'Standard Crew',
-      workGroupCode: extra?.workGroupCode || 'C',
-      department: extra?.department || 'Operations',
-      locationName: log.location_name || 'DBB Main Building',
+      id: log.id || `punch-${normalizedBioId}-${Date.now()}`,
+      userId: normalizedBioId,
+      employeeName: resolvedName,
+      employeeId: normalizedBioId,
+      workGroup: resolvedWorkGroup,
+      workGroupCode: resolvedWorkGroupCode,
+      department: resolvedDepartment,
+      locationName: resolvedLocation,
       deviceName: log.device_name || 'BISMAC BISBIO B-29b',
       timestamp: log.attendance_time || new Date().toISOString(),
       type: log.type ?? 1,
@@ -341,13 +392,12 @@ class PunchDisplayService {
       diffMinutes: status.diffMinutes
     }
 
-    this.currentPunch.value = event
-    this.punchHistory.value = [event, ...this.punchHistory.value.filter(p => p.id !== event.id)].slice(0, 20)
+    this.handleIncomingPunch(event)
 
     if (this.channel) {
       try {
         this.channel.postMessage({
-          type: 'PUNCH_EVENT',
+          type: 'PUNCH_DETECTED',
           payload: event
         })
       } catch (e) {

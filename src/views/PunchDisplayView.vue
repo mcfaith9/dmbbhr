@@ -16,7 +16,7 @@ import {
   Server,
   History
 } from '@lucide/vue'
-import { punchDisplayService } from '@/services/punchDisplay'
+import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/select'
 
 const currentPunch = punchDisplayService.currentPunch
-const punchHistory = punchDisplayService.punchHistory
+const recentPunches = punchDisplayService.recentPunches
 const settings = punchDisplayService.settings
 const isFullscreen = ref(false)
 const showSettingsDialog = ref(false)
@@ -136,7 +136,7 @@ function formatPunchTime(isoStr: string) {
   try {
     return new Intl.DateTimeFormat('en-PH', {
       timeZone: 'Asia/Manila',
-      hour: '2-digit',
+      hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
       hour12: true
@@ -157,13 +157,6 @@ function formatPunchDate(isoStr: string) {
   } catch {
     return isoStr
   }
-}
-
-function getInitials(name: string): string {
-  if (!name) return 'EMP'
-  const parts = name.replace(/,/g, '').trim().split(/\s+/)
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
 // Lightweight, graceful confetti burst
@@ -275,42 +268,33 @@ watch(() => currentPunch.value, (newPunch) => {
   }
 })
 
-// Interactive Test Punch simulation for demo / kiosk testing
-async function triggerTestPunch(stateType: number = 1, simulateLate: boolean = false) {
+// Interactive Test Punch simulation for demo / testing ID normalization and name lookup
+async function triggerTestPunch(rawUserIdInput: string = 'user25065', stateType: number = 1, simulateLate: boolean = false) {
   if (employees.value.length === 0) {
     employees.value = await employeeService.getEmployees()
   }
-  
-  const pool = employees.value.length > 0 ? employees.value : [
-    {
-      id: 'emp-1',
-      biometric_user_id: '50291',
-      employee_number: '50291',
-      full_name: 'Alfanta, Cristine',
-      work_group_id: 'wg-normal',
-      work_group_name: 'Normal Crew',
-      work_group_code: 'A',
-      location: 'DBB CEBU' as const,
-      department: 'Operations',
-      status: 'active' as const
-    }
-  ]
 
-  const randomEmp = pool[Math.floor(Math.random() * pool.length)]
+  const normalizedId = normalizeBioId(rawUserIdInput)
+  const foundEmp = employees.value.find(e => e.biometric_user_id === normalizedId)
   
+  const empWorkGroup = foundEmp?.work_group_name || 'Group C'
+  const empWorkGroupCode = foundEmp?.work_group_code || 'C'
+  const empDept = foundEmp?.department || 'Operations'
+  const empLoc = foundEmp?.location || 'DBB CEBU'
+
   // Custom mock punch time
   const mockDate = new Date()
   if (simulateLate && stateType === 1) {
-    mockDate.setHours(8, 32, 0, 0) // 8:32 AM -> Late
+    mockDate.setHours(8, 35, 0, 0) // 8:35 AM -> Late
   } else if (!simulateLate && stateType === 1) {
-    mockDate.setHours(7, 45, 0, 0) // 7:45 AM -> 15m Early
+    mockDate.setHours(7, 48, 0, 0) // 7:48 AM -> 12m Early
   }
 
   const log: AttendanceLog = {
-    id: `test-punch-${Date.now()}`,
-    user_id: String(randomEmp.biometric_user_id),
-    employee_name: randomEmp.full_name,
-    employee_id: randomEmp.employee_number,
+    id: `test-punch-${normalizedId}-${Date.now()}`,
+    user_id: rawUserIdInput, // Pass raw user ID e.g. "user25065" to verify normalization
+    employee_name: rawUserIdInput, // Raw hardware string
+    employee_id: normalizedId,
     attendance_time: mockDate.toISOString(),
     type: 1,
     state: stateType,
@@ -319,15 +303,14 @@ async function triggerTestPunch(stateType: number = 1, simulateLate: boolean = f
     device_name: 'BISMAC BISBIO B-29b',
     device_ip: '192.168.1.201',
     location_id: 'loc-dbb-cebu',
-    location_name: randomEmp.location || 'DBB Cebu',
+    location_name: empLoc,
     created_at: new Date().toISOString()
   }
 
-  punchDisplayService.broadcastPunchFromLog(log, {
-    workGroup: randomEmp.work_group_name || randomEmp.work_group_id || 'Normal Crew',
-    workGroupCode: randomEmp.work_group_code || 'A',
-    department: randomEmp.department || 'Operations',
-    photoUrl: undefined,
+  await punchDisplayService.broadcastPunchFromLog(log, {
+    workGroup: empWorkGroup,
+    workGroupCode: empWorkGroupCode,
+    department: empDept,
     standardIn: '08:00',
     gracePeriod: 15,
     expectedOut: '17:00'
@@ -451,7 +434,7 @@ onUnmounted(() => {
       
       <!-- Primary Active Punch / Idle Display Card -->
       <section class="flex-1 w-full max-w-2xl mx-auto">
-        <!-- PUNCH CONFIRMATION CARD (Matches DMBBHR Visual Hierarchy) -->
+        <!-- PUNCH CONFIRMATION CARD (Matches exact DMBBHR Visual Hierarchy) -->
         <div
           v-if="currentPunch"
           class="bg-card text-card-foreground border rounded-xl md:rounded-2xl shadow-xs overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-200"
@@ -463,7 +446,7 @@ onUnmounted(() => {
                 BIOMETRIC ATTENDANCE
               </span>
               <h3 class="text-sm font-semibold text-foreground">
-                Real-Time Punch Confirmation
+                Real-Time Punch
               </h3>
             </div>
             <Badge
@@ -477,48 +460,14 @@ onUnmounted(() => {
           </div>
 
           <!-- Main Punch Body -->
-          <div class="p-6 sm:p-8 flex flex-col items-center text-center space-y-5">
+          <div class="p-6 sm:p-8 flex flex-col items-center text-center space-y-6">
             
-            <!-- Employee Photo / Avatar Container -->
-            <div class="relative">
-              <div class="size-28 sm:size-32 rounded-xl border border-border overflow-hidden bg-muted/40 shadow-xs flex items-center justify-center">
-                <img
-                  v-if="currentPunch.photoUrl"
-                  :src="currentPunch.photoUrl"
-                  :alt="currentPunch.employeeName"
-                  class="size-full object-cover"
-                />
-                <!-- Native Initials Avatar Fallback -->
-                <div
-                  v-else
-                  class="size-full flex items-center justify-center font-bold text-3xl font-mono text-primary bg-primary/10 tracking-wider"
-                >
-                  {{ getInitials(currentPunch.employeeName) }}
-                </div>
-              </div>
-
-              <!-- Direction Badge Pin -->
-              <div class="absolute -bottom-2.5 left-1/2 -translate-x-1/2">
-                <span
-                  class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs border"
-                  :class="[
-                    currentPunch.state === 1 ? 'bg-emerald-500 text-white border-emerald-600' :
-                    currentPunch.state === 4 ? 'bg-rose-500 text-white border-rose-600' :
-                    currentPunch.state === 2 ? 'bg-amber-500 text-white border-amber-600' :
-                    'bg-primary text-primary-foreground border-primary'
-                  ]"
-                >
-                  {{ currentPunch.stateLabel }}
-                </span>
-              </div>
-            </div>
-
-            <!-- Employee Details -->
-            <div class="space-y-1 pt-1">
-              <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+            <!-- Employee Information -->
+            <div class="space-y-1.5">
+              <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
                 {{ currentPunch.employeeName }}
               </h2>
-              <div class="text-xs text-muted-foreground font-mono flex items-center justify-center gap-2 flex-wrap">
+              <div class="text-sm text-muted-foreground font-mono font-medium flex items-center justify-center gap-2 flex-wrap">
                 <span>Bio ID: {{ currentPunch.userId }}</span>
                 <span class="text-border">•</span>
                 <span>{{ currentPunch.workGroup || 'Standard Crew' }}</span>
@@ -527,21 +476,35 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <Separator class="my-1" />
+            <Separator class="my-1 max-w-md" />
 
-            <!-- Time & Date Display -->
-            <div class="space-y-1">
-              <div class="text-3xl sm:text-4xl font-extrabold font-mono tracking-tight text-foreground">
+            <!-- Direction, Time & Date Display -->
+            <div class="space-y-2">
+              <div>
+                <span
+                  class="inline-block px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider border shadow-2xs"
+                  :class="[
+                    currentPunch.state === 1 ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30' :
+                    currentPunch.state === 4 ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30' :
+                    currentPunch.state === 2 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30' :
+                    'bg-primary/10 text-primary border-primary/20'
+                  ]"
+                >
+                  {{ currentPunch.stateLabel }}
+                </span>
+              </div>
+
+              <div class="text-4xl sm:text-5xl font-extrabold font-mono tracking-tight text-foreground">
                 {{ formatPunchTime(currentPunch.timestamp) }}
               </div>
-              <div class="text-xs text-muted-foreground font-medium">
+              <div class="text-xs sm:text-sm text-muted-foreground font-medium">
                 {{ formatPunchDate(currentPunch.timestamp) }}
               </div>
             </div>
 
-            <!-- Detailed Status Feedback Callout -->
+            <!-- Attendance Status Callout -->
             <div
-              class="w-full rounded-xl border p-3 text-xs flex items-center justify-center gap-2 shadow-2xs"
+              class="w-full max-w-md rounded-xl border p-3.5 text-xs flex items-center justify-center gap-2 shadow-2xs"
               :class="[
                 currentPunch.statusCategory === 'late'
                   ? 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20 font-medium'
@@ -556,7 +519,7 @@ onUnmounted(() => {
               <span>{{ currentPunch.statusDetail }}</span>
             </div>
 
-            <!-- Optional Configured Late Image (Fits cleanly within layout) -->
+            <!-- Optional Configured Late Image (if enabled) -->
             <div
               v-if="currentPunch.isLate && settings.lateImageEnabled && settings.customLateImageUrl"
               class="pt-1 w-full flex flex-col items-center"
@@ -592,46 +555,47 @@ onUnmounted(() => {
               BIOMETRIC ATTENDANCE
             </span>
             <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-              Ready for Biometric Scan
+              Ready for biometric scan
             </h2>
             <p class="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-              Please place your registered finger on the biometric scanner terminal to record attendance.
+              Please scan your fingerprint on the terminal.
             </p>
           </div>
 
+          <!-- Test scan triggers for verification -->
           <div class="pt-2 flex flex-wrap items-center justify-center gap-2">
             <Button
               variant="outline"
               size="sm"
               class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch(1, false)"
+              @click="triggerTestPunch('user25065', 1, false)"
             >
               <Play class="size-3 text-emerald-600" />
-              <span>Simulate Time In (On-Time)</span>
+              <span>Simulate Cantillas (user25065) Early</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch(1, true)"
+              @click="triggerTestPunch('50044', 1, true)"
             >
               <Play class="size-3 text-rose-600" />
-              <span>Simulate Time In (Late)</span>
+              <span>Simulate Basalo (50044) Late</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch(4, false)"
+              @click="triggerTestPunch('user99999', 1, false)"
             >
-              <Play class="size-3 text-primary" />
-              <span>Simulate Time Out</span>
+              <Play class="size-3 text-muted-foreground" />
+              <span>Simulate Unknown (user99999)</span>
             </Button>
           </div>
         </div>
       </section>
 
-      <!-- Right / Session Stream: Recent Punches List (Matches DMBBHR Table/Card Design) -->
+      <!-- Right / Session Stream: Recent Punches List (Maximum 5 Recent Punches) -->
       <aside class="w-full lg:w-96 bg-card text-card-foreground border rounded-xl shadow-xs p-5 shrink-0 space-y-3">
         <div class="flex items-center justify-between pb-3 border-b">
           <div class="flex items-center gap-2">
@@ -641,42 +605,39 @@ onUnmounted(() => {
             </h4>
           </div>
           <Badge variant="outline" class="text-[10px] font-mono">
-            {{ punchHistory.length }} recorded
+            {{ recentPunches.length }} / 5
           </Badge>
         </div>
 
-        <div v-if="punchHistory.length === 0" class="py-10 text-center text-muted-foreground space-y-1">
+        <div v-if="recentPunches.length === 0" class="py-10 text-center text-muted-foreground space-y-1">
           <Clock class="size-6 mx-auto stroke-1 text-muted-foreground/60" />
-          <p class="text-xs">No attendance punches recorded yet in this session.</p>
+          <p class="text-xs">No recent punches yet.</p>
         </div>
 
-        <div v-else class="space-y-2 overflow-y-auto max-h-[500px] pr-1">
+        <div v-else class="space-y-2">
           <div
-            v-for="punch in punchHistory"
+            v-for="punch in recentPunches"
             :key="punch.id"
-            class="p-2.5 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors flex items-center justify-between gap-3 text-xs"
+            class="p-2.5 rounded-lg border bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between gap-3 text-xs"
           >
             <div class="min-w-0">
               <div class="font-semibold text-foreground truncate">
                 {{ punch.employeeName }}
               </div>
               <div class="text-[11px] text-muted-foreground flex items-center gap-1.5 font-mono mt-0.5">
-                <span>#{{ punch.userId }}</span>
+                <span>Bio ID: {{ punch.userId }}</span>
                 <span>•</span>
-                <span class="truncate">{{ punch.workGroup || 'Crew' }}</span>
+                <span class="text-foreground font-medium">{{ formatPunchTime(punch.timestamp) }}</span>
               </div>
             </div>
 
             <div class="text-right shrink-0">
               <Badge
                 :variant="punch.statusVariant === 'destructive' ? 'destructive' : (punch.statusVariant === 'warning' ? 'warning' : 'success')"
-                class="text-[10px] uppercase font-mono px-1.5 py-0 mb-1"
+                class="text-[10px] uppercase font-mono px-2 py-0.5"
               >
-                {{ punch.stateLabel }}
+                {{ punch.statusLabel }}
               </Badge>
-              <div class="text-[11px] font-mono text-muted-foreground">
-                {{ formatPunchTime(punch.timestamp) }}
-              </div>
             </div>
           </div>
         </div>

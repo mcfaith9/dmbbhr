@@ -6,7 +6,8 @@
 import { ref } from 'vue'
 import type { AttendanceLog } from '@/types'
 import { attendanceService } from './attendance'
-import { punchDisplayService } from './punchDisplay'
+import { punchDisplayService, normalizeBioId } from './punchDisplay'
+import { employeeService } from './employees'
 
 export interface RealDeviceStatus {
   model: string
@@ -244,37 +245,75 @@ class LiveAttendanceService {
           // 3. Real Biometric Scan Received
           if (data.type === 'BIOMETRIC_SCAN' && data.payload) {
             const raw = data.payload
-            console.log('[DMBBHR LIVE] Real-time scan received from agent for User:', raw.user_id || raw.userId)
+            const rawUserId = raw.user_id || raw.userId || ''
+            const normalizedBioId = normalizeBioId(rawUserId)
 
-            const scanLog: AttendanceLog = {
-              id: raw.id || `real-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-              user_id: String(raw.user_id || raw.userId),
-              employee_id: raw.employee_id,
-              employee_name: raw.employee_name || 'Biometric User',
-              attendance_time: raw.attendance_time || raw.timestamp || new Date().toISOString(),
-              type: Number(raw.type ?? raw.verificationMethod ?? 1),
-              state: Number(raw.state ?? raw.status ?? 1),
-              serial_number: raw.serial_number ?? raw.sn ?? 0,
-              device_id: 'dev-1',
-              device_name: raw.device_name || raw.deviceName || 'BISMAC BISBIO B-29b',
-              device_ip: raw.device_ip || '192.168.1.201',
-              location_id: raw.location_id || 'loc-cebu',
-              location_name: raw.location || 'DBB Cebu',
-              is_duplicate: Boolean(raw.is_duplicate),
-              created_at: new Date().toISOString()
-            }
+            // Resolve employee asynchronously from directory
+            employeeService.getEmployeeByBioId(normalizedBioId).then((emp) => {
+              const resolvedName = emp?.full_name || (raw.employee_name && !/^user\d+$/i.test(String(raw.employee_name).trim()) ? String(raw.employee_name).trim() : 'Unknown Employee')
 
-            this.lastReceivedScan.value = scanLog
-            attendanceService.addRealScan(scanLog)
-            punchDisplayService.broadcastPunchFromLog(scanLog)
-
-            for (const listener of this.scanListeners) {
-              try {
-                listener(scanLog)
-              } catch (e) {
-                console.error('[LiveAttendance] Scan callback error:', e)
+              const scanLog: AttendanceLog = {
+                id: raw.id || `real-${normalizedBioId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                user_id: normalizedBioId,
+                employee_id: normalizedBioId,
+                employee_name: resolvedName,
+                department: emp?.department || raw.department,
+                work_group_id: emp?.work_group_id,
+                work_group_name: emp?.work_group_name,
+                attendance_time: raw.attendance_time || raw.timestamp || new Date().toISOString(),
+                type: Number(raw.type ?? raw.verificationMethod ?? 1),
+                state: Number(raw.state ?? raw.status ?? 1),
+                serial_number: raw.serial_number ?? raw.sn ?? 0,
+                device_id: 'dev-1',
+                device_name: raw.device_name || raw.deviceName || 'BISMAC BISBIO B-29b',
+                device_ip: raw.device_ip || '192.168.1.201',
+                location_id: raw.location_id || emp?.location_id || 'loc-cebu',
+                location_name: emp?.location || raw.location || 'DBB Cebu',
+                is_duplicate: Boolean(raw.is_duplicate),
+                created_at: new Date().toISOString()
               }
-            }
+
+              this.lastReceivedScan.value = scanLog
+              attendanceService.addRealScan(scanLog)
+              punchDisplayService.broadcastPunchFromLog(scanLog, {
+                workGroup: emp?.work_group_name || emp?.work_group_id,
+                workGroupCode: emp?.work_group_code,
+                department: emp?.department,
+                standardIn: '08:00',
+                gracePeriod: 15,
+                expectedOut: '17:00'
+              })
+
+              for (const listener of this.scanListeners) {
+                try {
+                  listener(scanLog)
+                } catch (e) {
+                  console.error('[LiveAttendance] Scan callback error:', e)
+                }
+              }
+            }).catch(() => {
+              // Fallback if employee lookup fails
+              const scanLog: AttendanceLog = {
+                id: raw.id || `real-${normalizedBioId}-${Date.now()}`,
+                user_id: normalizedBioId,
+                employee_id: normalizedBioId,
+                employee_name: 'Unknown Employee',
+                attendance_time: raw.attendance_time || raw.timestamp || new Date().toISOString(),
+                type: Number(raw.type ?? 1),
+                state: Number(raw.state ?? 1),
+                serial_number: raw.serial_number ?? 0,
+                device_id: 'dev-1',
+                device_name: 'BISMAC BISBIO B-29b',
+                device_ip: '192.168.1.201',
+                location_id: 'loc-cebu',
+                location_name: 'DBB Cebu',
+                is_duplicate: false,
+                created_at: new Date().toISOString()
+              }
+              this.lastReceivedScan.value = scanLog
+              attendanceService.addRealScan(scanLog)
+              punchDisplayService.broadcastPunchFromLog(scanLog)
+            })
           }
         } catch {
           // ignore
