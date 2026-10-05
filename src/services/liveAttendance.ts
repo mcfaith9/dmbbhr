@@ -6,6 +6,7 @@
 import { ref } from 'vue'
 import type { AttendanceLog } from '@/types'
 import { attendanceService } from './attendance'
+import { punchDisplayService } from './punchDisplay'
 
 export interface RealDeviceStatus {
   model: string
@@ -265,6 +266,7 @@ class LiveAttendanceService {
 
             this.lastReceivedScan.value = scanLog
             attendanceService.addRealScan(scanLog)
+            punchDisplayService.broadcastPunchFromLog(scanLog)
 
             for (const listener of this.scanListeners) {
               try {

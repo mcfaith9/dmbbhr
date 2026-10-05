@@ -20,6 +20,7 @@ const SettingsView = () => import('@/views/settings/SettingsView.vue')
 const AttendanceConfigurationView = () => import('@/views/settings/AttendanceConfigurationView.vue')
 const SystemIntegrationsView = () => import('@/views/settings/SystemIntegrationsView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
+const PunchDisplayView = () => import('@/views/PunchDisplayView.vue')
 const AppLayout = () => import('@/layouts/AppLayout.vue')
 
 export const router = createRouter({
@@ -30,6 +31,12 @@ export const router = createRouter({
       name: 'login',
       component: LoginView,
       meta: { requiresAuth: false, title: 'Login' }
+    },
+    {
+      path: '/punch-display',
+      name: 'punch-display',
+      component: PunchDisplayView,
+      meta: { requiresAuth: false, title: 'Real-Time Biometric Punch Display' }
     },
     {
       path: '/',

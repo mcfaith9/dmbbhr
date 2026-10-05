@@ -9,9 +9,12 @@ import {
   Radio,
   Clock,
   ShieldAlert,
+  Monitor,
+  ExternalLink
 } from '@lucide/vue'
 import { deviceService } from '@/services/devices'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { punchDisplayService } from '@/services/punchDisplay'
 import type { BiometricDevice, Location } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -113,9 +116,20 @@ onMounted(() => {
       </div>
 
       <div class="flex items-center gap-2">
-        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadDevices(); liveAttendanceService.connect()">
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-8 gap-1.5 text-xs bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary hover:text-primary cursor-pointer"
+          @click="punchDisplayService.openPunchDisplay()"
+        >
+          <Monitor class="size-3.5" />
+          <span>Open Punch Display</span>
+          <ExternalLink class="size-3 text-muted-foreground ml-0.5" />
+        </Button>
+
+        <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs cursor-pointer" @click="loadDevices(); liveAttendanceService.connect()">
           <RefreshCw class="size-3.5" />
-          <span class="text-xs">Refresh Status</span>
+          <span>Refresh Status</span>
         </Button>
       </div>
     </div>

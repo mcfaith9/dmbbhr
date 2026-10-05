@@ -19,6 +19,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { punchDisplayService } from '@/services/punchDisplay'
+import { Monitor, ExternalLink } from '@lucide/vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -84,6 +86,17 @@ function navigateTo(path: string) {
         </div>
 
         <div class="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-9 gap-1.5 text-xs bg-card hover:bg-primary/5 hover:border-primary/30 text-foreground cursor-pointer shadow-2xs"
+            @click="punchDisplayService.openPunchDisplay()"
+          >
+            <Monitor class="size-3.5 text-primary" />
+            <span>Open Punch Display</span>
+            <ExternalLink class="size-3 text-muted-foreground ml-0.5" />
+          </Button>
+
           <div class="rounded-lg border bg-card px-3 py-2 text-xs flex items-center gap-2 shadow-2xs">
             <Server class="size-3.5 text-primary" />
             <div>

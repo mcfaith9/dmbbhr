@@ -12,7 +12,6 @@ import {
   Radio,
   Fingerprint,
   Trash2,
-  Boxes,
   MapPin
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
