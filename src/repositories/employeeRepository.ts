@@ -713,12 +713,15 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
 
   const cleanUpdatedAt = new Date().toISOString()
 
+  const cleanPhoto = getOptString(input.photo)
+
   // Construct a fresh, strictly plain object literal (Object.prototype, no Vue proxies, no functions)
   const plainRecord: EmployeeRecord = {
     bioId: cleanBioId,
     employeeNumber: cleanEmpNum,
     fullName: cleanName || `User ${cleanBioId}`,
     preferredName: cleanPreferredName,
+    photo: cleanPhoto,
     dateOfBirth: cleanDob,
     gender: cleanGender,
     civilStatus: cleanCivilStatus,
@@ -783,6 +786,7 @@ export const employeeRepository = {
       biometric_user_id: rec.bioId,
       full_name: rec.fullName,
       preferred_name: rec.preferredName,
+      photo: rec.photo !== undefined ? rec.photo : `/employee-photos/${rec.bioId}.jpg`,
       date_of_birth: rec.dateOfBirth,
       gender: rec.gender as any,
       civil_status: rec.civilStatus as any,

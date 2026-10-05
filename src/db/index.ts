@@ -41,6 +41,7 @@ export interface EmployeeRecord {
   employeeNumber: string // Identical to bioId (Employee ID = Bio ID)
   fullName: string
   preferredName?: string
+  photo?: string | null // Photo path e.g. /employee-photos/25065.jpg or data URL
   dateOfBirth?: string // YYYY-MM-DD
   gender?: string
   civilStatus?: string

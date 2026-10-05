@@ -9,7 +9,6 @@ import {
   CalendarDays,
   Server,
   Cable,
-  Globe,
   ArrowRight,
   Sparkles,
   Sliders,
@@ -19,8 +18,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { liveAttendanceService } from '@/services/liveAttendance'
-import { punchDisplayService } from '@/services/punchDisplay'
-import { Monitor, ExternalLink } from '@lucide/vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -86,17 +83,6 @@ function navigateTo(path: string) {
         </div>
 
         <div class="flex items-center gap-2 shrink-0">
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-9 gap-1.5 text-xs bg-card hover:bg-primary/5 hover:border-primary/30 text-foreground cursor-pointer shadow-2xs"
-            @click="punchDisplayService.openPunchDisplay()"
-          >
-            <Monitor class="size-3.5 text-primary" />
-            <span>Open Punch Display</span>
-            <ExternalLink class="size-3 text-muted-foreground ml-0.5" />
-          </Button>
-
           <div class="rounded-lg border bg-card px-3 py-2 text-xs flex items-center gap-2 shadow-2xs">
             <Server class="size-3.5 text-primary" />
             <div>
@@ -282,26 +268,26 @@ function navigateTo(path: string) {
           <div class="space-y-2 pt-2 border-t text-xs">
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
               <span class="text-muted-foreground flex items-center gap-2">
-                <Server class="size-3.5 text-primary" />
-                Biometric Devices
+                <Sliders class="size-3.5 text-primary" />
+                Punch Display
               </span>
-              <span class="font-medium text-foreground text-[11px]">TCP/IP 4370 hardware ping</span>
+              <span class="font-medium text-foreground text-[11px]">Kiosk & duration rules</span>
             </div>
 
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
               <span class="text-muted-foreground flex items-center gap-2">
-                <Cable class="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                <Server class="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                Biometric Devices
+              </span>
+              <span class="font-medium text-foreground text-[11px]">TCP/IP 4370 listener & bridge</span>
+            </div>
+
+            <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
+              <span class="text-muted-foreground flex items-center gap-2">
+                <Cable class="size-3.5 text-amber-600 dark:text-amber-400" />
                 Network Settings
               </span>
               <span class="font-medium text-foreground text-[11px]">Socket bridge & Dexie DB</span>
-            </div>
-
-            <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
-              <span class="text-muted-foreground flex items-center gap-2">
-                <Globe class="size-3.5 text-amber-600 dark:text-amber-400" />
-                External Integrations
-              </span>
-              <span class="font-medium text-foreground text-[11px]">Holiday API & Cloud sync</span>
             </div>
           </div>
         </div>

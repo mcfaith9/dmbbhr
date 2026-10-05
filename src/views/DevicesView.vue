@@ -2,27 +2,19 @@
 import { ref, onMounted } from 'vue'
 import {
   Fingerprint,
-  CheckCircle2,
-  XCircle,
   RefreshCw,
-  Activity,
   Radio,
   Clock,
-  ShieldAlert,
-  Monitor,
-  ExternalLink
+  ShieldAlert
 } from '@lucide/vue'
 import { deviceService } from '@/services/devices'
 import { liveAttendanceService } from '@/services/liveAttendance'
-import { punchDisplayService } from '@/services/punchDisplay'
 import type { BiometricDevice, Location } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
 const devices = ref<BiometricDevice[]>([])
 const locations = ref<Location[]>([])
-const testingConnection = ref(false)
-const testResult = ref<{ success: boolean; message: string } | null>(null)
 
 // Live real device status reported directly by the Node.js biometric agent
 const deviceStatus = liveAttendanceService.deviceStatus
@@ -45,29 +37,6 @@ function formatClockTime(isoStr: string | null) {
   } catch {
     return isoStr
   }
-}
-
-async function testDevicePing(device: BiometricDevice) {
-  testingConnection.value = true
-  testResult.value = null
-
-  // Ensure live service is connected
-  liveAttendanceService.connect()
-
-  setTimeout(() => {
-    testingConnection.value = false
-    if (deviceStatus.value.status === 'online') {
-      testResult.value = {
-        success: true,
-        message: `Hardware handshake verified: ${device.model} at ${device.ip_address}:${device.port}. Socket alive and listening for scans.`
-      }
-    } else {
-      testResult.value = {
-        success: false,
-        message: `Device unreachable at ${device.ip_address}:${device.port}. Reason: ${deviceStatus.value.reason || 'Connection refused or laptop not connected to biometric LAN.'}`
-      }
-    }
-  }, 1000)
 }
 
 onMounted(() => {
@@ -116,17 +85,6 @@ onMounted(() => {
       </div>
 
       <div class="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-8 gap-1.5 text-xs bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary hover:text-primary cursor-pointer"
-          @click="punchDisplayService.openPunchDisplay()"
-        >
-          <Monitor class="size-3.5" />
-          <span>Open Punch Display</span>
-          <ExternalLink class="size-3 text-muted-foreground ml-0.5" />
-        </Button>
-
         <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs cursor-pointer" @click="loadDevices(); liveAttendanceService.connect()">
           <RefreshCw class="size-3.5" />
           <span>Refresh Status</span>
@@ -257,35 +215,12 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="flex items-center justify-between pt-1">
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-8 text-xs gap-1.5"
-            :disabled="testingConnection"
-            @click="testDevicePing(device)"
-          >
-            <Activity :class="['size-3.5', testingConnection ? 'animate-spin' : '']" />
-            <span>{{ testingConnection ? 'Testing Socket...' : 'Test Connection' }}</span>
-          </Button>
-
+        <div class="flex items-center justify-end pt-1">
           <router-link to="/attendance/logs">
-            <Button variant="ghost" size="sm" class="h-8 text-xs">
+            <Button variant="ghost" size="sm" class="h-8 text-xs cursor-pointer">
               View Logs for this Device
             </Button>
           </router-link>
-        </div>
-
-        <div
-          v-if="testResult"
-          :class="[
-            'p-2.5 rounded-md border text-xs flex items-start gap-2',
-            testResult.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300' : 'bg-destructive/10 border-destructive/20 text-destructive'
-          ]"
-        >
-          <CheckCircle2 v-if="testResult.success" class="size-4 shrink-0 mt-0.5" />
-          <XCircle v-else class="size-4 shrink-0 mt-0.5" />
-          <span>{{ testResult.message }}</span>
         </div>
       </div>
 

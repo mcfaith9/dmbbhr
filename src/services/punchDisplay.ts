@@ -588,6 +588,8 @@ class PunchDisplayService {
     const formattedTime = this.formatTimeDisplay(log.attendance_time || new Date().toISOString())
     const formattedDate = this.formatDateDisplay(log.attendance_time || new Date().toISOString())
 
+    const resolvedPhoto = employee?.photo || (normalizedBioId ? `/employee-photos/${normalizedBioId}.jpg` : undefined) || extra?.photoUrl
+
     const event: PunchDisplayEvent = {
       id: uniqueEventId,
       eventId: uniqueEventId,
@@ -595,7 +597,7 @@ class PunchDisplayService {
       bioId: normalizedBioId,
       employeeName: resolvedName,
       employeeId: normalizedBioId,
-      photoUrl: extra?.photoUrl,
+      photoUrl: resolvedPhoto,
       workGroup: wgName,
       workGroupCode: wgCode,
       department: employee?.department || extra?.department || 'Operations',

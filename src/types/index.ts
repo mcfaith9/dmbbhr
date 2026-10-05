@@ -49,6 +49,7 @@ export interface Employee {
   biometric_user_id: string // Permanent hardware identifier (Bio ID)
   full_name: string
   preferred_name?: string
+  photo?: string | null // Photo path e.g. /employee-photos/25065.jpg or data URL
   date_of_birth?: string // YYYY-MM-DD
   gender?: 'Male' | 'Female' | 'Other' | 'not_specified' | string
   civil_status?: 'Single' | 'Married' | 'Widowed' | 'Separated' | 'not_specified' | string

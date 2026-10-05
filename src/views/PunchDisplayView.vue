@@ -71,6 +71,7 @@ let clockTimer: any = null
 let dismissTimer: any = null
 const dismissProgress = ref(100)
 let dismissProgressInterval: any = null
+const photoLoadError = ref(false)
 
 // Canvas Confetti
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -280,6 +281,7 @@ watch(
   () => currentPunch.value?.eventId || currentPunch.value?.id,
   (newEventId) => {
     cancelDisplayTimer()
+    photoLoadError.value = false
 
     if (!newEventId || !currentPunch.value) {
       dismissProgress.value = 100
@@ -562,12 +564,13 @@ onUnmounted(() => {
             <!-- Employee Photo / Avatar Placeholder (Prominent & Ready for Future Photos) -->
             <div class="relative">
               <div class="size-28 sm:size-32 rounded-xl border border-border overflow-hidden bg-muted/40 shadow-xs flex items-center justify-center">
-                <!-- If actual photo URL exists in future -->
+                <!-- If actual photo URL exists and hasn't errored -->
                 <img
-                  v-if="currentPunch.photoUrl"
+                  v-if="currentPunch.photoUrl && !photoLoadError"
                   :src="currentPunch.photoUrl"
                   :alt="currentPunch.employeeName"
                   class="size-full object-cover"
+                  @error="photoLoadError = true"
                 />
                 <!-- Native Avatar Placeholder -->
                 <div
