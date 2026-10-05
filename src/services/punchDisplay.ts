@@ -1,17 +1,21 @@
 /**
- * Service to manage the child Punch Display window and BroadcastChannel communication.
+ * Service to manage the child Punch Display window, BroadcastChannel communication,
+ * and user-configurable display preferences.
  * Provides high-performance, zero-recalculation real-time punch event distribution.
  */
 
 import { ref } from 'vue'
 import type { AttendanceLog } from '@/types'
+import { formatDuration } from '@/lib/timeUtils'
 
 export interface PunchDisplayEvent {
   id: string
   userId: string
   employeeName: string
   employeeId?: string
+  photoUrl?: string
   workGroup?: string
+  workGroupCode?: string
   department?: string
   locationName?: string
   deviceName?: string
@@ -20,9 +24,33 @@ export interface PunchDisplayEvent {
   state: number // 1: Time In, 2: Break Out, 3: Break In, 4: Time Out, 5: OT In, 6: OT Out
   stateLabel: string
   stateColor: 'emerald' | 'amber' | 'blue' | 'rose' | 'purple' | 'slate'
+  statusCategory: 'early' | 'on_time' | 'late' | 'undertime' | 'regular'
+  statusLabel: string
+  statusDetail: string
+  statusVariant: 'success' | 'warning' | 'destructive' | 'secondary' | 'outline' | 'default'
+  isLate: boolean
+  isEarly: boolean
+  diffMinutes?: number
+}
+
+export interface PunchDisplaySettings {
+  displayDurationSeconds: number // 0 means hold indefinitely until next punch
+  soundEnabled: boolean
+  confettiEnabled: boolean
+  lateImageEnabled: boolean
+  customLateImageUrl: string
 }
 
 const CHANNEL_NAME = 'dmbbhr-punch-channel'
+const SETTINGS_KEY = 'dmbbhr_punch_display_settings'
+
+const DEFAULT_SETTINGS: PunchDisplaySettings = {
+  displayDurationSeconds: 8,
+  soundEnabled: true,
+  confettiEnabled: true,
+  lateImageEnabled: true,
+  customLateImageUrl: ''
+}
 
 class PunchDisplayService {
   private channel: BroadcastChannel | null = null
@@ -30,10 +58,34 @@ class PunchDisplayService {
   public isChannelSupported = typeof window !== 'undefined' && 'BroadcastChannel' in window
   public currentPunch = ref<PunchDisplayEvent | null>(null)
   public punchHistory = ref<PunchDisplayEvent[]>([])
-  public isMuted = ref(false)
+  
+  // Persistent Settings
+  public settings = ref<PunchDisplaySettings>(this.loadSettings())
 
   constructor() {
     this.initChannel()
+  }
+
+  private loadSettings(): PunchDisplaySettings {
+    if (typeof window === 'undefined') return { ...DEFAULT_SETTINGS }
+    try {
+      const stored = localStorage.getItem(SETTINGS_KEY)
+      if (stored) {
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
+      }
+    } catch {
+      // ignore
+    }
+    return { ...DEFAULT_SETTINGS }
+  }
+
+  public saveSettings = (newSettings: Partial<PunchDisplaySettings>) => {
+    this.settings.value = { ...this.settings.value, ...newSettings }
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings.value))
+    } catch {
+      // ignore
+    }
   }
 
   private initChannel() {
@@ -54,19 +106,182 @@ class PunchDisplayService {
   public getStateLabelAndColor = (state: number): { label: string; color: PunchDisplayEvent['stateColor'] } => {
     switch (state) {
       case 1:
-        return { label: 'Time In', color: 'emerald' }
+        return { label: 'TIME IN', color: 'emerald' }
       case 2:
-        return { label: 'Break Out', color: 'amber' }
+        return { label: 'BREAK OUT', color: 'amber' }
       case 3:
-        return { label: 'Break In', color: 'blue' }
+        return { label: 'BREAK IN', color: 'blue' }
       case 4:
-        return { label: 'Time Out', color: 'rose' }
+        return { label: 'TIME OUT', color: 'rose' }
       case 5:
-        return { label: 'Overtime In', color: 'purple' }
+        return { label: 'OVERTIME IN', color: 'purple' }
       case 6:
-        return { label: 'Overtime Out', color: 'slate' }
+        return { label: 'OVERTIME OUT', color: 'slate' }
       default:
-        return { label: 'Time In', color: 'emerald' }
+        return { label: 'TIME IN', color: 'emerald' }
+    }
+  }
+
+  public evaluateAttendanceStatus = (
+    timestampStr: string,
+    state: number,
+    standardIn: string = '08:00',
+    gracePeriod: number = 15,
+    expectedOut: string = '17:00'
+  ): {
+    statusCategory: PunchDisplayEvent['statusCategory']
+    statusLabel: string
+    statusDetail: string
+    statusVariant: PunchDisplayEvent['statusVariant']
+    isLate: boolean
+    isEarly: boolean
+    diffMinutes: number
+  } => {
+    const punchDate = new Date(timestampStr)
+    // Extract local hours and minutes in Manila / local context
+    let hours = punchDate.getHours()
+    let minutes = punchDate.getMinutes()
+    try {
+      const phTimeStr = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false
+      }).format(punchDate)
+      const parts = phTimeStr.split(':')
+      if (parts.length === 2) {
+        hours = parseInt(parts[0], 10)
+        minutes = parseInt(parts[1], 10)
+      }
+    } catch {
+      // fallback to local
+    }
+
+    const punchMinutes = hours * 60 + minutes
+
+    if (state === 1) { // TIME IN
+      const [stdH, stdM] = standardIn.split(':').map(Number)
+      const standardInMinutes = (stdH || 8) * 60 + (stdM || 0)
+
+      if (punchMinutes < standardInMinutes) {
+        const earlyDiff = standardInMinutes - punchMinutes
+        return {
+          statusCategory: 'early',
+          statusLabel: '✓ EARLY',
+          statusDetail: `${formatDuration(earlyDiff)} early`,
+          statusVariant: 'success',
+          isEarly: true,
+          isLate: false,
+          diffMinutes: earlyDiff
+        }
+      } else if (punchMinutes <= standardInMinutes + gracePeriod) {
+        return {
+          statusCategory: 'on_time',
+          statusLabel: '✓ ON TIME',
+          statusDetail: 'Within shift grace period',
+          statusVariant: 'success',
+          isEarly: false,
+          isLate: false,
+          diffMinutes: 0
+        }
+      } else {
+        const lateDiff = punchMinutes - standardInMinutes
+        return {
+          statusCategory: 'late',
+          statusLabel: 'LATE ARRIVAL',
+          statusDetail: `Late by ${formatDuration(lateDiff)}`,
+          statusVariant: 'destructive',
+          isEarly: false,
+          isLate: true,
+          diffMinutes: lateDiff
+        }
+      }
+    }
+
+    if (state === 4) { // TIME OUT
+      const [expH, expM] = expectedOut.split(':').map(Number)
+      const expectedOutMinutes = (expH || 17) * 60 + (expM || 0)
+
+      if (punchMinutes >= expectedOutMinutes) {
+        return {
+          statusCategory: 'on_time',
+          statusLabel: '✓ SHIFT COMPLETED',
+          statusDetail: 'On-time punch out',
+          statusVariant: 'success',
+          isEarly: false,
+          isLate: false,
+          diffMinutes: 0
+        }
+      } else {
+        const undertime = expectedOutMinutes - punchMinutes
+        return {
+          statusCategory: 'undertime',
+          statusLabel: 'EARLY OUT',
+          statusDetail: `${formatDuration(undertime)} before shift end`,
+          statusVariant: 'warning',
+          isEarly: false,
+          isLate: false,
+          diffMinutes: undertime
+        }
+      }
+    }
+
+    if (state === 2) {
+      return {
+        statusCategory: 'regular',
+        statusLabel: 'BREAK OUT',
+        statusDetail: 'Lunch / break period started',
+        statusVariant: 'secondary',
+        isEarly: false,
+        isLate: false,
+        diffMinutes: 0
+      }
+    }
+
+    if (state === 3) {
+      return {
+        statusCategory: 'regular',
+        statusLabel: 'BREAK IN',
+        statusDetail: 'Returned from break',
+        statusVariant: 'secondary',
+        isEarly: false,
+        isLate: false,
+        diffMinutes: 0
+      }
+    }
+
+    if (state === 5) {
+      return {
+        statusCategory: 'regular',
+        statusLabel: 'OVERTIME IN',
+        statusDetail: 'Overtime session active',
+        statusVariant: 'secondary',
+        isEarly: false,
+        isLate: false,
+        diffMinutes: 0
+      }
+    }
+
+    if (state === 6) {
+      return {
+        statusCategory: 'regular',
+        statusLabel: 'OVERTIME OUT',
+        statusDetail: 'Overtime session ended',
+        statusVariant: 'secondary',
+        isEarly: false,
+        isLate: false,
+        diffMinutes: 0
+      }
+    }
+
+    return {
+      statusCategory: 'regular',
+      statusLabel: 'PUNCH RECORDED',
+      statusDetail: 'Biometric verified',
+      statusVariant: 'secondary',
+      isEarly: false,
+      isLate: false,
+      diffMinutes: 0
     }
   }
 
@@ -75,27 +290,55 @@ class PunchDisplayService {
     // Keep max 20 records in memory for session history
     this.punchHistory.value = [event, ...this.punchHistory.value.filter(p => p.id !== event.id)].slice(0, 20)
     
-    if (!this.isMuted.value) {
+    if (this.settings.value.soundEnabled) {
       this.playChime()
     }
   }
 
-  public broadcastPunchFromLog = (log: AttendanceLog, extra?: { workGroup?: string; department?: string }) => {
+  public broadcastPunchFromLog = (
+    log: AttendanceLog,
+    extra?: {
+      workGroup?: string
+      workGroupCode?: string
+      department?: string
+      photoUrl?: string
+      standardIn?: string
+      gracePeriod?: number
+      expectedOut?: string
+    }
+  ) => {
     const { label, color } = this.getStateLabelAndColor(log.state ?? 1)
+    const status = this.evaluateAttendanceStatus(
+      log.attendance_time || new Date().toISOString(),
+      log.state ?? 1,
+      extra?.standardIn || '08:00',
+      extra?.gracePeriod ?? 15,
+      extra?.expectedOut || '17:00'
+    )
+
     const event: PunchDisplayEvent = {
       id: log.id || `punch-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       userId: String(log.user_id),
       employeeName: log.employee_name || 'Biometric User',
       employeeId: log.employee_id,
+      photoUrl: extra?.photoUrl,
       workGroup: extra?.workGroup || 'Standard Crew',
-      department: extra?.department,
+      workGroupCode: extra?.workGroupCode || 'C',
+      department: extra?.department || 'Operations',
       locationName: log.location_name || 'DBB Main Building',
       deviceName: log.device_name || 'BISMAC BISBIO B-29b',
       timestamp: log.attendance_time || new Date().toISOString(),
       type: log.type ?? 1,
       state: log.state ?? 1,
       stateLabel: label,
-      stateColor: color
+      stateColor: color,
+      statusCategory: status.statusCategory,
+      statusLabel: status.statusLabel,
+      statusDetail: status.statusDetail,
+      statusVariant: status.statusVariant,
+      isLate: status.isLate,
+      isEarly: status.isEarly,
+      diffMinutes: status.diffMinutes
     }
 
     this.currentPunch.value = event
@@ -127,7 +370,7 @@ class PunchDisplayService {
     }
 
     const targetUrl = `${window.location.origin}${window.location.pathname}#/punch-display`
-    const windowFeatures = 'popup=yes,width=1020,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+    const windowFeatures = 'popup=yes,width=1020,height=760,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
 
     try {
       this.punchDisplayWindow = window.open(targetUrl, 'dmbbhr-punch-display', windowFeatures)
@@ -142,7 +385,7 @@ class PunchDisplayService {
   }
 
   public playChime = () => {
-    if (typeof window === 'undefined' || typeof window.AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined') {
+    if (typeof window === 'undefined' || (typeof window.AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined')) {
       return
     }
 
