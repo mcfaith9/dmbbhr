@@ -39,6 +39,10 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from '@/components/ui/toggle-group'
 import BiometricSyncProgress from '@/components/BiometricSyncProgress.vue'
 import { DatePicker } from '@/components/ui/date-picker'
 import {
@@ -578,24 +582,27 @@ onUnmounted(() => {
       </div>
 
       <div class="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
-        <div class="flex items-center rounded-lg border bg-card p-0.5 shadow-2xs text-xs">
-          <button
-            type="button"
-            class="px-2.5 py-1 rounded text-xs transition-colors"
-            :class="employeeViewMode === 'selected_date' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-            @click="employeeViewMode = 'selected_date'"
+        <ToggleGroup
+          v-model="employeeViewMode"
+          type="single"
+          variant="outline"
+          size="sm"
+          class="h-8"
+        >
+          <ToggleGroupItem
+            value="selected_date"
+            class="h-7 px-2.5 text-xs"
           >
             Target Date ({{ displayDateTitle }})
-          </button>
-          <button
-            type="button"
-            class="px-2.5 py-1 rounded text-xs transition-colors"
-            :class="employeeViewMode === 'all_dates' ? 'bg-primary text-primary-foreground font-semibold shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-            @click="employeeViewMode = 'all_dates'"
+          </ToggleGroupItem>
+
+          <ToggleGroupItem
+            value="all_dates"
+            class="h-7 px-2.5 text-xs"
           >
             All Recorded Dates
-          </button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroup>
 
         <Button
           variant="outline"
@@ -842,7 +849,6 @@ onUnmounted(() => {
         <Table class="text-xs">
           <TableHeader>
             <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
-              <TableHead v-if="employeeViewMode === 'all_dates'" class="font-semibold text-foreground min-w-[100px]">Date</TableHead>
               <TableHead class="w-[100px] text-foreground font-semibold">BIO ID</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[190px]">Employee</TableHead>
               <TableHead class="font-semibold text-foreground min-w-[140px]">Work Schedule</TableHead>
@@ -859,12 +865,7 @@ onUnmounted(() => {
               v-for="row in filteredRecords"
               :key="row.id"
               class="hover:bg-muted/30 transition-colors border-b last:border-b-0"
-            >
-              <!-- Date (when viewing multiple dates for employee) -->
-              <TableCell v-if="employeeViewMode === 'all_dates'" class="font-mono text-xs font-semibold text-foreground whitespace-nowrap">
-                {{ row.date || row.raw_date }}
-              </TableCell>
-
+            >   
               <!-- 0. BIO ID -->
               <TableCell class="font-mono font-medium text-foreground">                
                 <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
@@ -886,6 +887,8 @@ onUnmounted(() => {
                     </span>
                     <span>·</span>
                     <span class="font-medium text-foreground">{{ row.work_group_name }}</span>
+                    <!-- Date (when viewing multiple dates for employee) -->
+                    <span v-if="employeeViewMode === 'all_dates'">{{ row.date || row.raw_date }}</span>
 
                     <!-- Biometric Scans Audit Popover Button -->
                     <Popover v-if="row.raw_punches_count > 0">

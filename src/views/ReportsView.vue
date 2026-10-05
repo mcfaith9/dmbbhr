@@ -347,23 +347,35 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
                   :key="emp.biometric_user_id"
                   type="button"
                   class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer text-left group"
-                  :class="selectedEmployeeBioId === emp.biometric_user_id ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted text-foreground'"
+                  :class="
+                    selectedEmployeeBioId === emp.biometric_user_id
+                      ? 'bg-primary/10 text-primary font-semibold'
+                      : 'hover:bg-muted text-foreground'
+                  "
                   @click="selectEmployee(emp.biometric_user_id)"
                 >
-                  <div class="truncate mr-2">
-                    <div class="font-medium text-foreground truncate group-hover:text-primary">
+                  <!-- Full Name - Left -->
+                  <div class="min-w-0 flex-1 truncate">
+                    <span class="font-medium text-foreground truncate group-hover:text-primary">
                       {{ emp.full_name }}
-                    </div>
-                    <div class="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono mt-0.5">
-                      <span class="bg-muted px-1 rounded text-foreground font-semibold">ID: {{ emp.biometric_user_id }}</span>
-                      <span v-if="emp.work_group_name">· {{ emp.work_group_name }}</span>
-                    </div>
+                    </span>
                   </div>
 
-                  <Check
-                    v-if="selectedEmployeeBioId === emp.biometric_user_id"
-                    class="size-3.5 text-primary shrink-0"
-                  />
+                  <!-- Bio ID - Right -->
+                  <div class="flex items-center gap-1.5 shrink-0 ml-3">
+                    <span class="text-[10px] text-muted-foreground font-mono">
+                      Bio ID:
+                    </span>
+
+                    <span class="font-mono text-[10px] font-semibold text-foreground">
+                      {{ emp.biometric_user_id }}
+                    </span>
+
+                    <Check
+                      v-if="selectedEmployeeBioId === emp.biometric_user_id"
+                      class="size-3.5 text-primary ml-1"
+                    />
+                  </div>
                 </button>
               </div>
 
