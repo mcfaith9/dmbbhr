@@ -12,6 +12,30 @@ export const VALID_LOCATIONS: EmployeeLocation[] = [
 // Seed employees with assigned Work Groups
 const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
   {
+    bioId: '25065',
+    employeeNumber: '25065',
+    fullName: 'Cantillas, Ronald',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50291',
+    employeeNumber: '50291',
+    fullName: 'Alfanta, Cristine',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'Operations',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
     bioId: '50044',
     employeeNumber: 'EMP-50044',
     fullName: 'B Basalo, Randy',
@@ -431,6 +455,15 @@ async function ensureInitialized() {
       emp.employeeNumber = emp.bioId
     }
     employeeCache.set(emp.bioId, emp)
+  }
+
+  // Ensure default seeds like Cantillas, Ronald (25065) and Alfanta, Cristine (50291) are always present
+  for (const seed of DEFAULT_INITIAL_EMPLOYEES) {
+    if (!employeeCache.has(seed.bioId)) {
+      const cleanSeed = { ...seed, employeeNumber: seed.bioId }
+      employeeCache.set(seed.bioId, cleanSeed)
+      db.employees.put(cleanSeed).catch(() => {})
+    }
   }
 }
 

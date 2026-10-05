@@ -14,6 +14,7 @@ export interface PunchDisplayEvent {
   userId: string
   employeeName: string
   employeeId?: string
+  photoUrl?: string
   workGroup?: string
   workGroupCode?: string
   department?: string
@@ -24,7 +25,7 @@ export interface PunchDisplayEvent {
   state: number // 1: Time In, 2: Break Out, 3: Break In, 4: Time Out, 5: OT In, 6: OT Out
   stateLabel: string
   stateColor: 'emerald' | 'amber' | 'blue' | 'rose' | 'purple' | 'slate'
-  statusCategory: 'early' | 'on_time' | 'late' | 'undertime' | 'regular'
+  statusCategory: 'early' | 'on_time' | 'late' | 'undertime' | 'regular' | 'time_out'
   statusLabel: string
   statusDetail: string
   statusVariant: 'success' | 'warning' | 'destructive' | 'secondary' | 'outline' | 'default'
@@ -42,7 +43,7 @@ export interface PunchDisplaySettings {
 }
 
 /**
- * Normalizes any raw biometric user ID (e.g., "user25065", "25065", 25065, "  user_50044  ")
+ * Normalizes any raw biometric user ID (e.g. "user25065", "25065", 25065, "  user_50044  ")
  * into a clean digits-only identifier ("25065", "50044").
  */
 export function normalizeBioId(value: unknown): string {
@@ -51,7 +52,8 @@ export function normalizeBioId(value: unknown): string {
   return match?.[0] ?? raw
 }
 
-const CHANNEL_NAME = 'dmbbhr-punch-channel'
+const PRIMARY_CHANNEL_NAME = 'dmbbhr-punch-display'
+const FALLBACK_CHANNEL_NAME = 'dmbbhr-punch-channel'
 const SETTINGS_KEY = 'dmbbhr_punch_display_settings'
 
 const DEFAULT_SETTINGS: PunchDisplaySettings = {
@@ -63,7 +65,8 @@ const DEFAULT_SETTINGS: PunchDisplaySettings = {
 }
 
 class PunchDisplayService {
-  private channel: BroadcastChannel | null = null
+  private primaryChannel: BroadcastChannel | null = null
+  private fallbackChannel: BroadcastChannel | null = null
   private punchDisplayWindow: Window | null = null
   public isChannelSupported = typeof window !== 'undefined' && 'BroadcastChannel' in window
   public currentPunch = ref<PunchDisplayEvent | null>(null)
@@ -76,7 +79,7 @@ class PunchDisplayService {
   public settings = ref<PunchDisplaySettings>(this.loadSettings())
 
   constructor() {
-    this.initChannel()
+    this.initChannels()
   }
 
   private loadSettings(): PunchDisplaySettings {
@@ -101,18 +104,27 @@ class PunchDisplayService {
     }
   }
 
-  private initChannel() {
+  private initChannels() {
     if (typeof window === 'undefined' || !this.isChannelSupported) return
 
-    try {
-      this.channel = new BroadcastChannel(CHANNEL_NAME)
-      this.channel.onmessage = (event: MessageEvent) => {
-        if (event.data && (event.data.type === 'PUNCH_EVENT' || event.data.type === 'PUNCH_DETECTED') && event.data.payload) {
-          this.handleIncomingPunch(event.data.payload)
-        }
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && (event.data.type === 'PUNCH_EVENT' || event.data.type === 'PUNCH_DETECTED') && event.data.payload) {
+        this.handleIncomingPunch(event.data.payload)
       }
+    }
+
+    try {
+      this.primaryChannel = new BroadcastChannel(PRIMARY_CHANNEL_NAME)
+      this.primaryChannel.onmessage = handleMessage
     } catch (err) {
-      console.warn('[PunchDisplayService] BroadcastChannel init error:', err)
+      console.warn('[PunchDisplayService] Primary BroadcastChannel init error:', err)
+    }
+
+    try {
+      this.fallbackChannel = new BroadcastChannel(FALLBACK_CHANNEL_NAME)
+      this.fallbackChannel.onmessage = handleMessage
+    } catch (err) {
+      console.warn('[PunchDisplayService] Fallback BroadcastChannel init error:', err)
     }
   }
 
@@ -214,11 +226,12 @@ class PunchDisplayService {
       const [expH, expM] = expectedOut.split(':').map(Number)
       const expectedOutMinutes = (expH || 17) * 60 + (expM || 0)
 
+      // Normal OUT is NOT labeled as early; it is TIME OUT
       if (punchMinutes >= expectedOutMinutes) {
         return {
-          statusCategory: 'on_time',
-          statusLabel: '✓ SHIFT COMPLETED',
-          statusDetail: 'On-time punch out',
+          statusCategory: 'time_out',
+          statusLabel: '✓ TIME OUT',
+          statusDetail: 'Shift completed',
           statusVariant: 'success',
           isEarly: false,
           isLate: false,
@@ -229,7 +242,7 @@ class PunchDisplayService {
         return {
           statusCategory: 'undertime',
           statusLabel: 'EARLY OUT',
-          statusDetail: `${formatDuration(undertime)} before shift end`,
+          statusDetail: `${formatDuration(undertime)} before scheduled exit`,
           statusVariant: 'warning',
           isEarly: false,
           isLate: false,
@@ -327,6 +340,7 @@ class PunchDisplayService {
       standardIn?: string
       gracePeriod?: number
       expectedOut?: string
+      photoUrl?: string
     }
   ) => {
     const rawUserId = log.user_id || log.employee_id || ''
@@ -373,6 +387,7 @@ class PunchDisplayService {
       userId: normalizedBioId,
       employeeName: resolvedName,
       employeeId: normalizedBioId,
+      photoUrl: extra?.photoUrl,
       workGroup: resolvedWorkGroup,
       workGroupCode: resolvedWorkGroupCode,
       department: resolvedDepartment,
@@ -394,14 +409,24 @@ class PunchDisplayService {
 
     this.handleIncomingPunch(event)
 
-    if (this.channel) {
+    const broadcastPayload = {
+      type: 'PUNCH_DETECTED',
+      payload: event
+    }
+
+    if (this.primaryChannel) {
       try {
-        this.channel.postMessage({
-          type: 'PUNCH_DETECTED',
-          payload: event
-        })
+        this.primaryChannel.postMessage(broadcastPayload)
       } catch (e) {
-        console.warn('[PunchDisplayService] Post message failed:', e)
+        console.warn('[PunchDisplayService] Primary postMessage failed:', e)
+      }
+    }
+
+    if (this.fallbackChannel) {
+      try {
+        this.fallbackChannel.postMessage(broadcastPayload)
+      } catch (e) {
+        console.warn('[PunchDisplayService] Fallback postMessage failed:', e)
       }
     }
   }

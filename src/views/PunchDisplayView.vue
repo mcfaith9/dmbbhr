@@ -14,6 +14,7 @@ import {
   AlertCircle,
   AlertTriangle,
   Server,
+  User,
   History
 } from '@lucide/vue'
 import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
@@ -245,7 +246,7 @@ watch(() => currentPunch.value, (newPunch) => {
 
   if (!newPunch) return
 
-  // Trigger celebration for early/on-time
+  // Trigger celebration only for early/on-time IN
   if (newPunch.statusCategory === 'early' || newPunch.statusCategory === 'on_time') {
     triggerSubtleConfetti()
   }
@@ -285,9 +286,11 @@ async function triggerTestPunch(rawUserIdInput: string = 'user25065', stateType:
   // Custom mock punch time
   const mockDate = new Date()
   if (simulateLate && stateType === 1) {
-    mockDate.setHours(8, 35, 0, 0) // 8:35 AM -> Late
+    mockDate.setHours(8, 35, 14, 0) // 8:35:14 AM -> Late
   } else if (!simulateLate && stateType === 1) {
-    mockDate.setHours(7, 48, 0, 0) // 7:48 AM -> 12m Early
+    mockDate.setHours(7, 48, 22, 0) // 7:48:22 AM -> 12m Early
+  } else if (stateType === 4) {
+    mockDate.setHours(17, 2, 45, 0) // 5:02:45 PM -> Time Out
   }
 
   const log: AttendanceLog = {
@@ -434,7 +437,7 @@ onUnmounted(() => {
       
       <!-- Primary Active Punch / Idle Display Card -->
       <section class="flex-1 w-full max-w-2xl mx-auto">
-        <!-- PUNCH CONFIRMATION CARD (Matches exact DMBBHR Visual Hierarchy) -->
+        <!-- CURRENT PUNCH CARD (Matches DMBBHR Visual Hierarchy with Photo Placeholder) -->
         <div
           v-if="currentPunch"
           class="bg-card text-card-foreground border rounded-xl md:rounded-2xl shadow-xs overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-200"
@@ -453,17 +456,53 @@ onUnmounted(() => {
               :variant="currentPunch.statusVariant === 'destructive' ? 'destructive' : (currentPunch.statusVariant === 'warning' ? 'warning' : 'success')"
               class="text-xs uppercase font-mono px-3 py-1 gap-1"
             >
-              <CheckCircle2 v-if="!currentPunch.isLate" class="size-3.5" />
+              <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5" />
+              <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5" />
               <AlertCircle v-else class="size-3.5" />
               <span>{{ currentPunch.statusLabel }}</span>
             </Badge>
           </div>
 
           <!-- Main Punch Body -->
-          <div class="p-6 sm:p-8 flex flex-col items-center text-center space-y-6">
+          <div class="p-6 sm:p-8 flex flex-col items-center text-center space-y-5">
             
-            <!-- Employee Information -->
-            <div class="space-y-1.5">
+            <!-- Employee Photo / Avatar Placeholder (Prominent & Ready for Future Photos) -->
+            <div class="relative">
+              <div class="size-28 sm:size-32 rounded-xl border border-border overflow-hidden bg-muted/40 shadow-xs flex items-center justify-center">
+                <!-- If actual photo URL exists in future -->
+                <img
+                  v-if="currentPunch.photoUrl"
+                  :src="currentPunch.photoUrl"
+                  :alt="currentPunch.employeeName"
+                  class="size-full object-cover"
+                />
+                <!-- Native Avatar Placeholder -->
+                <div
+                  v-else
+                  class="size-full flex items-center justify-center bg-primary/10 text-primary"
+                >
+                  <User class="size-14 text-muted-foreground/60" />
+                </div>
+              </div>
+
+              <!-- Direction Badge Pin -->
+              <div class="absolute -bottom-2.5 left-1/2 -translate-x-1/2">
+                <span
+                  class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs border"
+                  :class="[
+                    currentPunch.state === 1 ? 'bg-emerald-500 text-white border-emerald-600' :
+                    currentPunch.state === 4 ? 'bg-rose-500 text-white border-rose-600' :
+                    currentPunch.state === 2 ? 'bg-amber-500 text-white border-amber-600' :
+                    'bg-primary text-primary-foreground border-primary'
+                  ]"
+                >
+                  {{ currentPunch.stateLabel }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Employee Details -->
+            <div class="space-y-1 pt-1">
               <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
                 {{ currentPunch.employeeName }}
               </h2>
@@ -478,23 +517,9 @@ onUnmounted(() => {
 
             <Separator class="my-1 max-w-md" />
 
-            <!-- Direction, Time & Date Display -->
-            <div class="space-y-2">
-              <div>
-                <span
-                  class="inline-block px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider border shadow-2xs"
-                  :class="[
-                    currentPunch.state === 1 ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30' :
-                    currentPunch.state === 4 ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30' :
-                    currentPunch.state === 2 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30' :
-                    'bg-primary/10 text-primary border-primary/20'
-                  ]"
-                >
-                  {{ currentPunch.stateLabel }}
-                </span>
-              </div>
-
-              <div class="text-4xl sm:text-5xl font-extrabold font-mono tracking-tight text-foreground">
+            <!-- Time & Date Display -->
+            <div class="space-y-1">
+              <div class="text-3xl sm:text-4xl font-extrabold font-mono tracking-tight text-foreground">
                 {{ formatPunchTime(currentPunch.timestamp) }}
               </div>
               <div class="text-xs sm:text-sm text-muted-foreground font-medium">
@@ -502,9 +527,9 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- Attendance Status Callout -->
+            <!-- Detailed Status Feedback Callout -->
             <div
-              class="w-full max-w-md rounded-xl border p-3.5 text-xs flex items-center justify-center gap-2 shadow-2xs"
+              class="w-full max-w-md rounded-xl border p-3 text-xs flex items-center justify-center gap-2 shadow-2xs"
               :class="[
                 currentPunch.statusCategory === 'late'
                   ? 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20 font-medium'
@@ -577,10 +602,10 @@ onUnmounted(() => {
               variant="outline"
               size="sm"
               class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch('50044', 1, true)"
+              @click="triggerTestPunch('user25065', 4, false)"
             >
-              <Play class="size-3 text-rose-600" />
-              <span>Simulate Basalo (50044) Late</span>
+              <Play class="size-3 text-primary" />
+              <span>Simulate Cantillas (user25065) OUT</span>
             </Button>
             <Button
               variant="outline"
