@@ -15,13 +15,24 @@ import {
   FolderGit2,
   Calendar as CalendarIcon,
   ExternalLink,
-  Monitor
+  Monitor,
+  Sliders
 } from '@lucide/vue'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { punchDisplayService } from '@/services/punchDisplay'
 import { authService } from '@/services/auth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 
 const route = useRoute()
 const currentUser = authService.currentUser
@@ -279,6 +290,101 @@ onMounted(() => {
               <span class="text-muted-foreground">Connection Mode:</span>
               <div class="font-mono font-medium text-foreground">WAN VPN / Local Socket Bridge</div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-Time Punch Display Configuration Card -->
+      <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+          <div class="space-y-0.5">
+            <h4 class="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Sliders class="size-4 text-primary" />
+              <span>Real-Time Biometric Punch Display Preferences</span>
+            </h4>
+            <p class="text-xs text-muted-foreground">
+              Configure kiosk timing, celebrations, and visual feedback for the dedicated punch display monitor.
+            </p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 gap-1.5 text-xs bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary hover:text-primary cursor-pointer"
+              @click="punchDisplayService.openPunchDisplay()"
+            >
+              <Monitor class="size-3.5" />
+              <span>Open Display Window</span>
+              <ExternalLink class="size-3 text-muted-foreground ml-0.5" />
+            </Button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+          <!-- 1. Enable Punch Display -->
+          <div class="p-3 rounded-lg border bg-muted/20 space-y-2">
+            <div class="flex items-center justify-between">
+              <Label class="text-xs font-semibold text-foreground">Enable Punch Display</Label>
+              <Switch
+                :model-value="punchDisplayService.settings.value.enabled"
+                @update:model-value="punchDisplayService.saveSettings({ enabled: $event })"
+              />
+            </div>
+            <p class="text-[11px] text-muted-foreground">
+              When disabled, incoming biometric scans are not forwarded to the Punch Display.
+            </p>
+          </div>
+
+          <!-- 2. Display Duration -->
+          <div class="p-3 rounded-lg border bg-muted/20 space-y-2">
+            <Label class="text-xs font-semibold text-foreground">Display Duration</Label>
+            <Select
+              :model-value="String(punchDisplayService.settings.value.displayDurationSeconds || 5)"
+              @update:model-value="punchDisplayService.saveSettings({ displayDurationSeconds: parseInt(String($event || '5'), 10) })"
+            >
+              <SelectTrigger class="h-8 text-xs bg-card">
+                <SelectValue placeholder="Select duration" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="3">3 seconds</SelectItem>
+                  <SelectItem value="5">5 seconds (Default)</SelectItem>
+                  <SelectItem value="8">8 seconds</SelectItem>
+                  <SelectItem value="10">10 seconds</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <p class="text-[11px] text-muted-foreground">
+              Screen hold duration before returning to idle.
+            </p>
+          </div>
+
+          <!-- 3. Confetti Celebration -->
+          <div class="p-3 rounded-lg border bg-muted/20 space-y-2">
+            <div class="flex items-center justify-between">
+              <Label class="text-xs font-semibold text-foreground">Confetti Effect</Label>
+              <Switch
+                :model-value="punchDisplayService.settings.value.confettiEnabled"
+                @update:model-value="punchDisplayService.saveSettings({ confettiEnabled: $event })"
+              />
+            </div>
+            <p class="text-[11px] text-muted-foreground">
+              Trigger light celebration burst for qualifying on-time/early arrivals.
+            </p>
+          </div>
+
+          <!-- 4. Late Visual -->
+          <div class="p-3 rounded-lg border bg-muted/20 space-y-2">
+            <div class="flex items-center justify-between">
+              <Label class="text-xs font-semibold text-foreground">Late Visual</Label>
+              <Switch
+                :model-value="punchDisplayService.settings.value.lateVisualEnabled"
+                @update:model-value="punchDisplayService.saveSettings({ lateVisualEnabled: $event })"
+              />
+            </div>
+            <p class="text-[11px] text-muted-foreground">
+              Show distinct visual warning when an employee arrives late.
+            </p>
           </div>
         </div>
       </div>

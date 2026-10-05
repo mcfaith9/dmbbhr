@@ -15,7 +15,8 @@ import {
   AlertTriangle,
   Server,
   User,
-  History
+  History,
+  PowerOff
 } from '@lucide/vue'
 import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
 import { liveAttendanceService } from '@/services/liveAttendance'
@@ -54,10 +55,11 @@ const employees = ref<Employee[]>([])
 const workGroups = ref<WorkGroup[]>([])
 
 // Temporary form settings for Dialog
-const formDuration = ref(settings.value.displayDurationSeconds.toString())
+const formEnabled = ref(settings.value.enabled)
+const formDuration = ref(String(settings.value.displayDurationSeconds || 5))
 const formSound = ref(settings.value.soundEnabled)
 const formConfetti = ref(settings.value.confettiEnabled)
-const formLateImage = ref(settings.value.lateImageEnabled)
+const formLateVisual = ref(settings.value.lateVisualEnabled)
 const formLateImageUrl = ref(settings.value.customLateImageUrl)
 
 // Real-time Clock in Manila / Local Time
@@ -114,20 +116,22 @@ function toggleFullscreen() {
 }
 
 function openSettings() {
-  formDuration.value = settings.value.displayDurationSeconds.toString()
+  formEnabled.value = settings.value.enabled
+  formDuration.value = String(settings.value.displayDurationSeconds || 5)
   formSound.value = settings.value.soundEnabled
   formConfetti.value = settings.value.confettiEnabled
-  formLateImage.value = settings.value.lateImageEnabled
+  formLateVisual.value = settings.value.lateVisualEnabled
   formLateImageUrl.value = settings.value.customLateImageUrl
   showSettingsDialog.value = true
 }
 
 function saveSettings() {
   punchDisplayService.saveSettings({
-    displayDurationSeconds: parseInt(formDuration.value, 10) || 0,
+    enabled: formEnabled.value,
+    displayDurationSeconds: parseInt(formDuration.value, 10) || 5,
     soundEnabled: formSound.value,
     confettiEnabled: formConfetti.value,
-    lateImageEnabled: formLateImage.value,
+    lateVisualEnabled: formLateVisual.value,
     customLateImageUrl: formLateImageUrl.value.trim()
   })
   showSettingsDialog.value = false
@@ -160,7 +164,7 @@ function formatPunchDate(isoStr: string) {
   }
 }
 
-// Lightweight, graceful confetti burst
+// Lightweight, graceful confetti burst for qualifying on-time/early IN punches
 function triggerSubtleConfetti() {
   if (!settings.value.confettiEnabled || !canvasRef.value) return
 
@@ -241,17 +245,23 @@ function triggerSubtleConfetti() {
 
 // Watch incoming punch to handle auto-dismiss and confetti
 watch(() => currentPunch.value, (newPunch) => {
-  if (dismissTimer) clearTimeout(dismissTimer)
-  if (dismissProgressInterval) clearInterval(dismissProgressInterval)
+  if (dismissTimer) {
+    clearTimeout(dismissTimer)
+    dismissTimer = null
+  }
+  if (dismissProgressInterval) {
+    clearInterval(dismissProgressInterval)
+    dismissProgressInterval = null
+  }
 
   if (!newPunch) return
 
-  // Trigger celebration only for early/on-time IN
-  if (newPunch.statusCategory === 'early' || newPunch.statusCategory === 'on_time') {
+  // Trigger celebration only for qualifying positive IN (early / on-time)
+  if (settings.value.confettiEnabled && !newPunch.isLate && (newPunch.statusCategory === 'early' || newPunch.statusCategory === 'on_time') && newPunch.direction === 'IN') {
     triggerSubtleConfetti()
   }
 
-  const durationSec = settings.value.displayDurationSeconds
+  const durationSec = settings.value.displayDurationSeconds || 5
   if (durationSec > 0) {
     const totalMs = durationSec * 1000
     const start = Date.now()
@@ -264,18 +274,24 @@ watch(() => currentPunch.value, (newPunch) => {
 
     dismissTimer = setTimeout(() => {
       currentPunch.value = null
-      if (dismissProgressInterval) clearInterval(dismissProgressInterval)
+      if (dismissProgressInterval) {
+        clearInterval(dismissProgressInterval)
+        dismissProgressInterval = null
+      }
     }, totalMs)
   }
 })
 
-// Interactive Test Punch simulation for demo / testing ID normalization and name lookup
-async function triggerTestPunch(rawUserIdInput: string = 'user25065', stateType: number = 1, simulateLate: boolean = false) {
+// Interactive Test Punch simulation for demo & comprehensive test verification
+async function triggerTestPunch(
+  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'unknown',
+  rawUserId: string = 'user25065'
+) {
   if (employees.value.length === 0) {
     employees.value = await employeeService.getEmployees()
   }
 
-  const normalizedId = normalizeBioId(rawUserIdInput)
+  const normalizedId = normalizeBioId(rawUserId)
   const foundEmp = employees.value.find(e => e.biometric_user_id === normalizedId)
   
   const empWorkGroup = foundEmp?.work_group_name || 'Group C'
@@ -283,24 +299,49 @@ async function triggerTestPunch(rawUserIdInput: string = 'user25065', stateType:
   const empDept = foundEmp?.department || 'Operations'
   const empLoc = foundEmp?.location || 'DBB CEBU'
 
-  // Custom mock punch time
   const mockDate = new Date()
-  if (simulateLate && stateType === 1) {
-    mockDate.setHours(8, 35, 14, 0) // 8:35:14 AM -> Late
-  } else if (!simulateLate && stateType === 1) {
-    mockDate.setHours(7, 48, 22, 0) // 7:48:22 AM -> 12m Early
-  } else if (stateType === 4) {
-    mockDate.setHours(17, 2, 45, 0) // 5:02:45 PM -> Time Out
+  let direction: 'IN' | 'OUT' = 'IN'
+
+  switch (scenario) {
+    case 'late_in':
+      mockDate.setHours(8, 35, 14, 0) // 8:35:14 AM -> LATE IN
+      direction = 'IN'
+      break
+    case 'ontime_in':
+      mockDate.setHours(8, 5, 20, 0) // 8:05:20 AM -> ON TIME IN
+      direction = 'IN'
+      break
+    case 'early_in':
+      mockDate.setHours(7, 48, 22, 0) // 7:48:22 AM -> EARLY IN
+      direction = 'IN'
+      break
+    case 'normal_out':
+      mockDate.setHours(17, 10, 45, 0) // 5:10:45 PM -> TIME OUT (Normal OUT on or after 5pm)
+      direction = 'OUT'
+      break
+    case 'early_out':
+      mockDate.setHours(16, 30, 0, 0) // 4:30:00 PM -> EARLY OUT (Before 5pm)
+      direction = 'OUT'
+      break
+    case 'late_then_out':
+      // Test scenario F: employee was late in morning, now punches OUT at 5:10 PM
+      mockDate.setHours(17, 10, 0, 0)
+      direction = 'OUT'
+      break
+    case 'unknown':
+      mockDate.setHours(8, 2, 0, 0)
+      direction = 'IN'
+      break
   }
 
   const log: AttendanceLog = {
     id: `test-punch-${normalizedId}-${Date.now()}`,
-    user_id: rawUserIdInput, // Pass raw user ID e.g. "user25065" to verify normalization
-    employee_name: rawUserIdInput, // Raw hardware string
+    user_id: rawUserId,
+    employee_name: rawUserId,
     employee_id: normalizedId,
     attendance_time: mockDate.toISOString(),
     type: 1,
-    state: stateType,
+    state: direction === 'OUT' ? 4 : 1,
     serial_number: '0476141400046',
     device_id: 'dev-1',
     device_name: 'BISMAC BISBIO B-29b',
@@ -311,6 +352,7 @@ async function triggerTestPunch(rawUserIdInput: string = 'user25065', stateType:
   }
 
   await punchDisplayService.broadcastPunchFromLog(log, {
+    direction,
     workGroup: empWorkGroup,
     workGroupCode: empWorkGroupCode,
     department: empDept,
@@ -387,12 +429,22 @@ onUnmounted(() => {
       <!-- Actions & Controls -->
       <div class="flex items-center gap-2">
         <!-- Live Status Badge -->
-        <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/50 border text-xs">
+        <div
+          v-if="settings.enabled"
+          class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/50 border text-xs"
+        >
           <span class="relative flex size-2">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
           </span>
           <span class="text-foreground font-mono text-[11px] font-medium">LISTENING</span>
+        </div>
+        <div
+          v-else
+          class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300"
+        >
+          <PowerOff class="size-3 text-amber-600" />
+          <span class="font-mono text-[11px] font-medium">DISABLED</span>
         </div>
 
         <!-- Audio Toggle -->
@@ -432,6 +484,17 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <!-- Disabled State Alert Banner if OFF -->
+    <div
+      v-if="!settings.enabled"
+      class="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 px-4 py-2 text-center text-xs flex items-center justify-center gap-2"
+    >
+      <PowerOff class="size-3.5 text-amber-600" />
+      <span>
+        Punch Display is currently disabled in Preferences. Open preferences (<Sliders class="size-3 inline mx-0.5" />) to turn it ON.
+      </span>
+    </div>
+
     <!-- Main Content Area -->
     <main class="flex-1 p-4 sm:p-6 md:p-8 flex flex-col lg:flex-row gap-6 max-w-7xl mx-auto w-full items-start justify-center">
       
@@ -439,7 +502,7 @@ onUnmounted(() => {
       <section class="flex-1 w-full max-w-2xl mx-auto">
         <!-- CURRENT PUNCH CARD (Matches DMBBHR Visual Hierarchy with Photo Placeholder) -->
         <div
-          v-if="currentPunch"
+          v-if="currentPunch && settings.enabled"
           class="bg-card text-card-foreground border rounded-xl md:rounded-2xl shadow-xs overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-200"
         >
           <!-- Card Header Banner -->
@@ -453,7 +516,7 @@ onUnmounted(() => {
               </h3>
             </div>
             <Badge
-              :variant="currentPunch.statusVariant === 'destructive' ? 'destructive' : (currentPunch.statusVariant === 'warning' ? 'warning' : 'success')"
+              :variant="currentPunch.isLate && settings.lateVisualEnabled ? 'destructive' : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')"
               class="text-xs uppercase font-mono px-3 py-1 gap-1"
             >
               <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5" />
@@ -490,10 +553,9 @@ onUnmounted(() => {
                 <span
                   class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs border"
                   :class="[
-                    currentPunch.state === 1 ? 'bg-emerald-500 text-white border-emerald-600' :
-                    currentPunch.state === 4 ? 'bg-rose-500 text-white border-rose-600' :
-                    currentPunch.state === 2 ? 'bg-amber-500 text-white border-amber-600' :
-                    'bg-primary text-primary-foreground border-primary'
+                    currentPunch.direction === 'OUT' ? 'bg-rose-500 text-white border-rose-600' :
+                    currentPunch.direction === 'BREAK_OUT' ? 'bg-amber-500 text-white border-amber-600' :
+                    'bg-emerald-500 text-white border-emerald-600'
                   ]"
                 >
                   {{ currentPunch.stateLabel }}
@@ -531,7 +593,7 @@ onUnmounted(() => {
             <div
               class="w-full max-w-md rounded-xl border p-3 text-xs flex items-center justify-center gap-2 shadow-2xs"
               :class="[
-                currentPunch.statusCategory === 'late'
+                currentPunch.isLate && settings.lateVisualEnabled
                   ? 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20 font-medium'
                   : currentPunch.statusCategory === 'undertime'
                   ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20 font-medium'
@@ -544,9 +606,9 @@ onUnmounted(() => {
               <span>{{ currentPunch.statusDetail }}</span>
             </div>
 
-            <!-- Optional Configured Late Image (if enabled) -->
+            <!-- Optional Configured Late Image (Only if lateVisualEnabled and customLateImageUrl is set) -->
             <div
-              v-if="currentPunch.isLate && settings.lateImageEnabled && settings.customLateImageUrl"
+              v-if="currentPunch.isLate && settings.lateVisualEnabled && settings.customLateImageUrl"
               class="pt-1 w-full flex flex-col items-center"
             >
               <img
@@ -558,7 +620,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Bottom Auto-Dismiss Progress Bar -->
-          <div v-if="settings.displayDurationSeconds > 0" class="w-full bg-muted/40 h-1 overflow-hidden">
+          <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden">
             <div
               class="bg-primary h-full transition-all ease-linear"
               :style="{ width: `${dismissProgress}%` }"
@@ -587,40 +649,88 @@ onUnmounted(() => {
             </p>
           </div>
 
-          <!-- Test scan triggers for verification -->
-          <div class="pt-2 flex flex-wrap items-center justify-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch('user25065', 1, false)"
-            >
-              <Play class="size-3 text-emerald-600" />
-              <span>Simulate Cantillas (user25065) Early</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch('user25065', 4, false)"
-            >
-              <Play class="size-3 text-primary" />
-              <span>Simulate Cantillas (user25065) OUT</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 text-xs gap-1.5 cursor-pointer"
-              @click="triggerTestPunch('user99999', 1, false)"
-            >
-              <Play class="size-3 text-muted-foreground" />
-              <span>Simulate Unknown (user99999)</span>
-            </Button>
+          <!-- Test scan triggers for thorough verification of all test cases -->
+          <div class="pt-2 flex flex-col items-center gap-2.5 max-w-xl">
+            <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider font-mono">
+              Verification Scenarios
+            </div>
+            <div class="flex flex-wrap items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test A: Arrives after standard IN + grace period"
+                @click="triggerTestPunch('late_in', 'user25065')"
+              >
+                <Play class="size-3 text-rose-600" />
+                <span>Test A: Late IN (8:35 AM)</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test B: Arrives within grace period"
+                @click="triggerTestPunch('ontime_in', 'user25065')"
+              >
+                <Play class="size-3 text-emerald-600" />
+                <span>Test B: Normal IN (8:05 AM)</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test C: Arrives before standard IN"
+                @click="triggerTestPunch('early_in', 'user25065')"
+              >
+                <Play class="size-3 text-emerald-600" />
+                <span>Test C: Early IN (7:48 AM)</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test D: Leaves at or after expected OUT time"
+                @click="triggerTestPunch('normal_out', 'user25065')"
+              >
+                <Play class="size-3 text-primary" />
+                <span>Test D: Normal OUT (5:10 PM)</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test E: Leaves before expected OUT time"
+                @click="triggerTestPunch('early_out', 'user25065')"
+              >
+                <Play class="size-3 text-amber-600" />
+                <span>Test E: Early OUT (4:30 PM)</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Test F: Late in morning followed by normal OUT at 5:10 PM (OUT must not show LATE)"
+                @click="triggerTestPunch('late_then_out', 'user25065')"
+              >
+                <Play class="size-3 text-purple-600" />
+                <span>Test F: OUT after Late IN</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 cursor-pointer"
+                title="Unknown Bio ID fallback"
+                @click="triggerTestPunch('unknown', 'user99999')"
+              >
+                <Play class="size-3 text-muted-foreground" />
+                <span>Unknown Bio ID</span>
+              </Button>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- Right / Session Stream: Recent Punches List (Maximum 5 Recent Punches) -->
+      <!-- Right / Session Stream: Recent Punches List (Maximum 10 Recent Punches) -->
       <aside class="w-full lg:w-96 bg-card text-card-foreground border rounded-xl shadow-xs p-5 shrink-0 space-y-3">
         <div class="flex items-center justify-between pb-3 border-b">
           <div class="flex items-center gap-2">
@@ -630,7 +740,7 @@ onUnmounted(() => {
             </h4>
           </div>
           <Badge variant="outline" class="text-[10px] font-mono">
-            {{ recentPunches.length }} / 5
+            {{ recentPunches.length }} / 10
           </Badge>
         </div>
 
@@ -650,18 +760,18 @@ onUnmounted(() => {
                 {{ punch.employeeName }}
               </div>
               <div class="text-[11px] text-muted-foreground flex items-center gap-1.5 font-mono mt-0.5">
-                <span>Bio ID: {{ punch.userId }}</span>
+                <span>Bio ID: {{ punch.bioId }}</span>
                 <span>•</span>
-                <span class="text-foreground font-medium">{{ formatPunchTime(punch.timestamp) }}</span>
+                <span class="text-foreground font-medium">{{ punch.time }}</span>
               </div>
             </div>
 
             <div class="text-right shrink-0">
               <Badge
-                :variant="punch.statusVariant === 'destructive' ? 'destructive' : (punch.statusVariant === 'warning' ? 'warning' : 'success')"
+                :variant="punch.statusVariant === 'destructive' && settings.lateVisualEnabled ? 'destructive' : (punch.statusVariant === 'warning' ? 'warning' : 'success')"
                 class="text-[10px] uppercase font-mono px-2 py-0.5"
               >
-                {{ punch.statusLabel }}
+                {{ punch.status }}
               </Badge>
             </div>
           </div>
@@ -672,8 +782,10 @@ onUnmounted(() => {
     <!-- Footer Bar -->
     <footer class="border-t bg-card px-6 py-2.5 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2 shrink-0">
       <div class="flex items-center gap-2">
-        <span class="size-2 rounded-full bg-emerald-500 inline-block"></span>
-        <span class="font-mono text-[11px]">Hardware Bridge Active</span>
+        <span class="size-2 rounded-full" :class="settings.enabled ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+        <span class="font-mono text-[11px]">
+          {{ settings.enabled ? 'Hardware Bridge Active' : 'Punch Display Disabled' }}
+        </span>
       </div>
       <div class="text-[11px] text-muted-foreground">
         DMBBHR Real-Time Biometric Attendance Monitor
@@ -694,6 +806,15 @@ onUnmounted(() => {
         </DialogHeader>
 
         <div class="space-y-4 py-2 text-xs">
+          <!-- Enable Punch Display -->
+          <div class="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
+            <div class="space-y-0.5">
+              <Label class="text-xs font-semibold text-foreground">Enable Punch Display</Label>
+              <p class="text-[11px] text-muted-foreground">Allow receiving and displaying real-time biometric scans.</p>
+            </div>
+            <Switch v-model="formEnabled" />
+          </div>
+
           <!-- Display Duration -->
           <div class="space-y-1.5">
             <Label class="text-xs font-semibold text-foreground">Screen Display Duration</Label>
@@ -704,10 +825,9 @@ onUnmounted(() => {
               <SelectContent>
                 <SelectGroup>
                   <SelectItem value="3">3 seconds</SelectItem>
-                  <SelectItem value="5">5 seconds</SelectItem>
-                  <SelectItem value="8">8 seconds (Recommended)</SelectItem>
-                  <SelectItem value="12">12 seconds</SelectItem>
-                  <SelectItem value="0">Hold until next scan (No auto-dismiss)</SelectItem>
+                  <SelectItem value="5">5 seconds (Default)</SelectItem>
+                  <SelectItem value="8">8 seconds</SelectItem>
+                  <SelectItem value="10">10 seconds</SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
@@ -728,30 +848,29 @@ onUnmounted(() => {
           <!-- Confetti Toggle -->
           <div class="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
             <div class="space-y-0.5">
-              <Label class="text-xs font-semibold text-foreground">Early / On-Time Confetti</Label>
-              <p class="text-[11px] text-muted-foreground">Show subtle celebration burst for on-time arrivals.</p>
+              <Label class="text-xs font-semibold text-foreground">Confetti Celebration</Label>
+              <p class="text-[11px] text-muted-foreground">Show subtle celebration burst for on-time / early arrivals.</p>
             </div>
             <Switch v-model="formConfetti" />
           </div>
 
-          <!-- Late Custom Image Toggle & URL -->
-          <div class="space-y-2 p-2.5 rounded-lg border bg-muted/20">
-            <div class="flex items-center justify-between">
-              <div class="space-y-0.5">
-                <Label class="text-xs font-semibold text-foreground">Late Arrival Reminder Graphic</Label>
-                <p class="text-[11px] text-muted-foreground">Display an image reminder on late punches.</p>
-              </div>
-              <Switch v-model="formLateImage" />
+          <!-- Late Visual Toggle -->
+          <div class="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
+            <div class="space-y-0.5">
+              <Label class="text-xs font-semibold text-foreground">Late Visual</Label>
+              <p class="text-[11px] text-muted-foreground">Apply distinctive visual warning treatment when an IN punch is late.</p>
             </div>
+            <Switch v-model="formLateVisual" />
+          </div>
 
-            <div v-if="formLateImage" class="pt-2 space-y-1.5 border-t">
-              <Label class="text-[11px] text-muted-foreground">Custom Image URL (Optional)</Label>
-              <Input
-                v-model="formLateImageUrl"
-                placeholder="https://example.com/late-notice.png"
-                class="h-8 text-xs font-mono"
-              />
-            </div>
+          <!-- Custom Late Image URL -->
+          <div v-if="formLateVisual" class="space-y-1.5 p-2.5 rounded-lg border bg-muted/20">
+            <Label class="text-[11px] text-muted-foreground">Custom Late Reminder Graphic URL (Optional)</Label>
+            <Input
+              v-model="formLateImageUrl"
+              placeholder="https://example.com/late-notice.png"
+              class="h-8 text-xs font-mono"
+            />
           </div>
         </div>
 
