@@ -31,6 +31,11 @@ export interface DayTrendPoint {
   renderedHours: number
 }
 
+export interface LateAttendanceRecord {
+  date: string // YYYY-MM-DD
+  lateMinutes: number
+}
+
 export interface TopLateEmployee {
   bioId: string
   name: string
@@ -40,7 +45,8 @@ export interface TopLateEmployee {
   totalLateMinutes: number
   avgLateMinutes: number
   latestLateDate: string
-  lateDates: string[]
+  lateRecords: LateAttendanceRecord[]
+  lateDates?: string[]
 }
 
 export interface MissingOutItem {
@@ -225,7 +231,7 @@ export const reportsService = {
     let totalAbsentDays = 0
 
     const dayTrends: DayTrendPoint[] = []
-    const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string; lateDates: string[] }>()
+    const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string; lateRecords: LateAttendanceRecord[]; lateDates: string[] }>()
     const missingOutItems: MissingOutItem[] = []
 
     let peakDayDate = start
@@ -261,12 +267,16 @@ export const reportsService = {
             const empKey = r.biometric_user_id
             const dateKey = r.raw_date || dStr
             if (!lateByEmployee.has(empKey)) {
-              lateByEmployee.set(empKey, { emp: r, lateCount: 0, minutes: 0, lastDate: dateKey, lateDates: [] })
+              lateByEmployee.set(empKey, { emp: r, lateCount: 0, minutes: 0, lastDate: dateKey, lateRecords: [], lateDates: [] })
             }
             const agg = lateByEmployee.get(empKey)!
             agg.lateCount++
             agg.minutes += r.late_minutes
             agg.lastDate = dateKey
+            agg.lateRecords.push({
+              date: dateKey,
+              lateMinutes: r.late_minutes
+            })
             if (!agg.lateDates.includes(dateKey)) {
               agg.lateDates.push(dateKey)
             }
@@ -322,7 +332,7 @@ export const reportsService = {
 
     // Top late employees
     const topLateEmployees: TopLateEmployee[] = Array.from(lateByEmployee.values())
-      .map(({ emp, lateCount, minutes, lastDate, lateDates }) => ({
+      .map(({ emp, lateCount, minutes, lastDate, lateRecords, lateDates }) => ({
         bioId: emp.biometric_user_id,
         name: emp.employee_name,
         department: emp.department || 'Operations',
@@ -331,6 +341,7 @@ export const reportsService = {
         totalLateMinutes: minutes,
         avgLateMinutes: Math.round(minutes / (lateCount || 1)),
         latestLateDate: lastDate,
+        lateRecords: [...lateRecords].sort((a, b) => a.date.localeCompare(b.date)),
         lateDates: [...lateDates].sort((a, b) => a.localeCompare(b))
       }))
       .sort((a, b) => b.lateDays - a.lateDays || b.totalLateMinutes - a.totalLateMinutes)

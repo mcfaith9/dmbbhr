@@ -173,16 +173,6 @@ function formatShortDate(dateStr: string): string {
   const dObj = new Date(Date.UTC(y, m - 1, d))
   return dObj.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
 }
-
-const expandedLateEmployees = ref<Set<string>>(new Set())
-
-function toggleExpandLateDates(bioId: string) {
-  if (expandedLateEmployees.value.has(bioId)) {
-    expandedLateEmployees.value.delete(bioId)
-  } else {
-    expandedLateEmployees.value.add(bioId)
-  }
-}
 </script>
 
 <template>
@@ -675,68 +665,58 @@ function toggleExpandLateDates(bioId: string) {
             <Table class="text-xs">
               <TableHeader>
                 <TableRow class="bg-muted/40 hover:bg-muted/40">
-                  <TableHead class="font-semibold text-foreground min-w-[140px]">Employee</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[130px]">Employee</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[70px]">Bio ID</TableHead>
                   <TableHead class="font-semibold text-foreground min-w-[100px]">Work Group</TableHead>
-                  <TableHead class="font-semibold text-foreground min-w-[200px]">Late Days</TableHead>
-                  <TableHead class="font-semibold text-foreground text-right min-w-[120px]">Lost Time</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[80px]">Date</TableHead>
+                  <TableHead class="font-semibold text-foreground text-right min-w-[80px]">Late</TableHead>
                 </TableRow>
               </TableHeader>
 
               <TableBody>
-                <TableRow
-                  v-for="emp in reportData.topLateEmployees"
-                  :key="emp.bioId"
-                  class="hover:bg-muted/30 transition-colors"
-                >
-                  <TableCell class="py-2.5">
-                    <div class="font-semibold text-foreground">{{ emp.name }}</div>
-                    <div class="text-[10px] text-muted-foreground font-mono">Bio ID: {{ emp.bioId }}</div>
-                  </TableCell>
+                <template v-for="emp in reportData.topLateEmployees" :key="emp.bioId">
+                  <!-- Individual Late Attendance Instances for this Employee -->
+                  <TableRow
+                    v-for="rec in emp.lateRecords"
+                    :key="`${emp.bioId}-${rec.date}`"
+                    class="hover:bg-muted/30 transition-colors border-b border-border/40"
+                  >
+                    <TableCell class="py-2 font-medium text-foreground">
+                      {{ emp.name }}
+                    </TableCell>
 
-                  <TableCell class="py-2.5 text-muted-foreground text-[11px]">
-                    {{ emp.workGroupName }}
-                  </TableCell>
+                    <TableCell class="py-2 font-mono text-muted-foreground text-[11px]">
+                      {{ emp.bioId }}
+                    </TableCell>
 
-                  <TableCell class="py-2.5">
-                    <div class="space-y-1">
-                      <div>
-                        <Badge variant="outline" class="text-[10px] font-mono text-amber-700 bg-amber-500/10 border-amber-500/30 font-bold">
-                          {{ emp.lateDays }} day{{ emp.lateDays > 1 ? 's' : '' }}
-                        </Badge>
-                      </div>
+                    <TableCell class="py-2 text-muted-foreground text-[11px]">
+                      {{ emp.workGroupName }}
+                    </TableCell>
 
-                      <!-- Actual chronological late dates list with inline expansion -->
-                      <div v-if="emp.lateDates && emp.lateDates.length > 0" class="text-[11px] font-mono text-muted-foreground leading-snug">
-                        <span v-if="emp.lateDates.length <= 5 || expandedLateEmployees.has(emp.bioId)">
-                          {{ emp.lateDates.map(d => formatShortDate(d)).join(' · ') }}
-                          <button
-                            v-if="emp.lateDates.length > 5 && expandedLateEmployees.has(emp.bioId)"
-                            type="button"
-                            class="text-primary hover:underline font-sans font-medium text-[10px] ml-1.5 cursor-pointer inline-flex items-center"
-                            @click="toggleExpandLateDates(emp.bioId)"
-                          >
-                            (show less)
-                          </button>
-                        </span>
-                        <span v-else>
-                          {{ emp.lateDates.slice(0, 5).map(d => formatShortDate(d)).join(' · ') }}
-                          <button
-                            type="button"
-                            class="text-primary hover:underline font-sans font-semibold text-[10px] ml-1.5 cursor-pointer inline-flex items-center"
-                            @click="toggleExpandLateDates(emp.bioId)"
-                          >
-                            +{{ emp.lateDates.length - 5 }} more
-                          </button>
-                        </span>
-                      </div>
-                    </div>
-                  </TableCell>
+                    <TableCell class="py-2 font-mono text-[11px] text-foreground whitespace-nowrap">
+                      {{ formatShortDate(rec.date) }}
+                    </TableCell>
 
-                  <TableCell class="py-2.5 text-right font-mono font-medium text-foreground">
-                    <span class="font-bold text-amber-700 dark:text-amber-300">{{ formatDuration(emp.totalLateMinutes) }}</span>
-                    <span class="text-[10px] text-muted-foreground block font-mono">({{ emp.totalLateMinutes }}m · avg {{ emp.avgLateMinutes }}m/day)</span>
-                  </TableCell>
-                </TableRow>
+                    <TableCell class="py-2 text-right font-mono font-medium text-amber-600 dark:text-amber-400">
+                      {{ formatDuration(rec.lateMinutes) }}
+                    </TableCell>
+                  </TableRow>
+
+                  <!-- Total Row for this Employee -->
+                  <TableRow class="bg-muted/40 hover:bg-muted/40 border-b-2 border-border font-semibold">
+                    <TableCell class="py-2 font-bold text-foreground">
+                      Total
+                    </TableCell>
+                    <TableCell class="py-2"></TableCell>
+                    <TableCell class="py-2"></TableCell>
+                    <TableCell class="py-2 font-mono font-bold text-foreground whitespace-nowrap text-[11px]">
+                      {{ emp.lateDays }} late day{{ emp.lateDays > 1 ? 's' : '' }}
+                    </TableCell>
+                    <TableCell class="py-2 text-right font-mono font-bold text-amber-700 dark:text-amber-300">
+                      {{ formatDuration(emp.totalLateMinutes) }}
+                    </TableCell>
+                  </TableRow>
+                </template>
               </TableBody>
             </Table>
           </div>
