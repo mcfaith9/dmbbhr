@@ -40,6 +40,7 @@ export interface TopLateEmployee {
   totalLateMinutes: number
   avgLateMinutes: number
   latestLateDate: string
+  lateDates: string[]
 }
 
 export interface MissingOutItem {
@@ -224,7 +225,7 @@ export const reportsService = {
     let totalAbsentDays = 0
 
     const dayTrends: DayTrendPoint[] = []
-    const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string }>()
+    const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string; lateDates: string[] }>()
     const missingOutItems: MissingOutItem[] = []
 
     let peakDayDate = start
@@ -258,13 +259,17 @@ export const reportsService = {
             totalLateMinutes += r.late_minutes
 
             const empKey = r.biometric_user_id
+            const dateKey = r.raw_date || dStr
             if (!lateByEmployee.has(empKey)) {
-              lateByEmployee.set(empKey, { emp: r, lateCount: 0, minutes: 0, lastDate: r.raw_date })
+              lateByEmployee.set(empKey, { emp: r, lateCount: 0, minutes: 0, lastDate: dateKey, lateDates: [] })
             }
             const agg = lateByEmployee.get(empKey)!
             agg.lateCount++
             agg.minutes += r.late_minutes
-            agg.lastDate = r.raw_date
+            agg.lastDate = dateKey
+            if (!agg.lateDates.includes(dateKey)) {
+              agg.lateDates.push(dateKey)
+            }
           }
 
           const isMissingOut = !r.has_valid_out || r.status.includes('No OUT') || r.status === 'Awaiting OUT'
@@ -317,7 +322,7 @@ export const reportsService = {
 
     // Top late employees
     const topLateEmployees: TopLateEmployee[] = Array.from(lateByEmployee.values())
-      .map(({ emp, lateCount, minutes, lastDate }) => ({
+      .map(({ emp, lateCount, minutes, lastDate, lateDates }) => ({
         bioId: emp.biometric_user_id,
         name: emp.employee_name,
         department: emp.department || 'Operations',
@@ -325,7 +330,8 @@ export const reportsService = {
         lateDays: lateCount,
         totalLateMinutes: minutes,
         avgLateMinutes: Math.round(minutes / (lateCount || 1)),
-        latestLateDate: lastDate
+        latestLateDate: lastDate,
+        lateDates: [...lateDates].sort((a, b) => a.localeCompare(b))
       }))
       .sort((a, b) => b.lateDays - a.lateDays || b.totalLateMinutes - a.totalLateMinutes)
       .slice(0, 10)

@@ -165,6 +165,24 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
   if (date) query.date = date
   router.push({ path: '/attendance/daily', query })
 }
+
+function formatShortDate(dateStr: string): string {
+  if (!dateStr) return ''
+  const [y, m, d] = dateStr.split('-').map(Number)
+  if (!y || !m || !d) return dateStr
+  const dObj = new Date(Date.UTC(y, m - 1, d))
+  return dObj.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
+}
+
+const expandedLateEmployees = ref<Set<string>>(new Set())
+
+function toggleExpandLateDates(bioId: string) {
+  if (expandedLateEmployees.value.has(bioId)) {
+    expandedLateEmployees.value.delete(bioId)
+  } else {
+    expandedLateEmployees.value.add(bioId)
+  }
+}
 </script>
 
 <template>
@@ -642,26 +660,14 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <!-- Top Repeated Lateness Card -->
         <div class="rounded-xl border bg-card p-5 shadow-xs space-y-4">
-          <div class="flex items-center justify-between border-b pb-3">
-            <div>
-              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <Clock class="size-3.5 text-amber-500" />
-                <span>Repeated Lateness (Top Frequency)</span>
-              </h3>
-              <p class="text-[11px] text-muted-foreground">
-                Employees with the highest number of late arrivals exceeding shift grace periods.
-              </p>
-            </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-7 text-xs text-primary gap-1 cursor-pointer px-2"
-              @click="navigateToDaily('late')"
-            >
-              <span>Filter Late</span>
-              <ChevronRight class="size-3" />
-            </Button>
+          <div class="border-b pb-3">
+            <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <Clock class="size-3.5 text-amber-500" />
+              <span>Repeated Lateness (Top Frequency)</span>
+            </h3>
+            <p class="text-[11px] text-muted-foreground mt-0.5">
+              Employees with the highest number of late arrivals exceeding shift grace periods.
+            </p>
           </div>
 
           <!-- Lateness Table -->
@@ -669,11 +675,10 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
             <Table class="text-xs">
               <TableHeader>
                 <TableRow class="bg-muted/40 hover:bg-muted/40">
-                  <TableHead class="font-semibold text-foreground">Employee</TableHead>
-                  <TableHead class="font-semibold text-foreground">Work Group</TableHead>
-                  <TableHead class="font-semibold text-foreground text-center">Late Days</TableHead>
-                  <TableHead class="font-semibold text-foreground text-right">Lost Time</TableHead>
-                  <TableHead class="font-semibold text-foreground text-right w-[80px]">Action</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[140px]">Employee</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[100px]">Work Group</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[200px]">Late Days</TableHead>
+                  <TableHead class="font-semibold text-foreground text-right min-w-[120px]">Lost Time</TableHead>
                 </TableRow>
               </TableHeader>
 
@@ -692,26 +697,44 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
                     {{ emp.workGroupName }}
                   </TableCell>
 
-                  <TableCell class="py-2.5 text-center">
-                    <Badge variant="outline" class="text-[10px] font-mono text-amber-700 bg-amber-500/10 border-amber-500/30 font-bold">
-                      {{ emp.lateDays }} day{{ emp.lateDays > 1 ? 's' : '' }}
-                    </Badge>
+                  <TableCell class="py-2.5">
+                    <div class="space-y-1">
+                      <div>
+                        <Badge variant="outline" class="text-[10px] font-mono text-amber-700 bg-amber-500/10 border-amber-500/30 font-bold">
+                          {{ emp.lateDays }} day{{ emp.lateDays > 1 ? 's' : '' }}
+                        </Badge>
+                      </div>
+
+                      <!-- Actual chronological late dates list with inline expansion -->
+                      <div v-if="emp.lateDates && emp.lateDates.length > 0" class="text-[11px] font-mono text-muted-foreground leading-snug">
+                        <span v-if="emp.lateDates.length <= 5 || expandedLateEmployees.has(emp.bioId)">
+                          {{ emp.lateDates.map(d => formatShortDate(d)).join(' · ') }}
+                          <button
+                            v-if="emp.lateDates.length > 5 && expandedLateEmployees.has(emp.bioId)"
+                            type="button"
+                            class="text-primary hover:underline font-sans font-medium text-[10px] ml-1.5 cursor-pointer inline-flex items-center"
+                            @click="toggleExpandLateDates(emp.bioId)"
+                          >
+                            (show less)
+                          </button>
+                        </span>
+                        <span v-else>
+                          {{ emp.lateDates.slice(0, 5).map(d => formatShortDate(d)).join(' · ') }}
+                          <button
+                            type="button"
+                            class="text-primary hover:underline font-sans font-semibold text-[10px] ml-1.5 cursor-pointer inline-flex items-center"
+                            @click="toggleExpandLateDates(emp.bioId)"
+                          >
+                            +{{ emp.lateDates.length - 5 }} more
+                          </button>
+                        </span>
+                      </div>
+                    </div>
                   </TableCell>
 
                   <TableCell class="py-2.5 text-right font-mono font-medium text-foreground">
                     <span class="font-bold text-amber-700 dark:text-amber-300">{{ formatDuration(emp.totalLateMinutes) }}</span>
                     <span class="text-[10px] text-muted-foreground block font-mono">({{ emp.totalLateMinutes }}m · avg {{ emp.avgLateMinutes }}m/day)</span>
-                  </TableCell>
-
-                  <TableCell class="py-2.5 text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      class="h-6 px-2 text-[10px] cursor-pointer"
-                      @click="navigateToDaily(undefined, emp.bioId, emp.latestLateDate)"
-                    >
-                      Inspect
-                    </Button>
                   </TableCell>
                 </TableRow>
               </TableBody>
