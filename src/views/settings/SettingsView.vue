@@ -2,7 +2,7 @@
 import { onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  UserCheck,
+  UserRoundCheck,
   Layers,
   Cpu,
   Clock,
@@ -108,7 +108,7 @@ function navigateTo(path: string) {
           <!-- Icon & Header -->
           <div class="flex items-start justify-between gap-3">
             <div class="size-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20 group-hover:scale-105 transition-transform duration-200">
-              <UserCheck class="size-5.5 text-primary" />
+              <UserRoundCheck class="size-5.5 text-primary" />
             </div>
             <Badge variant="outline" class="text-[11px] font-mono bg-muted/30">
               Users • Passwords
@@ -129,7 +129,7 @@ function navigateTo(path: string) {
           <div class="space-y-2 pt-2 border-t text-xs">
             <div class="flex items-center justify-between p-2 rounded-lg bg-muted/40">
               <span class="text-muted-foreground flex items-center gap-2">
-                <UserCheck class="size-3.5 text-primary" />
+                <UserRoundCheck class="size-3.5 text-primary" />
                 Account Directory
               </span>
               <span class="font-medium text-foreground text-[11px]">Admin & HR access</span>

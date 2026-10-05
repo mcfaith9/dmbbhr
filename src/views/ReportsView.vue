@@ -375,7 +375,7 @@ function formatShortDate(dateStr: string): string {
                       Bio ID:
                     </span>
 
-                    <span class="font-mono text-[10px] font-semibold text-foreground">
+                    <span class="px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium font-mono">
                       {{ emp.biometric_user_id }}
                     </span>
 

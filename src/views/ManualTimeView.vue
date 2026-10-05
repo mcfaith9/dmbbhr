@@ -574,13 +574,12 @@ onMounted(() => {
         </div>
 
         <Button
-          variant="default"
+          variant="outline"
           size="sm"
           class="h-8 gap-1.5 text-xs font-semibold shadow-xs cursor-pointer"
           @click="openNewAdjustmentModal"
         >
           <Plus class="size-3.5" />
-          <span>New Adjustment</span>
         </Button>
 
         <Button
@@ -591,7 +590,6 @@ onMounted(() => {
           @click="handleRefresh"
         >
           <RefreshCw :class="['size-3.5', (loading || historyLoading) ? 'animate-spin' : '']" />
-          <span>Refresh</span>
         </Button>
       </div>
     </div>
@@ -847,12 +845,24 @@ onMounted(() => {
                 <!-- 7. Status Badge -->
                 <TableCell class="py-2.5 text-center">
                   <Badge
-                    :variant="req.status === 'Approved' ? 'success' : (req.status === 'Pending' ? 'warning' : 'destructive')"
-                    class="text-[10px] gap-1 font-medium whitespace-nowrap"
+                    :variant="
+                      req.status === 'Approved'
+                        ? 'success'
+                        : req.status === 'Pending'
+                          ? 'warning'
+                          : 'destructive'
+                    "
+                    :class="[
+                      'text-[10px] gap-1 font-medium whitespace-nowrap',
+                      req.status !== 'Approved' && req.status !== 'Pending'
+                        ? 'px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-rose-500/15 text-rose-800 dark:text-rose-300 border border-rose-500/30'
+                        : ''
+                    ]"
                   >
                     <Clock v-if="req.status === 'Pending'" class="size-2.5" />
                     <CheckCircle2 v-else-if="req.status === 'Approved'" class="size-2.5" />
                     <XCircle v-else class="size-2.5" />
+
                     <span>{{ req.status }}</span>
                   </Badge>
                 </TableCell>
