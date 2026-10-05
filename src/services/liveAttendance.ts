@@ -24,6 +24,8 @@ export interface SyncProgressState {
   stage: 'connecting' | 'downloading' | 'validating' | 'saving' | 'complete' | 'error' | string
   message: string
   progress: number
+  receivedBytes?: number
+  totalBytes?: number
   summary?: {
     success: boolean
     deviceReturned?: number

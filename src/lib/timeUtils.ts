@@ -129,3 +129,38 @@ export function formatOriginalTimeDisplay(t?: string | null): string {
   if (!clean || clean === '-' || clean === '—') return '—'
   return clean
 }
+
+/**
+ * Formats a duration in minutes into a human-readable duration string (hours and remaining minutes).
+ * Performs exact integer arithmetic without fractional/decimal approximations.
+ *
+ * Examples:
+ * - 0 -> "0m"
+ * - 15 -> "15m"
+ * - 45 -> "45m"
+ * - 60 -> "1h"
+ * - 61 -> "1h 1m"
+ * - 75 -> "1h 15m"
+ * - 120 -> "2h"
+ * - 125 -> "2h 5m"
+ * - 139 -> "2h 19m"
+ * - 180 -> "3h"
+ * - 1054 -> "17h 34m"
+ */
+export function formatDuration(minutes?: number | null): string {
+  if (minutes === undefined || minutes === null || isNaN(minutes) || minutes <= 0) {
+    return '0m'
+  }
+  const totalMins = Math.floor(minutes)
+  const hours = Math.floor(totalMins / 60)
+  const remainingMins = totalMins % 60
+
+  if (hours === 0) {
+    return `${remainingMins}m`
+  }
+  if (remainingMins === 0) {
+    return `${hours}h`
+  }
+  return `${hours}h ${remainingMins}m`
+}
+

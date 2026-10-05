@@ -35,6 +35,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { DatePicker } from '@/components/ui/date-picker'
+import BiometricSyncProgress from '@/components/BiometricSyncProgress.vue'
 import {
   Dialog,
   DialogContent,
@@ -602,6 +603,9 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Biometric Sync Progress Notification -->
+    <BiometricSyncProgress />
 
     <!-- Live Scan Flash Notification -->
     <div

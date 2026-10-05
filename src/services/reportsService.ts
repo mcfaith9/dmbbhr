@@ -7,6 +7,7 @@
 
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from './attendance'
 import { employeeService } from './employees'
+import { formatDuration } from '@/lib/timeUtils'
 
 export type DateRangePreset = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom'
 
@@ -369,7 +370,7 @@ export const reportsService = {
     // Construct concise HR insights
     const insights: string[] = []
     if (totalLateDays > 0) {
-      insights.push(`${totalLateDays} late attendance instance${totalLateDays > 1 ? 's' : ''} recorded, totaling ${totalLateMinutes} lost minutes.`)
+      insights.push(`${totalLateDays} late attendance instance${totalLateDays > 1 ? 's' : ''} recorded, totaling ${formatDuration(totalLateMinutes)} (${totalLateMinutes.toLocaleString()}m) lost time.`)
     } else {
       insights.push('Zero lateness instances recorded across this period.')
     }
@@ -384,7 +385,7 @@ export const reportsService = {
 
     if (topLateEmployees.length > 0) {
       const topEmp = topLateEmployees[0]
-      insights.push(`Highest tardiness frequency: ${topEmp.name} (${topEmp.lateDays} late day${topEmp.lateDays > 1 ? 's' : ''}, ${topEmp.totalLateMinutes}m total).`)
+      insights.push(`Highest tardiness frequency: ${topEmp.name} (${topEmp.lateDays} late day${topEmp.lateDays > 1 ? 's' : ''}, ${formatDuration(topEmp.totalLateMinutes)} / ${topEmp.totalLateMinutes}m total).`)
     }
 
     if (roundedTotalHours > 0) {

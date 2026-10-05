@@ -6,7 +6,6 @@ import {
   RefreshCw,
   Calendar as CalendarIcon,
   CheckCircle2,
-  AlertCircle,
   Radio,
   Users,
   Search,
@@ -40,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import BiometricSyncProgress from '@/components/BiometricSyncProgress.vue'
 import { DatePicker } from '@/components/ui/date-picker'
 import {
   Popover,
@@ -59,7 +59,8 @@ import {
   normalizeTimeToHHMM,
   hasTimeChanged,
   formatHHMMTo12Hour,
-  formatOriginalTimeDisplay
+  formatOriginalTimeDisplay,
+  formatDuration
 } from '@/lib/timeUtils'
 
 const route = useRoute()
@@ -71,7 +72,6 @@ const employeeViewMode = ref<'selected_date' | 'all_dates'>('selected_date')
 // Real device status and sync state
 const deviceStatus = liveAttendanceService.deviceStatus
 const isSyncing = liveAttendanceService.isSyncing
-const syncProgress = liveAttendanceService.syncProgress
 
 // Default to Today in Philippine Standard Time
 const todayDateStr = getManilaDateString(new Date())
@@ -552,52 +552,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Biometric Sync Progress Notification -->
-    <div
-      v-if="syncProgress"
-      class="rounded-xl border p-4 text-xs transition-all shadow-xs animate-in fade-in duration-200"
-      :class="[
-        syncProgress.stage === 'error'
-          ? 'border-destructive/40 bg-destructive/10 text-destructive-foreground'
-          : syncProgress.stage === 'complete'
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-foreground'
-            : 'border-primary/30 bg-primary/5 text-foreground'
-      ]"
-    >
-      <div class="flex items-start justify-between gap-3">
-        <div class="space-y-1.5 flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <Radio v-if="isSyncing" class="size-3.5 text-primary animate-spin" />
-            <CheckCircle2 v-else-if="syncProgress.stage === 'complete'" class="size-3.5 text-emerald-600 dark:text-emerald-400" />
-            <AlertCircle v-else-if="syncProgress.stage === 'error'" class="size-3.5 text-destructive" />
-            <span class="font-semibold text-sm">
-              {{ syncProgress.stage === 'complete' ? 'Biometric Sync Complete' : (syncProgress.stage === 'error' ? 'Sync Error' : 'Syncing Hardware Biometric Scans...') }}
-            </span>
-            <span class="text-[11px] font-mono text-muted-foreground ml-auto pr-2">
-              {{ syncProgress.progress }}%
-            </span>
-          </div>
-          <div class="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
-            <div
-              class="h-full transition-all duration-300 rounded-full"
-              :class="[
-                syncProgress.stage === 'error' ? 'bg-destructive' : (syncProgress.stage === 'complete' ? 'bg-emerald-600' : 'bg-primary')
-              ]"
-              :style="{ width: `${syncProgress.progress}%` }"
-            />
-          </div>
-          <div class="text-xs text-muted-foreground">
-            {{ syncProgress.message }}
-          </div>
-        </div>
-        <button
-          type="button"
-          class="text-muted-foreground hover:text-foreground p-1 rounded-md cursor-pointer"
-          @click="liveAttendanceService.clearSyncProgress()"
-        >
-          <X class="size-3.5" />
-        </button>
-      </div>
-    </div>
+    <BiometricSyncProgress />
 
     <!-- Active Employee Filter Context Banner -->
     <div
@@ -1152,7 +1107,7 @@ onUnmounted(() => {
                     <span
                       v-if="row.late_minutes > 0"
                       class="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-mono font-bold text-[11px]"
-                      :title="`Late by ${row.late_minutes}m against standard ${row.expected_in}`"
+                      :title="`Late by ${formatDuration(row.late_minutes)} (${row.late_minutes}m) against standard ${row.expected_in}`"
                     >
                       {{ row.late_minutes }}m
                     </span>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Clock,
@@ -13,7 +13,13 @@ import {
   ChevronRight,
   MapPin,
   Flame,
-  FileQuestion
+  FileQuestion,
+  Search,
+  Users,
+  X,
+  Check,
+  ChevronsUpDown,
+  Fingerprint
 } from '@lucide/vue'
 import {
   reportsService,
@@ -22,6 +28,7 @@ import {
   type DateRangePreset
 } from '@/services/reportsService'
 import { employeeService } from '@/services/employees'
+import { formatDuration } from '@/lib/timeUtils'
 import type { WorkGroup, Employee } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,6 +42,11 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent
+} from '@/components/ui/popover'
 import AttendanceTrendChart from '@/components/reports/AttendanceTrendChart.vue'
 import AttendanceStatusDonut from '@/components/reports/AttendanceStatusDonut.vue'
 
@@ -47,6 +59,10 @@ const customEndDate = ref('')
 const selectedLocation = ref('all')
 const selectedWorkGroup = ref('all')
 const selectedEmployeeBioId = ref('all')
+
+// Employee Combobox Dropdown State
+const isEmployeeComboboxOpen = ref(false)
+const employeeSearchQuery = ref('')
 
 // Data State
 const loading = ref(false)
@@ -66,6 +82,39 @@ async function loadLookups() {
   } catch {
     // ignore
   }
+}
+
+// Find currently selected employee object for display
+const selectedEmployee = computed(() => {
+  if (selectedEmployeeBioId.value === 'all') return null
+  return employees.value.find(e => e.biometric_user_id === selectedEmployeeBioId.value) || null
+})
+
+// Searchable filtered employee list for combobox
+const filteredEmployees = computed(() => {
+  const q = employeeSearchQuery.value.toLowerCase().trim()
+  if (!q) {
+    return employees.value
+  }
+  return employees.value.filter(emp => {
+    const matchName = (emp.full_name || '').toLowerCase().includes(q)
+    const matchBioId = (emp.biometric_user_id || '').toLowerCase().includes(q)
+    const matchEmpNum = (emp.employee_number || '').toLowerCase().includes(q)
+    const matchDept = (emp.department || '').toLowerCase().includes(q)
+    return matchName || matchBioId || matchEmpNum || matchDept
+  })
+})
+
+function selectEmployee(bioId: string) {
+  selectedEmployeeBioId.value = bioId
+  isEmployeeComboboxOpen.value = false
+  employeeSearchQuery.value = ''
+}
+
+function clearEmployeeFilter() {
+  selectedEmployeeBioId.value = 'all'
+  employeeSearchQuery.value = ''
+  isEmployeeComboboxOpen.value = false
 }
 
 // Load aggregated report data
@@ -217,26 +266,122 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
           </Select>
         </div>
 
-        <!-- Employee Filter -->
+        <!-- Employee Combobox Filter (Searchable by Name or Bio ID / Employee ID) -->
         <div class="flex items-center gap-1.5">
           <span class="font-semibold text-muted-foreground whitespace-nowrap">Employee:</span>
-          <Select v-model="selectedEmployeeBioId">
-            <SelectTrigger class="w-[170px] h-8 text-xs font-medium bg-card">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="all">All Employees</SelectItem>
-                <SelectItem
-                  v-for="emp in employees"
-                  :key="emp.biometric_user_id"
-                  :value="emp.biometric_user_id"
+          
+          <Popover v-model:open="isEmployeeComboboxOpen">
+            <PopoverTrigger as-child>
+              <button
+                type="button"
+                role="combobox"
+                :aria-expanded="isEmployeeComboboxOpen"
+                class="flex h-8 items-center justify-between rounded-md border border-input bg-card px-2.5 py-1 text-xs shadow-2xs transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer min-w-[190px] max-w-[260px]"
+                :class="selectedEmployeeBioId !== 'all' ? 'border-primary/40 text-foreground font-medium' : 'text-muted-foreground'"
+              >
+                <div class="flex items-center gap-1.5 truncate mr-1.5">
+                  <Fingerprint v-if="selectedEmployeeBioId !== 'all'" class="size-3.5 text-primary shrink-0" />
+                  <Users v-else class="size-3.5 text-muted-foreground shrink-0" />
+
+                  <span v-if="selectedEmployeeBioId === 'all'" class="truncate text-foreground font-medium">
+                    All Employees
+                  </span>
+                  <span v-else class="truncate text-foreground font-semibold">
+                    {{ selectedEmployee?.full_name || `Employee ${selectedEmployeeBioId}` }}
+                    <span class="text-[10px] font-mono text-muted-foreground font-normal">({{ selectedEmployeeBioId }})</span>
+                  </span>
+                </div>
+
+                <div class="flex items-center gap-1 shrink-0">
+                  <span
+                    v-if="selectedEmployeeBioId !== 'all'"
+                    class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                    title="Clear filter back to All Employees"
+                    @click.stop="clearEmployeeFilter"
+                  >
+                    <X class="size-3" />
+                  </span>
+                  <ChevronsUpDown class="size-3 text-muted-foreground opacity-60" />
+                </div>
+              </button>
+            </PopoverTrigger>
+
+            <PopoverContent class="w-72 p-2 shadow-lg rounded-xl text-xs space-y-2" align="start">
+              <!-- Search Bar -->
+              <div class="relative">
+                <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                <Input
+                  v-model="employeeSearchQuery"
+                  placeholder="Search employee by name or Bio ID..."
+                  class="pl-8 h-8 text-xs w-full bg-background"
+                  autofocus
+                />
+              </div>
+
+              <!-- Options List -->
+              <div class="max-h-60 overflow-y-auto space-y-0.5 pr-0.5">
+                <!-- All Employees Option -->
+                <button
+                  type="button"
+                  class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer text-left"
+                  :class="selectedEmployeeBioId === 'all' ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted text-foreground'"
+                  @click="selectEmployee('all')"
                 >
-                  {{ emp.full_name }} ({{ emp.biometric_user_id }})
-                </SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+                  <div class="flex items-center gap-2">
+                    <Users class="size-3.5 text-muted-foreground" />
+                    <span>All Employees</span>
+                  </div>
+                  <Check v-if="selectedEmployeeBioId === 'all'" class="size-3.5 text-primary" />
+                </button>
+
+                <!-- Separator -->
+                <div class="h-px bg-border my-1" />
+
+                <!-- Filtered Employee List -->
+                <div v-if="filteredEmployees.length === 0" class="p-3 text-center text-xs text-muted-foreground">
+                  No employee found matching "{{ employeeSearchQuery }}"
+                </div>
+
+                <button
+                  v-for="emp in filteredEmployees"
+                  :key="emp.biometric_user_id"
+                  type="button"
+                  class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer text-left group"
+                  :class="selectedEmployeeBioId === emp.biometric_user_id ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted text-foreground'"
+                  @click="selectEmployee(emp.biometric_user_id)"
+                >
+                  <div class="truncate mr-2">
+                    <div class="font-medium text-foreground truncate group-hover:text-primary">
+                      {{ emp.full_name }}
+                    </div>
+                    <div class="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono mt-0.5">
+                      <span class="bg-muted px-1 rounded text-foreground font-semibold">ID: {{ emp.biometric_user_id }}</span>
+                      <span v-if="emp.work_group_name">· {{ emp.work_group_name }}</span>
+                    </div>
+                  </div>
+
+                  <Check
+                    v-if="selectedEmployeeBioId === emp.biometric_user_id"
+                    class="size-3.5 text-primary shrink-0"
+                  />
+                </button>
+              </div>
+
+              <div
+                v-if="selectedEmployeeBioId !== 'all'"
+                class="border-t pt-1.5 flex justify-end"
+              >
+                <button
+                  type="button"
+                  class="text-[11px] text-primary hover:underline font-medium cursor-pointer flex items-center gap-1"
+                  @click="clearEmployeeFilter"
+                >
+                  <X class="size-3" />
+                  <span>Reset to All Employees</span>
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
 
         <!-- Current Filter Label Badge -->
@@ -245,6 +390,40 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
             Active Range: <strong>{{ reportData.dateRangeLabel }}</strong> ({{ reportData.daysCount }} days)
           </span>
         </div>
+      </div>
+
+      <!-- Active Employee Context Banner -->
+      <div
+        v-if="selectedEmployeeBioId !== 'all' && selectedEmployee"
+        class="rounded-xl border border-primary/30 bg-primary/10 p-3 flex items-center justify-between gap-3 shadow-xs animate-in fade-in slide-in-from-top-1 duration-200 text-xs"
+      >
+        <div class="flex items-center gap-2.5">
+          <div class="size-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold shrink-0">
+            <Fingerprint class="size-4" />
+          </div>
+          <div>
+            <div class="font-semibold text-foreground flex items-center gap-2 flex-wrap">
+              <span class="text-muted-foreground">Filtered for Employee:</span>
+              <span class="font-bold text-sm text-foreground">{{ selectedEmployee.full_name }}</span>
+              <span class="font-mono text-xs bg-card border border-primary/30 text-primary font-semibold px-2 py-0.5 rounded-md">
+                Bio ID / Employee ID: {{ selectedEmployee.biometric_user_id }}
+              </span>
+            </div>
+            <p class="text-[11px] text-muted-foreground mt-0.5">
+              All KPIs, punctuality charts, and rendered hour calculations are scoped exclusively to this employee.
+            </p>
+          </div>
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-7 text-xs gap-1.5 bg-card hover:bg-muted font-medium border-primary/30 shadow-2xs shrink-0 cursor-pointer"
+          @click="clearEmployeeFilter"
+        >
+          <X class="size-3 text-muted-foreground" />
+          <span>Clear Filter</span>
+        </Button>
       </div>
     </div>
 
@@ -270,7 +449,7 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
           </div>
         </div>
 
-        <!-- KPI 2: Late -->
+        <!-- KPI 2: Late Arrivals (Human-Readable Duration Display) -->
         <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs space-y-2 hover:border-amber-500/40 transition-colors">
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-muted-foreground">Late Arrivals</span>
@@ -282,8 +461,13 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
             <div class="text-2xl font-bold font-mono text-foreground">
               {{ reportData.kpis.lateCount }}
             </div>
-            <div class="text-[11px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1 mt-0.5">
-              <span>{{ reportData.kpis.totalLateMinutes }}m total late time</span>
+            <div class="mt-0.5 space-y-0.5">
+              <div class="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
+                <span>{{ formatDuration(reportData.kpis.totalLateMinutes) }} total late time</span>
+              </div>
+              <div class="text-[10px] text-muted-foreground font-mono">
+                {{ reportData.kpis.totalLateMinutes.toLocaleString() }} minute{{ reportData.kpis.totalLateMinutes === 1 ? '' : 's' }}
+              </div>
             </div>
           </div>
         </div>
@@ -503,8 +687,8 @@ function navigateToDaily(filter?: string, bioId?: string, date?: string) {
                   </TableCell>
 
                   <TableCell class="py-2.5 text-right font-mono font-medium text-foreground">
-                    {{ emp.totalLateMinutes }}m
-                    <span class="text-[10px] text-muted-foreground block">({{ emp.avgLateMinutes }}m/day)</span>
+                    <span class="font-bold text-amber-700 dark:text-amber-300">{{ formatDuration(emp.totalLateMinutes) }}</span>
+                    <span class="text-[10px] text-muted-foreground block font-mono">({{ emp.totalLateMinutes }}m · avg {{ emp.avgLateMinutes }}m/day)</span>
                   </TableCell>
 
                   <TableCell class="py-2.5 text-right">
