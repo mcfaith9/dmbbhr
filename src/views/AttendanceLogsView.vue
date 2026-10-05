@@ -939,10 +939,9 @@ onUnmounted(() => {
               </TableCell>
 
               <TableCell>
-                <Badge variant="outline" class="font-mono text-[10px] gap-1 bg-muted/40">
-                  <Boxes class="size-2.5 text-primary" />
+                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
                   {{ log.work_group_name || 'GROUP C' }}
-                </Badge>
+                </span>
               </TableCell>
 
               <TableCell class="whitespace-nowrap text-xs">
