@@ -357,7 +357,7 @@ onMounted(() => {
                 <span>Custom Late Reminder Graphic URL</span>
               </Label>
               <p class="text-[11px] text-muted-foreground mt-0.5">
-                When configured and an employee's punch is <strong>LATE</strong>, this image covers the entire reminder card background (<code class="font-mono text-[10px] bg-muted px-1 rounded">background-size: cover</code>) with a translucent text readability overlay.
+                When configured and an employee's punch is <strong>LATE</strong>, this image covers the entire reminder card background with high visual prominence. Supports JPG, JPEG, and PNG formats via <code class="font-mono text-[10px] bg-muted px-1 rounded">http://</code>, <code class="font-mono text-[10px] bg-muted px-1 rounded">https://</code>, <code class="font-mono text-[10px] bg-muted px-1 rounded">data:</code>, or local <code class="font-mono text-[10px] bg-muted px-1 rounded">/</code> paths.
               </p>
             </div>
             <div v-if="lateGraphicUrlInput" class="shrink-0">
@@ -377,7 +377,7 @@ onMounted(() => {
             <div class="flex flex-col sm:flex-row gap-2">
               <Input
                 v-model="lateGraphicUrlInput"
-                placeholder="https://images.unsplash.com/... or https://example.com/late-reminder.jpg"
+                placeholder="https://example.com/graphic.png or .jpg, data:image/png;base64,..., or /assets/..."
                 class="h-8 text-xs font-mono flex-1 bg-card"
                 @blur="onLateGraphicUrlChange"
                 @keydown.enter="onLateGraphicUrlChange"

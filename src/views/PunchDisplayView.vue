@@ -43,7 +43,7 @@ const dismissProgress = ref(100)
 let dismissProgressInterval: any = null
 const photoLoadError = ref(false)
 
-// Custom late reminder graphic error tracking & validation
+// Custom late reminder graphic error tracking & validation (supports JPG/JPEG, PNG, data URIs, local paths)
 const lateGraphicLoadError = ref(false)
 
 function testLateGraphicImage(url?: string) {
@@ -52,8 +52,19 @@ function testLateGraphicImage(url?: string) {
     return
   }
   const clean = url.trim()
-  if (!clean.startsWith('http://') && !clean.startsWith('https://') && !clean.startsWith('data:') && !clean.startsWith('/')) {
+  // Allow all valid web URLs, base64 data URIs, and local asset paths without restricting extension
+  if (
+    !clean.startsWith('http://') &&
+    !clean.startsWith('https://') &&
+    !clean.startsWith('data:') &&
+    !clean.startsWith('/') &&
+    !clean.startsWith('./')
+  ) {
     lateGraphicLoadError.value = true
+    return
+  }
+  if (typeof Image === 'undefined') {
+    lateGraphicLoadError.value = false
     return
   }
   const img = new Image()
@@ -519,14 +530,14 @@ onUnmounted(() => {
               : (currentPunch.isLate && settings.lateVisualEnabled ? 'border-destructive/30 bg-card' : 'bg-card border-border/80')
           ]"
         >
-          <!-- Full-Card/Cover Wallpaper for Late IN Punches when Custom Graphic Configured -->
+          <!-- Full-Card/Cover Wallpaper for Late IN Punches when Custom Graphic Configured (supports JPG/JPEG, PNG) -->
           <template v-if="hasCustomLateGraphic">
             <div
-              class="absolute inset-0 bg-cover bg-center bg-no-repeat transition-transform duration-700 pointer-events-none"
+              class="absolute inset-0 bg-cover bg-center bg-no-repeat scale-105 transition-transform duration-700 pointer-events-none"
               :style="{ backgroundImage: `url('${settings.customLateImageUrl.trim()}')` }"
             ></div>
             <!-- Subtle localized gradient (NOT heavy opaque bg-card/85 wash, NO full blur) so the wallpaper is clearly visible -->
-            <div class="absolute inset-0 bg-gradient-to-b from-black/45 via-black/20 to-black/60 pointer-events-none"></div>
+            <div class="absolute inset-0 bg-gradient-to-b from-black/40 via-black/15 to-black/55 pointer-events-none"></div>
           </template>
 
           <!-- 1. Profile Cover Area Header -->
