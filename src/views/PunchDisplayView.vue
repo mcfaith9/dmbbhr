@@ -558,20 +558,56 @@ onUnmounted(() => {
             <!-- Cover Left: Biometric Terminal Badge -->
             <div
               class="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider shadow-2xs"
-              :class="hasCustomLateGraphic ? 'bg-black/55 text-white backdrop-blur-md border border-white/20' : 'bg-card/80 text-foreground border border-border/60 backdrop-blur-xs'"
+              :class="
+                hasCustomLateGraphic
+                  ? 'bg-black/55 text-white backdrop-blur-md border border-white/20'
+                  : currentPunch.isLate && settings.lateVisualEnabled
+                    ? 'bg-destructive/90 text-white border border-destructive/40'
+                    : 'bg-card/80 text-foreground border border-border/60 backdrop-blur-xs'
+              "
             >
-              <Fingerprint class="size-3.5 text-primary" />
+              <Fingerprint
+                class="size-3.5"
+                :class="
+                  hasCustomLateGraphic || (currentPunch.isLate && settings.lateVisualEnabled)
+                    ? 'text-white'
+                    : 'text-primary'
+                "
+              />
               <span>Biometric Punch</span>
             </div>
 
             <!-- Cover Right: Status Indicator Badge -->
             <Badge
-              :variant="currentPunch.isLate && settings.lateVisualEnabled ? 'destructive' : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')"
-              class="relative z-10 text-xs uppercase font-mono px-3 py-1 gap-1 shadow-xs font-bold"
+              :variant="
+                currentPunch.isLate && settings.lateVisualEnabled
+                  ? 'destructive'
+                  : currentPunch.statusCategory === 'undertime'
+                    ? 'warning'
+                    : 'success'
+              "
+              :class="[
+                'relative z-10 text-xs uppercase font-mono px-3 py-1 gap-1 shadow-xs font-bold',
+                currentPunch.isLate && settings.lateVisualEnabled
+                  ? 'text-white'
+                  : ''
+              ]"
             >
-              <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5" />
-              <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5" />
-              <AlertCircle v-else class="size-3.5" />
+              <CheckCircle2
+                v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'"
+                class="size-3.5"
+              />
+
+              <AlertTriangle
+                v-else-if="currentPunch.statusCategory === 'undertime'"
+                class="size-3.5"
+              />
+
+              <AlertCircle
+                v-else
+                class="size-3.5"
+              />
+
               <span>{{ currentPunch.statusLabel }}</span>
             </Badge>
           </div>
@@ -603,13 +639,15 @@ onUnmounted(() => {
               </div>
 
               <!-- Direction Badge Pin anchored to the avatar -->
-              <div class="absolute -bottom-2 left-1/2 -translate-x-1/2">
+              <div class="absolute -bottom-2 left-0 right-0 flex justify-center">
                 <span
-                  class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase tracking-wider shadow-sm border"
+                  class="w-full px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase tracking-wider shadow-sm border text-center"
                   :class="[
-                    currentPunch.direction === 'OUT' ? 'bg-rose-500 text-white border-rose-600' :
-                    currentPunch.direction === 'BREAK_OUT' ? 'bg-amber-500 text-white border-amber-600' :
-                    'bg-emerald-500 text-white border-emerald-600'
+                    currentPunch.direction === 'OUT'
+                      ? 'bg-rose-500 text-white border-rose-600'
+                      : currentPunch.direction === 'BREAK_OUT'
+                        ? 'bg-amber-500 text-white border-amber-600'
+                        : 'bg-emerald-500 text-white border-emerald-600'
                   ]"
                 >
                   {{ currentPunch.stateLabel }}
