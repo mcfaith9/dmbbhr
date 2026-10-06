@@ -673,6 +673,10 @@ class PunchDisplayService {
     }
   }
 
+  public isWindowOpen = (): boolean => {
+    return Boolean(this.punchDisplayWindow && !this.punchDisplayWindow.closed)
+  }
+
   public playChime = () => {
     if (typeof window === 'undefined' || (typeof window.AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined')) {
       return
