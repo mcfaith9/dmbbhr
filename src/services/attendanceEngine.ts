@@ -57,6 +57,8 @@ export interface EmployeeScheduleContext {
   isHalfDayApproved?: boolean
   isHalfDayPMApproved?: boolean
   isFieldWorkApproved?: boolean
+  employeeStatus?: 'active' | 'inactive' | 'on_leave' | 'resigned'
+  resignationDate?: string
 }
 
 export interface ScanItem {
@@ -96,6 +98,8 @@ export interface DailyAttendanceRecord {
   late_minutes: number // Clean integer against Work Group Standard IN
   early_out_minutes: number // Clean integer against Work Group Expected OUT
   undertime_minutes: number
+  employee_status?: 'active' | 'inactive' | 'on_leave' | 'resigned'
+  resignation_date?: string
   status: string // Compact HR Status
   status_variant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary'
   raw_punches_count: number
@@ -975,6 +979,8 @@ export function processEmployeeDayPunches(
     late_minutes: lateMinutes,
     early_out_minutes: earlyOutMinutes,
     undertime_minutes: undertimeMinutes,
+    employee_status: employeeContext?.employeeStatus || 'active',
+    resignation_date: employeeContext?.resignationDate,
     status,
     status_variant: statusVariant,
     raw_punches_count: rawCount,

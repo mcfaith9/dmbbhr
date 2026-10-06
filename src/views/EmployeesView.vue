@@ -149,7 +149,8 @@ const formDepartment = ref('')
 const formPosition = ref('')
 const formHireDate = ref('')
 const formRegularizationDate = ref('')
-const formStatus = ref<'active' | 'inactive' | 'on_leave'>('active')
+const formResignationDate = ref('')
+const formStatus = ref<'active' | 'inactive' | 'on_leave' | 'resigned'>('active')
 
 // Complete Payroll Profile Form fields
 const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Monthly')
@@ -373,7 +374,8 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   formPosition.value = emp.position || 'Staff'
   formHireDate.value = emp.hire_date || ''
   formRegularizationDate.value = emp.regularization_date || ''
-  formStatus.value = emp.status || 'active'
+  formResignationDate.value = emp.resignation_date || ''
+  formStatus.value = (emp.status as any) || 'active'
   formSalaryType.value = (emp.salary_type as any) || 'Monthly'
   formBasicSalary.value = typeof emp.basic_salary === 'number' ? emp.basic_salary : ''
   formDailyRate.value = typeof emp.daily_rate === 'number' ? emp.daily_rate : ''
@@ -441,6 +443,7 @@ async function saveProfile() {
       position: formPosition.value.trim() || 'Staff',
       hire_date: formHireDate.value.trim() || undefined,
       regularization_date: formRegularizationDate.value.trim() || undefined,
+      resignation_date: formStatus.value === 'resigned' ? (formResignationDate.value.trim() || undefined) : undefined,
       status: formStatus.value,
       salary_type: formSalaryType.value,
       basic_salary: typeof formBasicSalary.value === 'number' && !isNaN(formBasicSalary.value) ? formBasicSalary.value : undefined,
@@ -671,7 +674,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Filter and Search Bar -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-center">
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 items-center">
       <!-- Search Input -->
       <div class="relative sm:col-span-2 md:col-span-2">
         <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
@@ -730,6 +733,24 @@ onUnmounted(() => {
               <SelectItem v-for="dept in availableDepartments" :key="dept" :value="dept">
                 {{ dept }}
               </SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <!-- Employment Status Filter -->
+      <div>
+        <Select v-model="selectedStatus">
+          <SelectTrigger class="h-8 text-xs w-full bg-card">
+            <SelectValue placeholder="All Statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="resigned">Resigned</SelectItem>
+              <SelectItem value="on_leave">On Leave</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -836,7 +857,7 @@ onUnmounted(() => {
               <!-- Employment Status -->
               <TableCell>
                 <Badge
-                  :variant="emp.status === 'active' ? 'success' : (emp.status === 'on_leave' ? 'warning' : 'outline')"
+                  :variant="emp.status === 'active' ? 'success' : (emp.status === 'resigned' ? 'destructive' : (emp.status === 'on_leave' ? 'warning' : 'outline'))"
                   class="text-[10px] uppercase font-mono"
                 >
                   {{ emp.status.replace('_', ' ') }}
@@ -894,7 +915,7 @@ onUnmounted(() => {
                   {{ selectedEmployee.full_name }}
                 </h2>
                 <Badge
-                  :variant="selectedEmployee.status === 'active' ? 'success' : (selectedEmployee.status === 'on_leave' ? 'warning' : 'outline')"
+                  :variant="selectedEmployee.status === 'active' ? 'success' : (selectedEmployee.status === 'resigned' ? 'destructive' : (selectedEmployee.status === 'on_leave' ? 'warning' : 'outline'))"
                   class="text-[10px] uppercase font-mono px-2 py-0.5"
                 >
                   {{ selectedEmployee.status.replace('_', ' ') }}
@@ -1132,6 +1153,10 @@ onUnmounted(() => {
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Date Regularized</span>
                     <span class="font-medium text-foreground">{{ selectedEmployee.regularization_date || '—' }}</span>
+                  </div>
+                  <div v-if="selectedEmployee.status === 'resigned' || selectedEmployee.resignation_date">
+                    <span class="text-muted-foreground block text-[11px]">Date Resigned</span>
+                    <span class="font-medium text-destructive font-mono">{{ selectedEmployee.resignation_date || 'Resigned' }}</span>
                   </div>
                 </div>
               </div>
@@ -1563,7 +1588,7 @@ onUnmounted(() => {
                         class="w-full h-8 text-xs font-normal"
                       />
                     </div>
-                    <div class="space-y-1 sm:col-span-2">
+                    <div class="space-y-1" :class="formStatus === 'resigned' ? 'sm:col-span-1' : 'sm:col-span-2'">
                       <label class="text-xs font-semibold text-foreground">Employment Status</label>
                       <Select v-model="formStatus">
                         <SelectTrigger class="h-8 text-xs w-full bg-card">
@@ -1572,11 +1597,25 @@ onUnmounted(() => {
                         <SelectContent>
                           <SelectGroup>
                             <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="resigned">Resigned</SelectItem>
                             <SelectItem value="on_leave">On Leave</SelectItem>
                             <SelectItem value="inactive">Inactive</SelectItem>
                           </SelectGroup>
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <!-- Date Resigned (Shown when Status is Resigned) -->
+                    <div v-if="formStatus === 'resigned'" class="space-y-1 sm:col-span-1">
+                      <label class="text-xs font-semibold text-foreground flex items-center justify-between">
+                        <span>Date Resigned</span>
+                        <span class="text-[10px] text-muted-foreground font-normal">Effective Date</span>
+                      </label>
+                      <DatePicker
+                        v-model="formResignationDate"
+                        placeholder="Pick resignation date"
+                        class="w-full h-8 text-xs font-normal"
+                      />
                     </div>
                   </div>
                 </div>

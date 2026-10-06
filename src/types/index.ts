@@ -75,7 +75,8 @@ export interface Employee {
   location_id?: string
   hire_date?: string // Date Hired
   regularization_date?: string // Date Regularized
-  status: 'active' | 'inactive' | 'on_leave'
+  resignation_date?: string // Date Resigned / Effective Date
+  status: 'active' | 'inactive' | 'on_leave' | 'resigned'
   // Payroll Profile Information
   payroll_status?: 'configured' | 'pending' | 'exempt'
   salary_type?: 'Monthly' | 'Daily' | 'Hourly'

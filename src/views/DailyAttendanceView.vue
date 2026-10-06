@@ -236,7 +236,8 @@ function setDateQuick(range: 'today' | 'yesterday') {
 }
 
 const stats = computed(() => {
-  const list = dailyRecords.value
+  // Exclude resigned employees from active attendance stats calculations
+  const list = dailyRecords.value.filter(r => r.employee_status !== 'resigned')
   const total = list.length
   const late = list.filter(r => r.late_minutes > 0 || r.status === 'Late').length
   const onTime = list.filter(r => (r.status === 'Regular Day' || (!r.status.includes('Missing') && r.has_valid_out)) && r.late_minutes === 0).length
@@ -878,6 +879,13 @@ onUnmounted(() => {
                 <div class="flex flex-col gap-1">
                   <div class="flex items-center gap-1.5 flex-wrap">
                     <span class="font-semibold text-foreground text-sm leading-tight">{{ row.employee_name }}</span>
+                    <Badge
+                      v-if="row.employee_status === 'resigned'"
+                      variant="outline"
+                      class="text-[9px] px-1.5 py-0 uppercase font-mono border-destructive/40 text-destructive bg-destructive/10"
+                    >
+                      Resigned
+                    </Badge>
                   </div>
 
                   <div class="flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">

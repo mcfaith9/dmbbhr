@@ -41,6 +41,7 @@ import {
   DialogFooter
 } from '@/components/ui/dialog'
 import HolidayManager from '@/components/holidays/HolidayManager.vue'
+import { TimePicker } from '@/components/ui/time-picker'
 
 const route = useRoute()
 
@@ -726,10 +727,9 @@ onMounted(() => {
                 <Clock class="size-3 text-emerald-600" />
                 <span>Standard IN (24h) <span class="text-destructive">*</span></span>
               </label>
-              <Input
+              <TimePicker
                 v-model="formStandardIn"
-                type="time"
-                required
+                placeholder="08:00"
                 class="h-8 text-xs font-mono"
               />
             </div>
@@ -756,10 +756,9 @@ onMounted(() => {
                 <Coffee class="size-3 text-amber-600" />
                 <span>Lunch Break Start</span>
               </label>
-              <Input
+              <TimePicker
                 v-model="formLunchStart"
-                type="time"
-                required
+                placeholder="12:00"
                 class="h-8 text-xs font-mono"
               />
             </div>
@@ -769,10 +768,9 @@ onMounted(() => {
                 <Coffee class="size-3 text-amber-600" />
                 <span>Lunch Break End</span>
               </label>
-              <Input
+              <TimePicker
                 v-model="formLunchEnd"
-                type="time"
-                required
+                placeholder="13:00"
                 class="h-8 text-xs font-mono"
               />
             </div>

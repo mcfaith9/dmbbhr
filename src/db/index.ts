@@ -58,7 +58,8 @@ export interface EmployeeRecord {
   position: string
   hireDate?: string // Date Hired
   regularizationDate?: string // Date Regularized
-  status: 'active' | 'inactive' | 'on_leave'
+  resignationDate?: string // Date Resigned / Effective Date
+  status: 'active' | 'inactive' | 'on_leave' | 'resigned'
   payrollStatus?: 'configured' | 'pending' | 'exempt'
   salaryType?: 'Monthly' | 'Daily' | 'Hourly'
   basicSalary?: number

@@ -113,7 +113,9 @@ export const attendanceRepository = {
         lunchEnd: wg?.lunchEnd || '13:00',
         gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
         manualAdjustment: manualAdj,
-        approvedLeave: leaveRec
+        approvedLeave: leaveRec,
+        employeeStatus: emp?.status || 'active',
+        resignationDate: emp?.resignationDate
       }
 
       const dailyRecord = processEmployeeDayPunches(bioId, punches, selectedDate, empContext, customConfig)
@@ -126,7 +128,7 @@ export const attendanceRepository = {
     for (const [bioId, leaveRec] of leaveMap.entries()) {
       if (processedBioIds.has(bioId)) continue
       const emp = employeeMap.get(bioId)
-      if (!emp) continue
+      if (!emp || emp.status === 'resigned') continue
 
       const empLocation = emp.location || 'DBB CEBU'
       const empWgId = emp.workGroupId || 'wg-group-c'
@@ -179,13 +181,14 @@ export const attendanceRepository = {
    * Updates the aggregated summary table for calendar Month views.
    */
   async updateDailySummaryCache(dateStr: string, records: DailyAttendanceRecord[]): Promise<void> {
-    const presentCount = records.length
-    const onTimeCount = records.filter(r => r.late_minutes === 0 && r.has_valid_out).length
-    const lateCount = records.filter(r => r.late_minutes > 0).length
-    const singlePunchCount = records.filter(r => r.status.startsWith('Single Punch') || r.status.includes('Missing IN') || r.status.includes('Ambiguous')).length
-    const awaitingOutCount = records.filter(r => r.status === 'Awaiting OUT').length
-    const leaveCount = records.filter(r => r.status === 'On Leave').length
-    const holidayCount = records.filter(r => r.status === 'Holiday').length
+    const activeRecords = records.filter(r => r.employee_status !== 'resigned')
+    const presentCount = activeRecords.length
+    const onTimeCount = activeRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+    const lateCount = activeRecords.filter(r => r.late_minutes > 0).length
+    const singlePunchCount = activeRecords.filter(r => r.status.startsWith('Single Punch') || r.status.includes('Missing IN') || r.status.includes('Ambiguous')).length
+    const awaitingOutCount = activeRecords.filter(r => r.status === 'Awaiting OUT').length
+    const leaveCount = activeRecords.filter(r => r.status === 'On Leave').length
+    const holidayCount = activeRecords.filter(r => r.status === 'Holiday').length
 
     const summary: DailySummaryRecord = {
       date: dateStr,
@@ -196,7 +199,7 @@ export const attendanceRepository = {
       awaitingOutCount,
       leaveCount,
       holidayCount,
-      totalEmployees: (await employeeRepository.count()) || presentCount,
+      totalEmployees: (await employeeRepository.countActive()) || presentCount,
       updatedAt: new Date().toISOString()
     }
 

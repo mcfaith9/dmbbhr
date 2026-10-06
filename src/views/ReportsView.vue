@@ -27,6 +27,8 @@ import {
   type ReportSummaryResult,
   type DateRangePreset
 } from '@/services/reportsService'
+import { getManilaDateString } from '@/services/attendance'
+import { DatePicker } from '@/components/ui/date-picker'
 import { employeeService } from '@/services/employees'
 import { formatDuration } from '@/lib/timeUtils'
 import type { WorkGroup, Employee } from '@/types'
@@ -142,9 +144,23 @@ watch(
   () => {
     if (selectedPreset.value !== 'custom') {
       loadReport()
+    } else {
+      if (!customStartDate.value || !customEndDate.value) {
+        const today = getManilaDateString(new Date())
+        const [y, m] = today.split('-')
+        if (!customStartDate.value) customStartDate.value = `${y}-${m}-01`
+        if (!customEndDate.value) customEndDate.value = today
+      }
+      loadReport()
     }
   }
 )
+
+watch([customStartDate, customEndDate], ([newStart, newEnd]) => {
+  if (selectedPreset.value === 'custom' && newStart && newEnd) {
+    loadReport()
+  }
+})
 
 function applyCustomDateRange() {
   if (customStartDate.value && customEndDate.value) {
@@ -231,21 +247,27 @@ function formatShortDate(dateStr: string): string {
         </div>
 
         <!-- Custom Date Range Inputs (Only shown when 'custom' is selected) -->
-        <div v-if="selectedPreset === 'custom'" class="flex items-center gap-1.5">
-          <Input
-            v-model="customStartDate"
-            type="date"
-            class="h-8 text-xs font-mono w-[130px]"
-          />
-          <span class="text-muted-foreground">to</span>
-          <Input
-            v-model="customEndDate"
-            type="date"
-            class="h-8 text-xs font-mono w-[130px]"
-          />
+        <div v-if="selectedPreset === 'custom'" class="flex flex-wrap items-center gap-2">
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs font-semibold text-muted-foreground whitespace-nowrap">Start:</span>
+            <DatePicker
+              v-model="customStartDate"
+              placeholder="Start Date"
+              class="w-[145px]"
+            />
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs font-semibold text-muted-foreground whitespace-nowrap">End:</span>
+            <DatePicker
+              v-model="customEndDate"
+              placeholder="End Date"
+              class="w-[145px]"
+            />
+          </div>
           <Button
             size="sm"
-            class="h-8 text-xs px-2.5 cursor-pointer"
+            class="h-8 text-xs px-3 cursor-pointer shadow-xs"
+            :disabled="!customStartDate || !customEndDate"
             @click="applyCustomDateRange"
           >
             Apply

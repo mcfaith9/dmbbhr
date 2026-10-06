@@ -19,7 +19,8 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
-    status: 'active',
+    status: 'resigned',
+    resignationDate: '2026-06-30',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
@@ -477,6 +478,16 @@ async function ensureInitialized() {
       db.employees.put(cleanSeed).catch(() => {})
     }
   }
+
+  // Ensure Cantillas, Ronald (25065) has default resigned status if not manually changed
+  const ronald = employeeCache.get('25065')
+  if (ronald && ronald.status === 'active') {
+    ronald.status = 'resigned'
+    if (!ronald.resignationDate) {
+      ronald.resignationDate = '2026-06-30'
+    }
+    db.employees.put(ronald).catch(() => {})
+  }
 }
 
 export interface PeopleImportRowItem {
@@ -617,9 +628,9 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   const cleanPos = rawPos !== undefined && rawPos !== null ? String(rawPos).trim() : 'Staff'
 
   // Extract Status (primitive string only)
-  const rawStatus = input.status
-  let cleanStatus: 'active' | 'inactive' | 'on_leave' = 'active'
-  if (rawStatus === 'inactive' || rawStatus === 'on_leave') {
+  const rawStatus = typeof input.status === 'string' ? input.status.trim().toLowerCase() : ''
+  let cleanStatus: 'active' | 'inactive' | 'on_leave' | 'resigned' = 'active'
+  if (rawStatus === 'inactive' || rawStatus === 'on_leave' || rawStatus === 'resigned') {
     cleanStatus = rawStatus
   }
 
@@ -665,6 +676,7 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
 
   const cleanHireDate = getOptString(input.hireDate, input.hire_date, input.dateHired, input.date_hired)
   const cleanRegDate = getOptString(input.regularizationDate, input.regularization_date, input.dateRegularized, input.date_regularized)
+  const cleanResignationDate = getOptString(input.resignationDate, input.resignation_date, input.dateResigned, input.date_resigned, input.resignedDate, input.resigned_date)
 
   const rawPayrollStatus = getOptString(input.payrollStatus, input.payroll_status)
   let cleanPayrollStatus: 'configured' | 'pending' | 'exempt' | undefined = undefined
@@ -738,6 +750,7 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     position: cleanPos || 'Staff',
     hireDate: cleanHireDate,
     regularizationDate: cleanRegDate,
+    resignationDate: cleanResignationDate,
     status: cleanStatus,
     payrollStatus: cleanPayrollStatus,
     salaryType: cleanSalaryType,
@@ -805,6 +818,7 @@ export const employeeRepository = {
       position: rec.position,
       hire_date: rec.hireDate,
       regularization_date: rec.regularizationDate,
+      resignation_date: rec.resignationDate,
       status: rec.status,
       payroll_status: rec.payrollStatus,
       salary_type: rec.salaryType,
@@ -829,12 +843,16 @@ export const employeeRepository = {
   },
 
   /**
-   * Retrieves all employees with optional location, work group, & search filters
+   * Retrieves all employees with optional location, work group, search, & status filters
    */
-  async getEmployees(params: { location?: string; workGroupId?: string; search?: string } = {}): Promise<Employee[]> {
+  async getEmployees(params: { location?: string; workGroupId?: string; search?: string; status?: string } = {}): Promise<Employee[]> {
     await ensureInitialized()
     const wgMap = await workGroupRepository.getMap()
     let records = Array.from(employeeCache!.values())
+
+    if (params.status && params.status !== 'all') {
+      records = records.filter(e => e.status === params.status)
+    }
 
     if (params.location && params.location !== 'all') {
       const targetLoc = params.location.trim().toLowerCase()
@@ -1456,11 +1474,12 @@ export const employeeRepository = {
       'DEPARTMENT': emp.department || 'Operations',
       'LOCATION': emp.location,
       'POSITION': emp.position || 'Staff',
-      'STATUS': emp.status === 'active' ? 'Active' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive'),
+      'STATUS': emp.status === 'active' ? 'Active' : (emp.status === 'resigned' ? 'Resigned' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive')),
       'MOBILE': emp.mobile_number || '',
       'EMAIL': emp.email || '',
       'BIRTHDAY': emp.date_of_birth || '',
-      'DATE_HIRED': emp.hire_date || ''
+      'DATE_HIRED': emp.hire_date || '',
+      'DATE_RESIGNED': emp.resignation_date || ''
     }))
   },
 
@@ -1488,5 +1507,14 @@ export const employeeRepository = {
   async count(): Promise<number> {
     await ensureInitialized()
     return employeeCache!.size
+  },
+
+  async countActive(): Promise<number> {
+    await ensureInitialized()
+    let count = 0
+    for (const emp of employeeCache!.values()) {
+      if (emp.status !== 'resigned') count++
+    }
+    return count
   }
 }

@@ -215,12 +215,13 @@ export const reportsService = {
       )
     )
 
-    // 2. Fetch employee total count for absent calculation
+    // 2. Fetch employee total count for absent calculation (excluding resigned employees from expected active headcount)
     const allEmployees = await employeeService.getEmployees({
       location: location !== 'all' ? location : undefined,
       workGroupId: workGroupId !== 'all' ? workGroupId : undefined
     })
-    const totalExpectedPerDay = bioFilter ? 1 : Math.max(allEmployees.length, 1)
+    const activeEmployees = allEmployees.filter(e => e.status !== 'resigned')
+    const totalExpectedPerDay = bioFilter ? 1 : Math.max(activeEmployees.length, 1)
 
     // 3. Process aggregations
     let totalPresentDays = 0
@@ -254,6 +255,12 @@ export const reportsService = {
       let dayHours = 0
 
       for (const r of records) {
+        // Exclude resigned employees from aggregated calculations unless user specifically filtered by this employee's bioId
+        const isResigned = r.employee_status === 'resigned'
+        if (isResigned && !bioFilter) {
+          continue
+        }
+
         // Did the employee have attendance on this day?
         const hasAttended = r.actual_in && !r.actual_in.startsWith('Missing')
         if (hasAttended) {
