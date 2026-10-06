@@ -8,7 +8,7 @@
  * - TIME IN evaluation: late (> standard in + grace) -> 'LATE'
  * - IN Lateness is NEVER inherited by a subsequent OUT punch
  * - Normalization of raw Bio IDs (e.g. 'user25065' -> '25065')
- * - Recent punches capped strictly at 10 items, newest first
+ * - Recent punches capped strictly at 7 items, newest first
  */
 
 const assert = require('assert')
@@ -128,15 +128,15 @@ const eveningPunch = evaluateAttendanceStatus('2026-10-05T17:10:00', 'OUT', '08:
 assert.strictEqual(eveningPunch.statusLabel, 'TIME OUT', 'Test F: OUT after late IN must be TIME OUT')
 assert.strictEqual(eveningPunch.isLate, false, 'Test F: OUT must not inherit morning lateness')
 
-// 8. Recent punches capped at 10 items
+// 8. Recent punches capped strictly at 7 items
 let recent = []
 for (let i = 1; i <= 15; i++) {
   const p = { id: `p-${i}`, eventId: `p-${i}`, employeeName: `Emp ${i}`, time: `8:0${i} AM` }
-  recent = [p, ...recent].slice(0, 10)
+  recent = [p, ...recent].slice(0, 7)
 }
-assert.strictEqual(recent.length, 10, 'Recent punches must be capped at 10')
+assert.strictEqual(recent.length, 7, 'Recent punches must be capped at 7')
 assert.strictEqual(recent[0].id, 'p-15', 'Newest punch must appear first')
-assert.strictEqual(recent[9].id, 'p-6', 'Oldest entries beyond 10 must be dropped')
+assert.strictEqual(recent[6].id, 'p-9', 'Oldest entries beyond 7 must be dropped (when 8th arrives, oldest removed)')
 
 // 9. Same employee punching again (25065 at 8:05:01 AM, then 25065 again at 8:05:08 AM)
 let currentDisplay = null
@@ -144,7 +144,7 @@ let recentList = []
 
 function handlePunch(event) {
   if (currentDisplay && currentDisplay.eventId !== event.eventId) {
-    recentList = [currentDisplay, ...recentList.filter(p => p.eventId !== currentDisplay.eventId)].slice(0, 10)
+    recentList = [currentDisplay, ...recentList.filter(p => p.eventId !== currentDisplay.eventId)].slice(0, 7)
   }
   currentDisplay = { ...event }
 }

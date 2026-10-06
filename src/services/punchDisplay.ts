@@ -97,7 +97,7 @@ class PunchDisplayService {
   public isChannelSupported = typeof window !== 'undefined' && 'BroadcastChannel' in window
   public currentPunch = ref<PunchDisplayEvent | null>(null)
   
-  // Maximum 10 recent punches for visual lineup
+  // Maximum 7 recent punches for visual lineup
   public recentPunches = ref<CompactRecentPunch[]>([])
   public punchHistory = ref<CompactRecentPunch[]>([]) // alias for backward compatibility
   
@@ -387,7 +387,7 @@ class PunchDisplayService {
     // If Punch Display is turned OFF in preferences, do not accept punches
     if (!this.settings.value.enabled) return
 
-    // When a new punch arrives, convert previous current punch to compact recent punch (max 10)
+    // When a new punch arrives, convert previous current punch to compact recent punch (max 7)
     // Even if it's the exact same employee, the previous punch is archived into recent punches!
     if (this.currentPunch.value) {
       const prev = this.currentPunch.value
@@ -408,10 +408,11 @@ class PunchDisplayService {
 
         // Insert newest at the top. DO NOT deduplicate by Bio ID!
         // Consecutive punches from the same employee must both be kept in recent punches.
+        // Limited strictly to 7 entries maximum; dropping the oldest when an 8th arrives.
         this.recentPunches.value = [
           compactPrev,
           ...this.recentPunches.value.filter(p => p.id !== compactPrev.id && p.eventId !== compactPrev.eventId)
-        ].slice(0, 10) // Maximum 10 entries
+        ].slice(0, 7) // Maximum 7 entries
       }
     }
 

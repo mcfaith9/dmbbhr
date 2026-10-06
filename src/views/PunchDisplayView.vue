@@ -520,21 +520,21 @@ onUnmounted(() => {
               : (currentPunch.isLate && settings.lateVisualEnabled ? 'border-destructive/30 bg-card' : 'bg-card')
           ]"
         >
-          <!-- Full-Card Custom Late Graphic Background with Translucent Readability Overlay -->
+          <!-- Full-Card Custom Late Graphic Background with Subtle Gradient / Localized Readability -->
           <template v-if="hasCustomLateGraphic">
             <div
               class="absolute inset-0 bg-cover bg-center bg-no-repeat transition-transform duration-700"
               :style="{ backgroundImage: `url('${settings.customLateImageUrl.trim()}')` }"
             ></div>
-            <!-- Translucent overlay for text readability -->
-            <div class="absolute inset-0 bg-card/85 dark:bg-card/90 backdrop-blur-[2px]"></div>
+            <!-- Subtle gradient overlay (no heavy bg-card/85 or bg-card/90 wash) so the image remains clearly visible -->
+            <div class="absolute inset-0 bg-gradient-to-b from-card/30 via-transparent to-card/50 pointer-events-none"></div>
           </template>
 
           <div class="relative z-10 flex flex-col">
             <!-- Card Header Banner -->
             <div
               class="px-6 py-4 border-b flex items-center justify-between"
-              :class="hasCustomLateGraphic ? 'bg-card/50 backdrop-blur-xs' : 'bg-muted/20'"
+              :class="hasCustomLateGraphic ? 'bg-card/75 dark:bg-card/80 backdrop-blur-md' : 'bg-muted/20'"
             >
               <div class="space-y-0.5">
                 <span class="text-[11px] font-bold uppercase tracking-wider text-muted-foreground font-mono block">
@@ -593,8 +593,11 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- Employee Details -->
-              <div class="space-y-1 pt-1">
+              <!-- Employee Details with Localized Readability Layer -->
+              <div
+                class="space-y-1 pt-1 transition-all"
+                :class="hasCustomLateGraphic ? 'px-5 py-2.5 rounded-xl bg-card/75 dark:bg-card/80 backdrop-blur-md border border-border/40 shadow-xs' : ''"
+              >
                 <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
                   {{ currentPunch.employeeName }}
                 </h2>
@@ -609,8 +612,11 @@ onUnmounted(() => {
 
               <Separator class="my-1 max-w-md" />
 
-              <!-- Time & Date Display -->
-              <div class="space-y-1">
+              <!-- Time & Date Display with Localized Readability Layer -->
+              <div
+                class="space-y-1 transition-all"
+                :class="hasCustomLateGraphic ? 'px-6 py-2.5 rounded-xl bg-card/75 dark:bg-card/80 backdrop-blur-md border border-border/40 shadow-xs' : ''"
+              >
                 <div class="text-3xl sm:text-4xl font-extrabold font-mono tracking-tight text-foreground">
                   {{ formatPunchTime(currentPunch.timestamp) }}
                 </div>
@@ -627,7 +633,8 @@ onUnmounted(() => {
                     ? 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/30 font-semibold'
                     : currentPunch.statusCategory === 'undertime'
                     ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 font-semibold'
-                    : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 font-semibold'
+                    : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 font-semibold',
+                  hasCustomLateGraphic ? 'backdrop-blur-md' : ''
                 ]"
               >
                 <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-4 text-emerald-600 shrink-0" />
@@ -670,7 +677,7 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <!-- Right / Session Stream: Recent Punches List (Maximum 10 Recent Punches) -->
+      <!-- Right / Session Stream: Recent Punches List (Maximum 7 Recent Punches) -->
       <aside class="w-full lg:w-96 bg-card text-card-foreground border rounded-xl shadow-xs p-5 shrink-0 space-y-3">
         <div class="flex items-center justify-between pb-3 border-b">
           <div class="flex items-center gap-2">
@@ -680,7 +687,7 @@ onUnmounted(() => {
             </h4>
           </div>
           <Badge variant="outline" class="text-[10px] font-mono">
-            {{ recentPunches.length }} / 10
+            {{ recentPunches.length }} / 7
           </Badge>
         </div>
 
