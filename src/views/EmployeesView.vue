@@ -38,7 +38,7 @@ import {
   type PeopleImportRowItem,
   type PeopleImportApplyResult
 } from '@/services/employees'
-import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
+import type { Employee, EmployeeLocation, EmploymentStatus, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -150,7 +150,7 @@ const formPosition = ref('')
 const formHireDate = ref('')
 const formRegularizationDate = ref('')
 const formResignationDate = ref('')
-const formStatus = ref<'active' | 'inactive' | 'on_leave' | 'resigned'>('active')
+const formStatus = ref<EmploymentStatus>('active')
 
 // Complete Payroll Profile Form fields
 const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Monthly')
@@ -197,7 +197,7 @@ const importFileName = ref('')
 const isParsingExcel = ref(false)
 const isApplyingImport = ref(false)
 const importPreview = ref<PeopleImportPreviewResult | null>(null)
-const activePreviewTab = ref<'all' | 'update' | 'create' | 'unchanged' | 'unknown' | 'invalid'>('all')
+const activePreviewTab = ref<'all' | 'update' | 'status' | 'create' | 'unchanged' | 'unknown' | 'invalid'>('all')
 const previewSearch = ref('')
 const importResultSuccess = ref<PeopleImportApplyResult | null>(null)
 const importError = ref<string>('')
@@ -213,12 +213,37 @@ const availableDepartments = computed(() => {
   return Array.from(depts).sort()
 })
 
+function formatStatusDisplay(status?: string): string {
+  if (!status) return '—'
+  const s = status.toLowerCase().trim()
+  if (s === 'active' || s === 'a') return 'Active'
+  if (s === 'resigned' || s === 'r') return 'Resigned'
+  if (s === 'suspended' || s === 'suspension') return 'Suspension'
+  if (s === 'csr') return 'CSR'
+  if (s === 'on_leave' || s === 'on leave') return 'On Leave'
+  if (s === 'inactive') return 'Inactive'
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function getStatusBadgeVariant(status?: string): 'success' | 'destructive' | 'warning' | 'outline' | 'secondary' {
+  if (!status) return 'outline'
+  const s = status.toLowerCase().trim()
+  if (s === 'active' || s === 'a') return 'success'
+  if (s === 'resigned' || s === 'r') return 'destructive'
+  if (s === 'suspended' || s === 'suspension') return 'destructive'
+  if (s === 'on_leave') return 'warning'
+  if (s === 'csr') return 'secondary'
+  return 'outline'
+}
+
 const filteredPreviewRows = computed<PeopleImportRowItem[]>(() => {
   if (!importPreview.value) return []
   let list = importPreview.value.allRows
 
   if (activePreviewTab.value === 'update') {
     list = list.filter(r => r.action === 'UPDATE')
+  } else if (activePreviewTab.value === 'status') {
+    list = list.filter(r => r.isStatusChanged)
   } else if (activePreviewTab.value === 'create') {
     list = list.filter(r => r.action === 'CREATE')
   } else if (activePreviewTab.value === 'unchanged') {
@@ -236,7 +261,8 @@ const filteredPreviewRows = computed<PeopleImportRowItem[]>(() => {
       r.name.toLowerCase().includes(q) ||
       r.group.toLowerCase().includes(q) ||
       r.department.toLowerCase().includes(q) ||
-      r.status.toLowerCase().includes(q)
+      r.status.toLowerCase().includes(q) ||
+      (r.displayStatus && r.displayStatus.toLowerCase().includes(q))
     )
   }
 
@@ -749,6 +775,8 @@ onUnmounted(() => {
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="resigned">Resigned</SelectItem>
+              <SelectItem value="suspended">Suspension</SelectItem>
+              <SelectItem value="csr">CSR</SelectItem>
               <SelectItem value="on_leave">On Leave</SelectItem>
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectGroup>
@@ -857,10 +885,10 @@ onUnmounted(() => {
               <!-- Employment Status -->
               <TableCell>
                 <Badge
-                  :variant="emp.status === 'active' ? 'success' : (emp.status === 'resigned' ? 'destructive' : (emp.status === 'on_leave' ? 'warning' : 'outline'))"
+                  :variant="getStatusBadgeVariant(emp.status)"
                   class="text-[10px] uppercase font-mono"
                 >
-                  {{ emp.status.replace('_', ' ') }}
+                  {{ formatStatusDisplay(emp.status) }}
                 </Badge>
               </TableCell>
 
@@ -915,10 +943,10 @@ onUnmounted(() => {
                   {{ selectedEmployee.full_name }}
                 </h2>
                 <Badge
-                  :variant="selectedEmployee.status === 'active' ? 'success' : (selectedEmployee.status === 'resigned' ? 'destructive' : (selectedEmployee.status === 'on_leave' ? 'warning' : 'outline'))"
+                  :variant="getStatusBadgeVariant(selectedEmployee.status)"
                   class="text-[10px] uppercase font-mono px-2 py-0.5"
                 >
-                  {{ selectedEmployee.status.replace('_', ' ') }}
+                  {{ formatStatusDisplay(selectedEmployee.status) }}
                 </Badge>
               </div>
 
@@ -1598,6 +1626,8 @@ onUnmounted(() => {
                           <SelectGroup>
                             <SelectItem value="active">Active</SelectItem>
                             <SelectItem value="resigned">Resigned</SelectItem>
+                            <SelectItem value="suspended">Suspension</SelectItem>
+                            <SelectItem value="csr">CSR</SelectItem>
                             <SelectItem value="on_leave">On Leave</SelectItem>
                             <SelectItem value="inactive">Inactive</SelectItem>
                           </SelectGroup>
@@ -2165,14 +2195,22 @@ onUnmounted(() => {
         <!-- Success notification if completed -->
         <div
           v-if="importResultSuccess"
-          class="p-4 m-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 flex items-center gap-3 animate-in fade-in duration-200"
+          class="p-4 m-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-900 dark:text-emerald-200 flex flex-col gap-2.5 animate-in fade-in duration-200"
         >
-          <CheckCircle2 class="size-5 text-emerald-600 shrink-0" />
-          <div class="text-xs">
+          <div class="flex items-center gap-2">
+            <CheckCircle2 class="size-5 text-emerald-600 shrink-0" />
             <span class="font-semibold text-sm">Import Complete!</span>
-            <p class="mt-0.5">
-              Successfully updated <strong>{{ importResultSuccess.updatedCount }}</strong> existing profiles and created <strong>{{ importResultSuccess.createdCount }}</strong> new employees.
-            </p>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 text-xs pt-2 border-t border-emerald-500/20 font-mono">
+            <div>Imported: <strong class="text-foreground">{{ importResultSuccess.totalProcessed + importResultSuccess.unchangedCount }}</strong></div>
+            <div>New Employees: <strong class="text-foreground">{{ importResultSuccess.createdCount }}</strong></div>
+            <div>Updated: <strong class="text-foreground">{{ importResultSuccess.updatedCount }}</strong></div>
+            <div>Status Updated: <strong class="text-foreground">{{ importResultSuccess.statusUpdatedCount }}</strong></div>
+            <div>Active: <strong class="text-foreground">{{ importResultSuccess.statusActiveCount }}</strong></div>
+            <div>Resigned: <strong class="text-foreground">{{ importResultSuccess.statusResignedCount }}</strong></div>
+            <div>Unchanged: <strong class="text-foreground">{{ importResultSuccess.unchangedCount }}</strong></div>
+            <div>Warnings: <strong :class="importResultSuccess.warningsCount > 0 ? 'text-amber-600 font-bold' : 'text-foreground'">{{ importResultSuccess.warningsCount }}</strong></div>
+            <div>Errors: <strong :class="importResultSuccess.errorsCount > 0 ? 'text-destructive font-bold' : 'text-foreground'">{{ importResultSuccess.errorsCount }}</strong></div>
           </div>
         </div>
 
@@ -2186,15 +2224,21 @@ onUnmounted(() => {
         </div>
 
         <!-- Summary KPI Counter Cards -->
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 p-4 border-b bg-card">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 p-4 border-b bg-card">
           <div class="rounded-lg border p-2.5 bg-muted/20">
             <div class="text-[11px] text-muted-foreground font-medium">Total Rows</div>
             <div class="text-lg font-bold font-mono text-foreground">{{ importPreview.totalRows }}</div>
           </div>
           <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
-            <div class="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-tight">Existing to Update</div>
+            <div class="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-tight">Updated</div>
             <div class="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
               {{ importPreview.updatedCount }}
+            </div>
+          </div>
+          <div class="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2.5">
+            <div class="text-[11px] text-purple-700 dark:text-purple-400 font-medium leading-tight">Status Changed</div>
+            <div class="text-lg font-bold font-mono text-purple-600 dark:text-purple-400">
+              {{ importPreview.statusUpdatedCount }}
             </div>
           </div>
           <div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-2.5">
@@ -2210,9 +2254,9 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
-            <div class="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-tight">Unknown Groups</div>
+            <div class="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-tight">Warnings</div>
             <div class="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
-              {{ importPreview.unknownGroupsCount }}
+              {{ importPreview.warningsCount }}
             </div>
           </div>
           <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5">
@@ -2223,14 +2267,36 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Warning notice if unknown groups -->
+        <!-- Target Status Breakdown strip -->
+        <div class="px-4 py-2 bg-muted/30 border-b flex items-center justify-between text-xs flex-wrap gap-2">
+          <div class="flex items-center gap-3 text-muted-foreground font-mono">
+            <span class="text-foreground font-medium">Status Breakdown:</span>
+            <span class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+              Active: <strong>{{ importPreview.statusActiveCount }}</strong>
+            </span>
+            <span class="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400 font-semibold">
+              Resigned: <strong>{{ importPreview.statusResignedCount }}</strong>
+            </span>
+            <span v-if="importPreview.statusSuspendedCount > 0" class="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-semibold">
+              Suspension: <strong>{{ importPreview.statusSuspendedCount }}</strong>
+            </span>
+            <span v-if="importPreview.statusCsrCount > 0" class="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 font-semibold">
+              CSR: <strong>{{ importPreview.statusCsrCount }}</strong>
+            </span>
+          </div>
+          <div class="text-[11px] text-muted-foreground">
+            Matching Key: <strong>Excel ID → Permanent Bio ID</strong>
+          </div>
+        </div>
+
+        <!-- Warning notice if unknown groups or warnings -->
         <div
-          v-if="importPreview.unknownGroupsCount > 0"
+          v-if="importPreview.warningsCount > 0"
           class="px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2"
         >
           <AlertTriangle class="size-4 shrink-0 text-amber-600" />
           <span>
-            <strong>{{ importPreview.unknownGroupsCount }} row(s)</strong> have Work Groups not registered in Settings. Existing employees keep their current group; new employees use the default group.
+            <strong>{{ importPreview.warningsCount }} warning(s)</strong> detected (e.g. unregistered groups, misaligned dates, or unsupported statuses). Existing fields were safely preserved.
           </span>
         </div>
 
@@ -2258,6 +2324,15 @@ onUnmounted(() => {
             <button
               type="button"
               class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
+              :class="activePreviewTab === 'status' ? 'bg-purple-600 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
+              @click="activePreviewTab = 'status'"
+            >
+              <span>Status Changed</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'status' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.statusUpdatedCount }}</span>
+            </button>
+            <button
+              type="button"
+              class="px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap flex items-center gap-1.5"
               :class="activePreviewTab === 'create' ? 'bg-blue-600 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
               @click="activePreviewTab = 'create'"
             >
@@ -2279,8 +2354,8 @@ onUnmounted(() => {
               :class="activePreviewTab === 'unknown' ? 'bg-amber-600 text-white font-semibold shadow-xs' : 'text-muted-foreground hover:bg-muted'"
               @click="activePreviewTab = 'unknown'"
             >
-              <span>Unknown Groups</span>
-              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'unknown' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.unknownGroupsCount }}</span>
+              <span>Warnings</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded" :class="activePreviewTab === 'unknown' ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'">{{ importPreview.warningsCount }}</span>
             </button>
             <button
               type="button"
@@ -2297,7 +2372,7 @@ onUnmounted(() => {
             <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               v-model="previewSearch"
-              placeholder="Search ID, Name, Dept..."
+              placeholder="Search ID, Name, Dept, Status..."
               class="h-8 pl-8 text-xs w-full bg-card"
             />
           </div>
@@ -2311,12 +2386,13 @@ onUnmounted(() => {
           <Table v-else>
             <TableHeader class="sticky top-0 bg-muted/80 backdrop-blur-xs z-10 shadow-xs">
               <TableRow class="text-xs">
-                <TableHead class="w-[90px] font-semibold">ID</TableHead>
+                <TableHead class="w-[85px] font-semibold">ID</TableHead>
                 <TableHead class="font-semibold">Name</TableHead>
-                <TableHead class="w-[120px] font-semibold">Group</TableHead>
-                <TableHead class="w-[140px] font-semibold">Department</TableHead>
-                <TableHead class="w-[100px] font-semibold">Action</TableHead>
-                <TableHead class="font-semibold">Status</TableHead>
+                <TableHead class="w-[100px] font-semibold">Group</TableHead>
+                <TableHead class="w-[130px] font-semibold">Department</TableHead>
+                <TableHead class="w-[150px] font-semibold">Status</TableHead>
+                <TableHead class="w-[95px] font-semibold">Action</TableHead>
+                <TableHead class="font-semibold">Changes / Details</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2337,6 +2413,22 @@ onUnmounted(() => {
                   <span v-if="row.department" class="text-foreground font-medium text-xs">
                     {{ row.department }}
                   </span>
+                  <span v-else class="text-muted-foreground italic text-[11px]">—</span>
+                </TableCell>
+                <!-- Dedicated Status column per Requirement 7 -->
+                <TableCell>
+                  <div v-if="row.isStatusChanged" class="flex items-center gap-1 font-medium text-xs">
+                    <span class="text-muted-foreground line-through text-[11px]">{{ formatStatusDisplay(row.previousStatus) }}</span>
+                    <span class="text-muted-foreground">→</span>
+                    <Badge :variant="getStatusBadgeVariant(row.newStatus)" class="text-[10px] px-1.5 py-0 font-semibold">
+                      {{ formatStatusDisplay(row.newStatus) }}
+                    </Badge>
+                  </div>
+                  <div v-else-if="row.displayStatus" class="text-xs">
+                    <Badge :variant="getStatusBadgeVariant(row.newStatus || row.previousStatus)" class="text-[10px] px-1.5 py-0 font-normal">
+                      {{ row.displayStatus }}
+                    </Badge>
+                  </div>
                   <span v-else class="text-muted-foreground italic text-[11px]">—</span>
                 </TableCell>
                 <TableCell>

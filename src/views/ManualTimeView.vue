@@ -281,7 +281,8 @@ async function openNewAdjustmentModal() {
 
   if (allEmployees.value.length === 0) {
     try {
-      allEmployees.value = await employeeService.getEmployees()
+      const emps = await employeeService.getEmployees()
+      allEmployees.value = emps.filter(e => e.status !== 'resigned')
     } catch {
       // ignore
     }

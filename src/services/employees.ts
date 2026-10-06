@@ -15,18 +15,21 @@ import {
   VALID_LOCATIONS,
   type PeopleImportPreviewResult,
   type PeopleImportRowItem,
-  type PeopleImportApplyResult
+  type PeopleImportApplyResult,
+  parseEmploymentStatus,
+  getStatusDisplayName,
+  parseContractDate
 } from '@/repositories/employeeRepository'
 import { workGroupRepository } from '@/repositories/workGroupRepository'
 
-export { VALID_LOCATIONS }
+export { VALID_LOCATIONS, parseEmploymentStatus, getStatusDisplayName, parseContractDate }
 export type { PeopleImportPreviewResult, PeopleImportRowItem, PeopleImportApplyResult }
 
 export const employeeService = {
   /**
    * Returns all employees, with optional location, work group, and search filtering
    */
-  async getEmployees(params: { location?: string; workGroupId?: string; search?: string } = {}): Promise<Employee[]> {
+  async getEmployees(params: { location?: string; workGroupId?: string; search?: string; status?: string } = {}): Promise<Employee[]> {
     return employeeRepository.getEmployees(params)
   },
 

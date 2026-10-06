@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie'
-import type { EmployeeLocation } from '@/types'
+import type { EmployeeLocation, EmploymentStatus } from '@/types'
+export type { EmploymentStatus }
 
 export interface WorkGroupRecord {
   id: string // "wg-group-a", "wg-group-b", "wg-group-c"
@@ -57,9 +58,10 @@ export interface EmployeeRecord {
   department: string
   position: string
   hireDate?: string // Date Hired
+  contractDate?: string // Contract Date
   regularizationDate?: string // Date Regularized
   resignationDate?: string // Date Resigned / Effective Date
-  status: 'active' | 'inactive' | 'on_leave' | 'resigned'
+  status: EmploymentStatus
   payrollStatus?: 'configured' | 'pending' | 'exempt'
   salaryType?: 'Monthly' | 'Daily' | 'Hourly'
   basicSalary?: number

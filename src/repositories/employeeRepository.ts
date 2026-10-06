@@ -1,5 +1,5 @@
 import { db, type EmployeeRecord, type WorkGroupRecord } from '@/db'
-import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
+import type { Employee, EmployeeLocation, WorkGroup, EmploymentStatus } from '@/types'
 import { workGroupRepository } from './workGroupRepository'
 
 export const VALID_LOCATIONS: EmployeeLocation[] = [
@@ -14,10 +14,10 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
   {
     bioId: '25065',
     employeeNumber: '25065',
-    fullName: 'Cantillas, Ronald',
+    fullName: 'Cabigas, Marc Louie',
     location: 'DBB CEBU',
     workGroupId: 'wg-group-c',
-    department: 'Operations',
+    department: 'IT ADMIN',
     position: 'Staff',
     status: 'resigned',
     resignationDate: '2026-06-30',
@@ -27,10 +27,46 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
   {
     bioId: '25069',
     employeeNumber: '25069',
-    fullName: 'Alfanta, Cristine',
+    fullName: 'Cantillas, Ronald',
     location: 'DBB CEBU',
     workGroupId: 'wg-group-c',
-    department: 'Operations',
+    department: 'MECHANIC',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '25041',
+    employeeNumber: '25041',
+    fullName: 'Bendulo, Meraflor',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'DBB ADMIN',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '50350',
+    employeeNumber: '50350',
+    fullName: 'Villanueva, Jesier',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'DIGGER',
+    position: 'Staff',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    bioId: '58337',
+    employeeNumber: '58337',
+    fullName: 'Rivera, Mae Ive',
+    location: 'DBB CEBU',
+    workGroupId: 'wg-group-c',
+    department: 'DBB ADMIN',
     position: 'Staff',
     status: 'active',
     createdAt: new Date().toISOString(),
@@ -478,16 +514,105 @@ async function ensureInitialized() {
       db.employees.put(cleanSeed).catch(() => {})
     }
   }
+}
 
-  // Ensure Cantillas, Ronald (25065) has default resigned status if not manually changed
-  const ronald = employeeCache.get('25065')
-  if (ronald && ronald.status === 'active') {
-    ronald.status = 'resigned'
-    if (!ronald.resignationDate) {
-      ronald.resignationDate = '2026-06-30'
-    }
-    db.employees.put(ronald).catch(() => {})
+export interface EmploymentStatusParseResult {
+  status?: EmploymentStatus
+  isValid: boolean
+  display: string
+  raw: string
+  isUnsupported?: boolean
+}
+
+export function parseEmploymentStatus(val: any): EmploymentStatusParseResult | null {
+  if (val === undefined || val === null) return null
+  const str = String(val).trim()
+  if (str === '' || str === '-' || str === '—') return null
+
+  const upper = str.toUpperCase()
+  if (upper === 'A' || upper === 'ACTIVE') {
+    return { status: 'active', isValid: true, display: 'Active', raw: str }
   }
+  if (upper === 'R' || upper === 'RESIGNED') {
+    return { status: 'resigned', isValid: true, display: 'Resigned', raw: str }
+  }
+  if (upper === 'SUSPENSION' || upper === 'SUSPENDED') {
+    return { status: 'suspended', isValid: true, display: 'Suspension', raw: str }
+  }
+  if (upper === 'CSR') {
+    return { status: 'csr', isValid: true, display: 'CSR', raw: str }
+  }
+  if (upper === 'ON LEAVE' || upper === 'ON_LEAVE' || upper === 'LEAVE') {
+    return { status: 'on_leave', isValid: true, display: 'On Leave', raw: str }
+  }
+  if (upper === 'INACTIVE') {
+    return { status: 'inactive', isValid: true, display: 'Inactive', raw: str }
+  }
+
+  return { isValid: false, isUnsupported: true, display: str, raw: str }
+}
+
+export function getStatusDisplayName(status?: string): string {
+  if (!status) return '—'
+  const s = status.toLowerCase().trim()
+  if (s === 'active' || s === 'a') return 'Active'
+  if (s === 'resigned' || s === 'r') return 'Resigned'
+  if (s === 'suspended' || s === 'suspension') return 'Suspension'
+  if (s === 'csr') return 'CSR'
+  if (s === 'on_leave' || s === 'on leave') return 'On Leave'
+  if (s === 'inactive') return 'Inactive'
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+export interface ContractDateParseResult {
+  isValid: boolean
+  formatted?: string
+  raw: string
+  isInvalid?: boolean
+}
+
+export function parseContractDate(val: any): ContractDateParseResult | null {
+  if (val === undefined || val === null) return null
+  const str = String(val).trim()
+  if (str === '' || str === '-' || str === '—' || str.toLowerCase() === 'n/a') return null
+
+  // 1. Numeric Excel serial date (e.g. 45321)
+  if (typeof val === 'number') {
+    if (val > 1000 && val < 100000) {
+      const date = new Date(Math.round((val - 25569) * 86400 * 1000))
+      if (!isNaN(date.getTime())) {
+        const y = date.getUTCFullYear()
+        const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+        const d = String(date.getUTCDate()).padStart(2, '0')
+        return { isValid: true, formatted: `${y}-${m}-${d}`, raw: str }
+      }
+    }
+  }
+
+  // 2. Reject short status-like codes in date column (e.g. 'R', 'A', 'CSR', 'SUSPENSION')
+  const upper = str.toUpperCase()
+  if (['R', 'A', 'CSR', 'SUSPENSION', 'SUSPENDED', 'ACTIVE', 'RESIGNED', 'LEAVE', 'ON LEAVE'].includes(upper)) {
+    return { isValid: false, isInvalid: true, raw: str }
+  }
+
+  // 3. Date string parse (e.g. 'March 17,2017', 'January 09,2025', '2025-01-09')
+  const timestamp = Date.parse(str)
+  if (!isNaN(timestamp)) {
+    const d = new Date(timestamp)
+    const year = d.getFullYear()
+    if (year >= 1950 && year <= 2100) {
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return { isValid: true, formatted: `${y}-${m}-${day}`, raw: str }
+    }
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return { isValid: true, formatted: str, raw: str }
+  }
+
+  return { isValid: false, isInvalid: true, raw: str }
 }
 
 export interface PeopleImportRowItem {
@@ -496,6 +621,12 @@ export interface PeopleImportRowItem {
   name: string
   group: string
   department: string
+  contractDate?: string
+  rawStatus?: string
+  displayStatus: string // e.g. "Active → Resigned", "Active", "Resigned"
+  previousStatus?: string
+  newStatus?: string
+  isStatusChanged: boolean
   action: 'UPDATE' | 'CREATE' | 'UNCHANGED' | 'SKIP'
   status: string
   isWarning: boolean
@@ -513,9 +644,15 @@ export interface PeopleImportMatchedRow {
   newGroup: string
   existingDept: string
   newDept: string
+  existingStatus: string
+  newStatus: string
   isNameUpdated: boolean
   isGroupUpdated: boolean
   isDeptUpdated: boolean
+  isStatusUpdated: boolean
+  existingContractDate?: string
+  newContractDate?: string
+  isContractDateUpdated?: boolean
   targetRecord: EmployeeRecord
 }
 
@@ -524,6 +661,8 @@ export interface PeopleImportNewRow {
   name: string
   group: string
   department: string
+  status?: string
+  contractDate?: string
   location: EmployeeLocation
   targetRecord: EmployeeRecord
 }
@@ -545,6 +684,11 @@ export interface PeopleImportPreviewResult {
   totalRows: number
   updatedCount: number
   newCount: number
+  statusUpdatedCount: number
+  statusActiveCount: number
+  statusResignedCount: number
+  statusSuspendedCount: number
+  statusCsrCount: number
   unchangedCount: number
   unknownGroupsCount: number
   invalidCount: number
@@ -565,6 +709,11 @@ export interface PeopleImportPreviewResult {
 export interface PeopleImportApplyResult {
   updatedCount: number
   createdCount: number
+  statusUpdatedCount: number
+  statusActiveCount: number
+  statusResignedCount: number
+  statusSuspendedCount: number
+  statusCsrCount: number
   unchangedCount: number
   skippedCount: number
   warningsCount: number
@@ -629,9 +778,15 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
 
   // Extract Status (primitive string only)
   const rawStatus = typeof input.status === 'string' ? input.status.trim().toLowerCase() : ''
-  let cleanStatus: 'active' | 'inactive' | 'on_leave' | 'resigned' = 'active'
-  if (rawStatus === 'inactive' || rawStatus === 'on_leave' || rawStatus === 'resigned') {
-    cleanStatus = rawStatus
+  let cleanStatus: EmploymentStatus = 'active'
+  if (rawStatus === 'inactive' || rawStatus === 'on_leave' || rawStatus === 'resigned' || rawStatus === 'suspended' || rawStatus === 'csr') {
+    cleanStatus = rawStatus as EmploymentStatus
+  } else if (rawStatus === 'suspension') {
+    cleanStatus = 'suspended'
+  } else if (rawStatus === 'a' || rawStatus === 'active') {
+    cleanStatus = 'active'
+  } else if (rawStatus === 'r' || rawStatus === 'resigned') {
+    cleanStatus = 'resigned'
   }
 
   // Helper for optional string fields (returns trimmed string or undefined, never dummy values)
@@ -675,6 +830,7 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   const cleanEmergencyNumber = getOptString(input.emergencyContactNumber, input.emergency_contact_number, input.emergencyNumber)
 
   const cleanHireDate = getOptString(input.hireDate, input.hire_date, input.dateHired, input.date_hired)
+  const cleanContractDate = getOptString(input.contractDate, input.contract_date, input.contract)
   const cleanRegDate = getOptString(input.regularizationDate, input.regularization_date, input.dateRegularized, input.date_regularized)
   const cleanResignationDate = getOptString(input.resignationDate, input.resignation_date, input.dateResigned, input.date_resigned, input.resignedDate, input.resigned_date)
 
@@ -749,6 +905,7 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     department: cleanDept || 'Operations',
     position: cleanPos || 'Staff',
     hireDate: cleanHireDate,
+    contractDate: cleanContractDate,
     regularizationDate: cleanRegDate,
     resignationDate: cleanResignationDate,
     status: cleanStatus,
@@ -817,6 +974,7 @@ export const employeeRepository = {
       department: rec.department,
       position: rec.position,
       hire_date: rec.hireDate,
+      contract_date: rec.contractDate,
       regularization_date: rec.regularizationDate,
       resignation_date: rec.resignationDate,
       status: rec.status,
@@ -1059,17 +1217,24 @@ export const employeeRepository = {
   },
 
   /**
-   * Generates a full preview and validation for bulk importing employee names, departments & groups from Excel.
+   * Generates a full preview and validation for bulk importing employee names, departments, groups, contract dates & status from Excel.
    *
    * Rules:
    * - Excel ID maps to permanent Bio ID (primary key).
    * - Bio ID cannot be duplicated.
-   * - If Bio ID exists: updates Name (if provided) and Department (if provided).
-   * - If Bio ID does not exist: creates new employee with Bio ID, Name, and Department.
-   * - Does NOT erase existing fields if Excel value is blank.
-   * - Group matches case-insensitively against Work Group Code ("A") or Name ("Group A").
-   * - If GROUP is empty, does NOT change or invent a Work Group.
-   * - Unknown groups flagged in preview warnings.
+   * - Columns are mapped strictly by header names, never by assumed position:
+   *     ID -> Bio ID
+   *     NAME -> Name
+   *     GROUP -> Group
+   *     DEPARTMENT -> Department
+   *     CONTRACT DATE -> Contract Date
+   *     STATUS -> Employment Status
+   * - Do not shift values between columns when a field is empty.
+   * - Empty Excel fields preserve existing employee values (Group, Department, Contract Date, Status).
+   * - STATUS is included in change detection: if only STATUS changed, employee is reported as updated.
+   * - Normalize STATUS: A -> Active, R -> Resigned, SUSPENSION -> Suspension, CSR -> CSR. Unsupported values flagged as warning.
+   * - Misaligned/invalid Contract Date (e.g. 'R' in Contract Date column) flagged as warning, preserved existing.
+   * - Bio ID remains immutable.
    */
   async previewImportEmployeesFromExcel(rows: any[]): Promise<PeopleImportPreviewResult> {
     await ensureInitialized()
@@ -1085,66 +1250,117 @@ export const employeeRepository = {
 
     const seenBioIdsInImport = new Set<string>()
 
+    const ID_ALIASES = ['ID', 'Bio ID', 'BioId', 'User ID', 'UserId', 'user_id', 'ID/Bio ID', 'id']
+    const NAME_ALIASES = ['NAME', 'Name', 'Employee Name', 'Full Name', 'fullName', 'employee_name', 'name']
+    const GROUP_ALIASES = ['GROUP', 'Group', 'Work Group', 'WorkGroup', 'Group Name', 'Group Code', 'workGroupId', 'work_group', 'group']
+    const DEPT_ALIASES = ['DEPARTMENT', 'Department', 'Dept', 'DEPT', 'department', 'dept']
+    const CONTRACT_DATE_ALIASES = ['CONTRACT DATE', 'Contract Date', 'ContractDate', 'CONTRACT_DATE', 'contract_date', 'contractDate', 'Contract', 'Date Hired', 'Hire Date']
+    const STATUS_ALIASES = ['STATUS', 'Status', 'Employment Status', 'EMPLOYMENT STATUS', 'employment_status', 'employmentStatus', 'status']
+
+    const matchesAlias = (header: string, aliases: string[]): boolean => {
+      const cleanHeader = String(header || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (!cleanHeader) return false
+      return aliases.some(alias => alias.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanHeader)
+    }
+
+    const getRowField = (row: any, aliases: string[]): any => {
+      if (!row || typeof row !== 'object') return undefined
+      for (const alias of aliases) {
+        if (alias in row && row[alias] !== undefined && row[alias] !== null) {
+          return row[alias]
+        }
+      }
+      const rowKeys = Object.keys(row)
+      for (const alias of aliases) {
+        const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, '')
+        for (const key of rowKeys) {
+          const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+          if (cleanKey === cleanAlias) {
+            if (row[key] !== undefined && row[key] !== null) {
+              return row[key]
+            }
+          }
+        }
+      }
+      return undefined
+    }
+
+    // Support both array of row objects and 2D array of headers + data rows
+    let parsedRows: any[] = rows
+    if (rows.length > 0 && Array.isArray(rows[0])) {
+      const headers = (rows[0] as any[]).map(h => String(h ?? '').trim())
+      const idCol = headers.findIndex(h => matchesAlias(h, ID_ALIASES))
+      const nameCol = headers.findIndex(h => matchesAlias(h, NAME_ALIASES))
+      const groupCol = headers.findIndex(h => matchesAlias(h, GROUP_ALIASES))
+      const deptCol = headers.findIndex(h => matchesAlias(h, DEPT_ALIASES))
+      const contractDateCol = headers.findIndex(h => matchesAlias(h, CONTRACT_DATE_ALIASES))
+      const statusCol = headers.findIndex(h => matchesAlias(h, STATUS_ALIASES))
+
+      parsedRows = []
+      for (let r = 1; r < rows.length; r++) {
+        const rowArr = rows[r]
+        if (!Array.isArray(rowArr) || rowArr.length === 0) continue
+        parsedRows.push({
+          ID: idCol >= 0 ? rowArr[idCol] : undefined,
+          NAME: nameCol >= 0 ? rowArr[nameCol] : undefined,
+          GROUP: groupCol >= 0 ? rowArr[groupCol] : undefined,
+          DEPARTMENT: deptCol >= 0 ? rowArr[deptCol] : undefined,
+          'CONTRACT DATE': contractDateCol >= 0 ? rowArr[contractDateCol] : undefined,
+          STATUS: statusCol >= 0 ? rowArr[statusCol] : undefined
+        })
+      }
+    }
+
     let updatedCount = 0
     let newCount = 0
     let unchangedCount = 0
+    let statusUpdatedCount = 0
+    let statusActiveCount = 0
+    let statusResignedCount = 0
+    let statusSuspendedCount = 0
+    let statusCsrCount = 0
     let unknownGroupsCount = 0
     let invalidCount = 0
     let skippedCount = 0
     let warningsCount = 0
     let errorsCount = 0
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]
+    for (let i = 0; i < parsedRows.length; i++) {
+      const row = parsedRows[i]
       const rowNum = i + 1
 
       // 1. Extract ID (Bio ID)
-      const rawId =
-        row.ID ??
-        row.id ??
-        row['Bio ID'] ??
-        row['BioId'] ??
-        row['User ID'] ??
-        row['UserId'] ??
-        row['user_id'] ??
-        row['ID/Bio ID']
+      const rawId = getRowField(row, ID_ALIASES)
 
       // 2. Extract Name
-      const rawName =
-        row.NAME ??
-        row.Name ??
-        row.name ??
-        row['Employee Name'] ??
-        row['employee_name'] ??
-        row['Full Name'] ??
-        row.fullName
-
+      const rawName = getRowField(row, NAME_ALIASES)
       const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
 
       // 3. Extract Group
-      const rawGroup =
-        row.GROUP ??
-        row.Group ??
-        row.group ??
-        row['Work Group'] ??
-        row['WorkGroup'] ??
-        row['Group Code'] ??
-        row['Group Name'] ??
-        row.workGroupId ??
-        row.work_group
-
+      const rawGroup = getRowField(row, GROUP_ALIASES)
       const cleanGroupStr = rawGroup !== undefined && rawGroup !== null ? String(rawGroup).trim() : ''
 
       // 4. Extract Department
-      const rawDept =
-        row.DEPARTMENT ??
-        row.Department ??
-        row.department ??
-        row.Dept ??
-        row.dept ??
-        row.DEPT
-
+      const rawDept = getRowField(row, DEPT_ALIASES)
       const cleanDept = rawDept !== undefined && rawDept !== null ? String(rawDept).trim() : ''
+
+      // 5. Extract Contract Date
+      const rawContractDate = getRowField(row, CONTRACT_DATE_ALIASES)
+      const parsedContractDate = parseContractDate(rawContractDate)
+
+      // 6. Extract Status
+      const rawStatus = getRowField(row, STATUS_ALIASES)
+      const parsedStatus = parseEmploymentStatus(rawStatus)
+
+      const rowWarnings: string[] = []
+      if (parsedContractDate && parsedContractDate.isInvalid) {
+        warningsCount++
+        rowWarnings.push(`Invalid/misaligned Contract Date "${parsedContractDate.raw}" - kept existing contract date`)
+      }
+      if (parsedStatus && parsedStatus.isUnsupported) {
+        warningsCount++
+        rowWarnings.push(`Unsupported Employment Status "${parsedStatus.raw}" - kept existing status`)
+      }
 
       // Validate Bio ID existence
       if (rawId === undefined || rawId === null || String(rawId).trim() === '') {
@@ -1154,6 +1370,8 @@ export const employeeRepository = {
           name: cleanName || 'Unknown',
           group: cleanGroupStr || '-',
           department: cleanDept || '-',
+          displayStatus: '—',
+          isStatusChanged: false,
           action: 'SKIP',
           status: 'Invalid: Missing ID / Bio ID',
           isWarning: false,
@@ -1182,6 +1400,8 @@ export const employeeRepository = {
           name: cleanName || `User ${bioId}`,
           group: cleanGroupStr || '-',
           department: cleanDept || '-',
+          displayStatus: '—',
+          isStatusChanged: false,
           action: 'SKIP',
           status: `Duplicate Bio ID "${bioId}" in import file`,
           isWarning: true,
@@ -1211,6 +1431,7 @@ export const employeeRepository = {
           hasUnknownGroup = true
           unknownGroupsCount++
           warningsCount++
+          rowWarnings.push(`Unknown Group "${cleanGroupStr}" - kept current/default group`)
           unknownGroups.push({
             bioId,
             name: cleanName || `User ${bioId}`,
@@ -1226,16 +1447,43 @@ export const employeeRepository = {
         // CASE A: Existing Employee Match
         const existingWg = workGroups.find(w => w.id === (existingRecord.workGroupId || 'wg-group-c'))
         
-        // Rules: If blank, do NOT erase existing values
+        // Rules: If blank, do NOT erase existing values (Rule 4)
         const targetName = cleanName !== '' ? cleanName : existingRecord.fullName
         const targetDept = cleanDept !== '' ? cleanDept : (existingRecord.department || 'Operations')
         const targetWgId = matchedWg ? matchedWg.id : (existingRecord.workGroupId || 'wg-group-c')
         const targetWg = workGroups.find(w => w.id === targetWgId) || existingWg || defaultGroup
 
+        const targetContractDate = (parsedContractDate && parsedContractDate.isValid)
+          ? parsedContractDate.formatted
+          : existingRecord.contractDate
+
+        const targetStatus: EmploymentStatus = (parsedStatus && parsedStatus.isValid)
+          ? parsedStatus.status!
+          : existingRecord.status
+
         const isNameUpdated = cleanName !== '' && cleanName !== existingRecord.fullName
         const isDeptUpdated = cleanDept !== '' && cleanDept !== (existingRecord.department || '')
         const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
-        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated
+        const isContractDateUpdated = Boolean(
+          parsedContractDate && parsedContractDate.isValid && parsedContractDate.formatted !== (existingRecord.contractDate || '')
+        )
+        const isStatusUpdated = Boolean(
+          parsedStatus && parsedStatus.isValid && parsedStatus.status !== existingRecord.status
+        )
+
+        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isStatusUpdated
+
+        if (targetStatus === 'active') statusActiveCount++
+        else if (targetStatus === 'resigned') statusResignedCount++
+        else if (targetStatus === 'suspended') statusSuspendedCount++
+        else if (targetStatus === 'csr') statusCsrCount++
+
+        let resignationDate = existingRecord.resignationDate
+        if (targetStatus === 'resigned' && !resignationDate) {
+          resignationDate = new Date().toISOString().split('T')[0]
+        } else if (targetStatus === 'active' && existingRecord.status === 'resigned') {
+          resignationDate = undefined
+        }
 
         const targetRecord = toPersistableEmployeeRecord({
           ...existingRecord,
@@ -1246,24 +1494,37 @@ export const employeeRepository = {
           workGroupId: targetWgId,
           department: targetDept,
           position: existingRecord.position,
-          status: existingRecord.status,
+          contractDate: targetContractDate,
+          status: targetStatus,
+          resignationDate,
           createdAt: existingRecord.createdAt,
           updatedAt: new Date().toISOString()
         })
 
         if (hasChanges) {
           updatedCount++
+          if (isStatusUpdated) {
+            statusUpdatedCount++
+          }
           recordsToApplyMap.set(bioId, targetRecord)
 
           const changeNotes: string[] = []
-          if (isNameUpdated) changeNotes.push('Name')
-          if (isDeptUpdated) changeNotes.push('Dept')
-          if (isGroupUpdated) changeNotes.push('Group')
-
-          let statusText = changeNotes.length > 0 ? `${changeNotes.join(' & ')} will be updated` : 'Will update record'
-          if (hasUnknownGroup) {
-            statusText += ` (Warning: Unknown group "${cleanGroupStr}" - retained current group)`
+          if (isStatusUpdated) {
+            changeNotes.push(`Employment Status changed: ${getStatusDisplayName(existingRecord.status)} → ${getStatusDisplayName(targetStatus)}`)
           }
+          if (isNameUpdated) changeNotes.push(`Name: ${cleanName}`)
+          if (isDeptUpdated) changeNotes.push(`Dept: ${cleanDept}`)
+          if (isGroupUpdated) changeNotes.push(`Group: ${targetWg.name}`)
+          if (isContractDateUpdated) changeNotes.push(`Contract Date: ${targetContractDate}`)
+
+          let statusText = changeNotes.join(' • ')
+          if (rowWarnings.length > 0) {
+            statusText += ` (Warning: ${rowWarnings.join('; ')})`
+          }
+
+          const displayStatus = isStatusUpdated
+            ? `${getStatusDisplayName(existingRecord.status)} → ${getStatusDisplayName(targetStatus)}`
+            : getStatusDisplayName(existingRecord.status)
 
           const rowItem: PeopleImportRowItem = {
             rowNumber: rowNum,
@@ -1271,11 +1532,17 @@ export const employeeRepository = {
             name: targetName,
             group: cleanGroupStr || '',
             department: targetDept,
+            contractDate: targetContractDate,
+            rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
+            displayStatus,
+            previousStatus: existingRecord.status,
+            newStatus: targetStatus,
+            isStatusChanged: isStatusUpdated,
             action: 'UPDATE',
             status: statusText,
-            isWarning: hasUnknownGroup,
+            isWarning: hasUnknownGroup || rowWarnings.length > 0,
             isError: false,
-            warningReason: hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - kept current group` : undefined,
+            warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - kept current group` : undefined),
             targetRecord
           }
           allRows.push(rowItem)
@@ -1288,24 +1555,47 @@ export const employeeRepository = {
             newGroup: targetWg.name,
             existingDept: existingRecord.department || '',
             newDept: targetDept,
+            existingStatus: existingRecord.status,
+            newStatus: targetStatus,
             isNameUpdated,
             isGroupUpdated,
             isDeptUpdated,
+            isStatusUpdated,
+            existingContractDate: existingRecord.contractDate,
+            newContractDate: targetContractDate,
+            isContractDateUpdated,
             targetRecord
           })
         } else {
           unchangedCount++
+          const rawStatusStr = rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : ''
+          const displayStatus = (rawStatusStr !== '' && parsedStatus && parsedStatus.isValid)
+            ? `${rawStatusStr.toUpperCase()} → ${getStatusDisplayName(existingRecord.status)}`
+            : getStatusDisplayName(existingRecord.status)
+          let statusText = 'No changes'
+          if (rowWarnings.length > 0) {
+            statusText = `No changes (Warning: ${rowWarnings.join('; ')})`
+          } else if (hasUnknownGroup) {
+            statusText = `No changes (Warning: Unknown group "${cleanGroupStr}")`
+          }
+
           const rowItem: PeopleImportRowItem = {
             rowNumber: rowNum,
             id: bioId,
             name: existingRecord.fullName,
             group: cleanGroupStr || '',
             department: existingRecord.department || 'Operations',
+            contractDate: existingRecord.contractDate,
+            rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
+            displayStatus,
+            previousStatus: existingRecord.status,
+            newStatus: existingRecord.status,
+            isStatusChanged: false,
             action: 'UNCHANGED',
-            status: hasUnknownGroup ? `No changes (Warning: Unknown group "${cleanGroupStr}")` : 'No changes',
-            isWarning: hasUnknownGroup,
+            status: statusText,
+            isWarning: hasUnknownGroup || rowWarnings.length > 0,
             isError: false,
-            warningReason: hasUnknownGroup ? `Unknown Group "${cleanGroupStr}"` : undefined
+            warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}"` : undefined)
           }
           allRows.push(rowItem)
         }
@@ -1316,6 +1606,22 @@ export const employeeRepository = {
         const targetDept = cleanDept !== '' ? cleanDept : 'Operations'
         const targetWg = matchedWg || defaultGroup
         const targetWgId = targetWg.id
+        const targetContractDate = (parsedContractDate && parsedContractDate.isValid)
+          ? parsedContractDate.formatted
+          : undefined
+        const targetStatus: EmploymentStatus = (parsedStatus && parsedStatus.isValid)
+          ? parsedStatus.status!
+          : 'active'
+
+        if (targetStatus === 'active') statusActiveCount++
+        else if (targetStatus === 'resigned') statusResignedCount++
+        else if (targetStatus === 'suspended') statusSuspendedCount++
+        else if (targetStatus === 'csr') statusCsrCount++
+
+        let resignationDate: string | undefined = undefined
+        if (targetStatus === 'resigned') {
+          resignationDate = new Date().toISOString().split('T')[0]
+        }
 
         const targetRecord = toPersistableEmployeeRecord({
           bioId,
@@ -1325,7 +1631,9 @@ export const employeeRepository = {
           workGroupId: targetWgId,
           department: targetDept,
           position: 'Staff',
-          status: 'active',
+          contractDate: targetContractDate,
+          status: targetStatus,
+          resignationDate,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         })
@@ -1336,6 +1644,13 @@ export const employeeRepository = {
         if (hasUnknownGroup) {
           statusText += ` (Warning: Unknown group "${cleanGroupStr}" - assigned ${defaultGroup.name})`
         }
+        if (rowWarnings.length > 0) {
+          statusText += ` (Warning: ${rowWarnings.join('; ')})`
+        }
+
+        const displayStatus = (parsedStatus && parsedStatus.raw && parsedStatus.isValid)
+          ? `${parsedStatus.raw.toUpperCase()} → ${getStatusDisplayName(targetStatus)}`
+          : getStatusDisplayName(targetStatus)
 
         const rowItem: PeopleImportRowItem = {
           rowNumber: rowNum,
@@ -1343,11 +1658,17 @@ export const employeeRepository = {
           name: targetName,
           group: cleanGroupStr || '',
           department: targetDept,
+          contractDate: targetContractDate,
+          rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
+          displayStatus,
+          previousStatus: undefined,
+          newStatus: targetStatus,
+          isStatusChanged: false,
           action: 'CREATE',
           status: statusText,
-          isWarning: hasUnknownGroup,
+          isWarning: hasUnknownGroup || rowWarnings.length > 0,
           isError: false,
-          warningReason: hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - assigned ${defaultGroup.name}` : undefined,
+          warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - assigned ${defaultGroup.name}` : undefined),
           targetRecord
         }
         allRows.push(rowItem)
@@ -1357,6 +1678,8 @@ export const employeeRepository = {
           name: targetName,
           group: targetWg.name,
           department: targetDept,
+          contractDate: targetContractDate,
+          status: targetStatus,
           location: 'DBB CEBU',
           targetRecord
         })
@@ -1364,9 +1687,14 @@ export const employeeRepository = {
     }
 
     return {
-      totalRows: rows.length,
+      totalRows: parsedRows.length,
       updatedCount,
       newCount,
+      statusUpdatedCount,
+      statusActiveCount,
+      statusResignedCount,
+      statusSuspendedCount,
+      statusCsrCount,
       unchangedCount,
       unknownGroupsCount,
       invalidCount,
@@ -1375,7 +1703,6 @@ export const employeeRepository = {
       errorsCount,
       allRows,
       recordsToApply: Array.from(recordsToApplyMap.values()),
-      // Compatibility fields
       matchedUpdatedCount: updatedCount,
       newPeopleCount: newCount,
       matchedUpdated,
@@ -1397,6 +1724,11 @@ export const employeeRepository = {
       return {
         updatedCount: 0,
         createdCount: 0,
+        statusUpdatedCount: 0,
+        statusActiveCount: preview?.statusActiveCount || 0,
+        statusResignedCount: preview?.statusResignedCount || 0,
+        statusSuspendedCount: preview?.statusSuspendedCount || 0,
+        statusCsrCount: preview?.statusCsrCount || 0,
         unchangedCount: preview?.unchangedCount || 0,
         skippedCount: preview?.skippedCount || 0,
         warningsCount: preview?.warningsCount || 0,
@@ -1454,6 +1786,11 @@ export const employeeRepository = {
     return {
       updatedCount: preview ? preview.updatedCount : updatedCount,
       createdCount: preview ? preview.newCount : createdCount,
+      statusUpdatedCount: preview ? preview.statusUpdatedCount : 0,
+      statusActiveCount: preview ? preview.statusActiveCount : 0,
+      statusResignedCount: preview ? preview.statusResignedCount : 0,
+      statusSuspendedCount: preview ? preview.statusSuspendedCount : 0,
+      statusCsrCount: preview ? preview.statusCsrCount : 0,
       unchangedCount: preview ? preview.unchangedCount : 0,
       skippedCount: preview ? preview.skippedCount : 0,
       warningsCount: preview ? preview.warningsCount : 0,
@@ -1474,7 +1811,8 @@ export const employeeRepository = {
       'DEPARTMENT': emp.department || 'Operations',
       'LOCATION': emp.location,
       'POSITION': emp.position || 'Staff',
-      'STATUS': emp.status === 'active' ? 'Active' : (emp.status === 'resigned' ? 'Resigned' : (emp.status === 'on_leave' ? 'On Leave' : 'Inactive')),
+      'STATUS': getStatusDisplayName(emp.status),
+      'CONTRACT DATE': emp.contract_date || '',
       'MOBILE': emp.mobile_number || '',
       'EMAIL': emp.email || '',
       'BIRTHDAY': emp.date_of_birth || '',

@@ -43,6 +43,8 @@ export interface WorkGroup {
   updated_at?: string
 }
 
+export type EmploymentStatus = 'active' | 'inactive' | 'on_leave' | 'resigned' | 'suspended' | 'csr'
+
 export interface Employee {
   id: string
   employee_number: string // Strictly identical to biometric_user_id (Employee ID = Bio ID)
@@ -74,9 +76,10 @@ export interface Employee {
   position?: string
   location_id?: string
   hire_date?: string // Date Hired
+  contract_date?: string // Contract Date
   regularization_date?: string // Date Regularized
   resignation_date?: string // Date Resigned / Effective Date
-  status: 'active' | 'inactive' | 'on_leave' | 'resigned'
+  status: EmploymentStatus
   // Payroll Profile Information
   payroll_status?: 'configured' | 'pending' | 'exempt'
   salary_type?: 'Monthly' | 'Daily' | 'Hourly'

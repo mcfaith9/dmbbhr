@@ -17,7 +17,7 @@
  * - Seamless integration with approved Leave, Manual Time, and HR context
  */
 
-import type { AttendanceLog } from '@/types'
+import type { AttendanceLog, EmploymentStatus } from '@/types'
 import type { ManualAttendanceRecord } from '@/db'
 import { calculateExpectedOutMinutes, formatTime12h } from '@/repositories/workGroupRepository'
 
@@ -57,7 +57,7 @@ export interface EmployeeScheduleContext {
   isHalfDayApproved?: boolean
   isHalfDayPMApproved?: boolean
   isFieldWorkApproved?: boolean
-  employeeStatus?: 'active' | 'inactive' | 'on_leave' | 'resigned'
+  employeeStatus?: EmploymentStatus
   resignationDate?: string
 }
 
@@ -98,7 +98,7 @@ export interface DailyAttendanceRecord {
   late_minutes: number // Clean integer against Work Group Standard IN
   early_out_minutes: number // Clean integer against Work Group Expected OUT
   undertime_minutes: number
-  employee_status?: 'active' | 'inactive' | 'on_leave' | 'resigned'
+  employee_status?: EmploymentStatus
   resignation_date?: string
   status: string // Compact HR Status
   status_variant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary'
