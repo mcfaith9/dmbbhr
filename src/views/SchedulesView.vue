@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   CalendarDays,
@@ -67,13 +67,19 @@ async function loadCalendarData() {
       scheduleRepository.getHolidays(currentYear.value),
       workGroupRepository.getAll()
     ])
-    monthSummaries.value = summaries
-    holidays.value = holidayList
-    workGroups.value = wgList
+    monthSummaries.value = new Map(summaries)
+    holidays.value = [...holidayList]
+    workGroups.value = [...wgList]
   } finally {
     loadingCalendar.value = false
   }
 }
+
+watch(activeTab, (tab) => {
+  if (tab === 'calendar') {
+    loadCalendarData()
+  }
+})
 
 function prevMonth() {
   if (currentMonth.value === 1) {

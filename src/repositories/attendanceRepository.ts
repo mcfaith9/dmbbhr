@@ -171,8 +171,8 @@ export const attendanceRepository = {
       return a.employee_name.localeCompare(b.employee_name)
     })
 
-    // 5. Update cached Daily Summary asynchronously for high-speed Calendar retrieval
-    this.updateDailySummaryCache(selectedDate, records).catch(() => {})
+    // 5. Update cached Daily Summary for high-speed Calendar retrieval
+    await this.updateDailySummaryCache(selectedDate, records).catch(() => {})
 
     return records
   },
@@ -180,7 +180,7 @@ export const attendanceRepository = {
   /**
    * Updates the aggregated summary table for calendar Month views.
    */
-  async updateDailySummaryCache(dateStr: string, records: DailyAttendanceRecord[]): Promise<void> {
+  async updateDailySummaryCache(dateStr: string, records: DailyAttendanceRecord[]): Promise<DailySummaryRecord> {
     const activeRecords = records.filter(r => r.employee_status !== 'resigned')
     const presentCount = activeRecords.length
     const onTimeCount = activeRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
@@ -204,6 +204,7 @@ export const attendanceRepository = {
     }
 
     await db.dailySummaries.put(summary)
+    return summary
   },
 
   /**
@@ -212,8 +213,18 @@ export const attendanceRepository = {
    */
   async getMonthSummaries(year: number, month: number): Promise<Map<string, DailySummaryRecord>> {
     const mStr = String(month).padStart(2, '0')
-    const startDate = `${year}-${mStr}-01`
-    const endDate = `${year}-${mStr}-31`
+    const firstDayIndex = new Date(year, month - 1, 1).getDay()
+    const daysInPrevMonth = new Date(year, month - 1, 0).getDate()
+    const prevM = month === 1 ? 12 : month - 1
+    const prevY = month === 1 ? year - 1 : year
+    const nextM = month === 12 ? 1 : month + 1
+    const nextY = month === 12 ? year + 1 : year
+
+    // Cover month and leading/trailing calendar days so full grid is populated
+    const startDate = firstDayIndex > 0
+      ? `${prevY}-${String(prevM).padStart(2, '0')}-${String(daysInPrevMonth - firstDayIndex + 1).padStart(2, '0')}`
+      : `${year}-${mStr}-01`
+    const endDate = `${nextY}-${String(nextM).padStart(2, '0')}-14`
 
     const list = await db.dailySummaries.where('date').between(startDate, endDate, true, true).toArray()
     const summaryMap = new Map<string, DailySummaryRecord>()
@@ -222,7 +233,7 @@ export const attendanceRepository = {
       summaryMap.set(item.date, item)
     }
 
-    // If any dates in this month have raw punches but no summary cached yet, compute on the fly
+    // If any dates in this range have raw punches but no summary cached yet, compute on the fly
     const allPunchesInMonth = await db.biometricPunches.where('date').between(startDate, endDate, true, true).toArray()
     const dateGroups = new Set<string>()
     for (const p of allPunchesInMonth) {
@@ -231,11 +242,19 @@ export const attendanceRepository = {
       }
     }
 
+    // Also check dailyAttendance table
+    const dailyRecordsInMonth = await db.dailyAttendance.where('date').between(startDate, endDate, true, true).toArray()
+    for (const r of dailyRecordsInMonth) {
+      if (!summaryMap.has(r.date)) {
+        dateGroups.add(r.date)
+      }
+    }
+
     for (const d of dateGroups) {
-      await this.getDailyAttendance(d)
-      const cached = await db.dailySummaries.get(d)
-      if (cached) {
-        summaryMap.set(d, cached)
+      const records = await this.getDailyAttendance(d)
+      const summary = await this.updateDailySummaryCache(d, records)
+      if (summary) {
+        summaryMap.set(d, summary)
       }
     }
 

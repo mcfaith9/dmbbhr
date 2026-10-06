@@ -23,7 +23,6 @@ import { employeeService } from '@/services/employees'
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 
 const currentPunch = punchDisplayService.currentPunch
 const recentPunches = punchDisplayService.recentPunches
@@ -409,39 +408,39 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-background text-foreground flex flex-col select-none font-sans overflow-x-hidden relative">
+  <div class="h-screen max-h-screen bg-background text-foreground flex flex-col select-none font-sans overflow-hidden relative">
     <!-- Overlay Confetti Canvas -->
     <canvas ref="canvasRef" class="pointer-events-none fixed inset-0 z-50 size-full"></canvas>
 
     <!-- Top Bar / Kiosk Header (Native DMBBHR Style) -->
-    <header class="border-b bg-card px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-2xs">
-      <div class="flex items-center gap-3">
-        <div class="size-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-2xs">
-          <Fingerprint class="size-5 text-primary" />
+    <header class="border-b bg-card px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
+      <div class="flex items-center gap-2.5">
+        <div class="size-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-2xs">
+          <Fingerprint class="size-4 text-primary" />
         </div>
         <div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5">
             <span class="font-bold text-sm tracking-tight text-foreground">
               DMBBHR Biometrics
             </span>
-            <Badge variant="outline" class="text-[10px] font-mono px-2 py-0.5 bg-muted/40">
-              Live Terminal
+            <Badge variant="outline" class="text-[9px] font-mono px-1.5 py-0 bg-muted/40">
+              Live Kiosk
             </Badge>
           </div>
-          <p class="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
-            <Server class="size-3 text-muted-foreground" />
+          <p class="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+            <Server class="size-2.5 text-muted-foreground" />
             <span>BISMAC BISBIO B-29b • 192.168.1.201:4370</span>
           </p>
         </div>
       </div>
 
       <!-- Live Clock Display (Clean Neutral DMBBHR Style) -->
-      <div class="flex flex-col items-center justify-center px-4 py-1.5 rounded-lg bg-muted/40 border shadow-2xs">
-        <div class="font-mono text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+      <div class="flex flex-col items-center justify-center px-3.5 py-1 rounded-lg bg-muted/40 border shadow-2xs">
+        <div class="font-mono text-lg sm:text-xl font-bold tracking-tight text-foreground leading-none">
           {{ currentTimeStr }}
         </div>
-        <div class="text-xs text-muted-foreground font-medium flex items-center gap-1 mt-0.5">
-          <CalendarIcon class="size-3 text-muted-foreground" />
+        <div class="text-[11px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
+          <CalendarIcon class="size-2.5 text-muted-foreground" />
           {{ currentDateStr }}
         </div>
       </div>
@@ -451,44 +450,44 @@ onUnmounted(() => {
         <!-- Live Status Badge -->
         <div
           v-if="settings.enabled"
-          class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/50 border text-xs"
+          class="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-muted/50 border text-xs"
         >
           <span class="relative flex size-2">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
           </span>
-          <span class="text-foreground font-mono text-[11px] font-medium">LISTENING</span>
+          <span class="text-foreground font-mono text-[10px] font-medium">LISTENING</span>
         </div>
         <div
           v-else
-          class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300"
+          class="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300"
         >
           <PowerOff class="size-3 text-amber-600" />
-          <span class="font-mono text-[11px] font-medium">DISABLED</span>
+          <span class="font-mono text-[10px] font-medium">DISABLED</span>
         </div>
 
         <!-- Audio Toggle -->
         <Button
           variant="outline"
           size="sm"
-          class="size-8 p-0 cursor-pointer"
+          class="size-7.5 p-0 cursor-pointer"
           :title="settings.soundEnabled ? 'Mute Chime' : 'Unmute Chime'"
           @click="toggleSound"
         >
-          <Volume2 v-if="settings.soundEnabled" class="size-4 text-primary" />
-          <VolumeX v-else class="size-4 text-muted-foreground" />
+          <Volume2 v-if="settings.soundEnabled" class="size-3.5 text-primary" />
+          <VolumeX v-else class="size-3.5 text-muted-foreground" />
         </Button>
 
         <!-- Fullscreen Toggle -->
         <Button
           variant="outline"
           size="sm"
-          class="size-8 p-0 cursor-pointer"
+          class="size-7.5 p-0 cursor-pointer"
           :title="isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'"
           @click="toggleFullscreen"
         >
-          <Minimize2 v-if="isFullscreen" class="size-4" />
-          <Maximize2 v-else class="size-4" />
+          <Minimize2 v-if="isFullscreen" class="size-3.5" />
+          <Maximize2 v-else class="size-3.5" />
         </Button>
       </div>
     </header>
@@ -496,113 +495,129 @@ onUnmounted(() => {
     <!-- Disabled State Alert Banner if OFF -->
     <div
       v-if="!settings.enabled"
-      class="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 px-4 py-2 text-center text-xs flex items-center justify-center gap-2"
+      class="bg-amber-500/15 border-b border-amber-500/30 text-amber-900 dark:text-amber-200 px-4 py-1.5 text-center text-xs flex items-center justify-center gap-2 shrink-0"
     >
-      <PowerOff class="size-3.5 text-amber-600" />
+      <PowerOff class="size-3 text-amber-600" />
       <span>
         Punch Display is currently disabled in System Settings (Settings → System & Integrations → Punch Display).
       </span>
     </div>
 
-    <!-- Main Content Area -->
-    <main class="flex-1 p-4 sm:p-6 md:p-8 flex flex-col lg:flex-row gap-6 max-w-7xl mx-auto w-full items-start justify-center">
+    <!-- Main Content Area: Kiosk Viewport Centered without Unnecessary Scrollbar -->
+    <main class="flex-1 min-h-0 px-3 sm:px-6 py-2.5 sm:py-3.5 flex flex-col lg:flex-row gap-4 max-w-7xl mx-auto w-full items-stretch justify-center overflow-hidden">
       
       <!-- Primary Active Punch / Idle Display Card -->
-      <section class="flex-1 w-full max-w-2xl mx-auto">
-        <!-- CURRENT PUNCH CARD (Keyed by unique eventId so consecutive punches for the same employee visibly refresh!) -->
+      <section class="flex-1 min-h-0 flex flex-col justify-center max-w-2xl mx-auto w-full">
+        <!-- CURRENT PUNCH CARD (Modern Profile/Post Card Composition) -->
         <div
           v-if="currentPunch && settings.enabled"
           :key="currentPunch.eventId || currentPunch.id"
-          class="relative text-card-foreground border rounded-xl md:rounded-2xl shadow-xs overflow-hidden transition-all animate-in fade-in zoom-in-95 duration-200"
+          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col transition-all animate-in fade-in zoom-in-95 duration-200"
           :class="[
             hasCustomLateGraphic
-              ? 'border-destructive/40 shadow-lg'
-              : (currentPunch.isLate && settings.lateVisualEnabled ? 'border-destructive/30 bg-card' : 'bg-card')
+              ? 'border-destructive/40 shadow-xl'
+              : (currentPunch.isLate && settings.lateVisualEnabled ? 'border-destructive/30 bg-card' : 'bg-card border-border/80')
           ]"
         >
-          <!-- Full-Card Custom Late Graphic Background with Subtle Gradient / Localized Readability -->
+          <!-- Full-Card/Cover Wallpaper for Late IN Punches when Custom Graphic Configured -->
           <template v-if="hasCustomLateGraphic">
             <div
-              class="absolute inset-0 bg-cover bg-center bg-no-repeat transition-transform duration-700"
+              class="absolute inset-0 bg-cover bg-center bg-no-repeat transition-transform duration-700 pointer-events-none"
               :style="{ backgroundImage: `url('${settings.customLateImageUrl.trim()}')` }"
             ></div>
-            <!-- Subtle gradient overlay (no heavy bg-card/85 or bg-card/90 wash) so the image remains clearly visible -->
-            <div class="absolute inset-0 bg-gradient-to-b from-card/30 via-transparent to-card/50 pointer-events-none"></div>
+            <!-- Subtle localized gradient (NOT heavy opaque bg-card/85 wash, NO full blur) so the wallpaper is clearly visible -->
+            <div class="absolute inset-0 bg-gradient-to-b from-black/45 via-black/20 to-black/60 pointer-events-none"></div>
           </template>
 
-          <div class="relative z-10 flex flex-col">
-            <!-- Card Header Banner -->
+          <!-- 1. Profile Cover Area Header -->
+          <div
+            class="relative w-full h-24 sm:h-28 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-4"
+            :class="[
+              hasCustomLateGraphic
+                ? 'bg-transparent'
+                : 'bg-gradient-to-r from-primary/20 via-primary/10 to-muted/60 border-b border-border/40'
+            ]"
+          >
+            <!-- Decorative pattern on clean cover -->
             <div
-              class="px-6 py-4 border-b flex items-center justify-between"
-              :class="hasCustomLateGraphic ? 'bg-card/75 dark:bg-card/80 backdrop-blur-md' : 'bg-muted/20'"
+              v-if="!hasCustomLateGraphic"
+              class="absolute inset-0 opacity-25 bg-[radial-gradient(circle_at_20%_30%,_var(--tw-gradient-stops))] from-primary/30 via-transparent to-transparent pointer-events-none"
+            ></div>
+
+            <!-- Cover Left: Biometric Terminal Badge -->
+            <div
+              class="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider shadow-2xs"
+              :class="hasCustomLateGraphic ? 'bg-black/55 text-white backdrop-blur-md border border-white/20' : 'bg-card/80 text-foreground border border-border/60 backdrop-blur-xs'"
             >
-              <div class="space-y-0.5">
-                <span class="text-[11px] font-bold uppercase tracking-wider text-muted-foreground font-mono block">
-                  BIOMETRIC ATTENDANCE
-                </span>
-                <h3 class="text-sm font-semibold text-foreground">
-                  Real-Time Punch
-                </h3>
-              </div>
-              <Badge
-                :variant="currentPunch.isLate && settings.lateVisualEnabled ? 'destructive' : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')"
-                class="text-xs uppercase font-mono px-3 py-1 gap-1 shadow-2xs"
-              >
-                <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5" />
-                <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5" />
-                <AlertCircle v-else class="size-3.5" />
-                <span>{{ currentPunch.statusLabel }}</span>
-              </Badge>
+              <Fingerprint class="size-3.5 text-primary" />
+              <span>Biometric Punch</span>
             </div>
 
-            <!-- Main Punch Body -->
-            <div class="p-6 sm:p-8 flex flex-col items-center text-center space-y-5">
-              
-              <!-- Employee Photo / Avatar Placeholder (Prominent & Ready for Future Photos) -->
-              <div class="relative">
-                <div class="size-28 sm:size-32 rounded-xl border border-border overflow-hidden bg-muted/40 shadow-xs flex items-center justify-center">
-                  <!-- If actual photo URL exists and hasn't errored -->
-                  <img
-                    v-if="currentPunch.photoUrl && !photoLoadError"
-                    :src="currentPunch.photoUrl"
-                    :alt="currentPunch.employeeName"
-                    class="size-full object-cover"
-                    @error="photoLoadError = true"
-                  />
-                  <!-- Native Avatar Placeholder -->
-                  <div
-                    v-else
-                    class="size-full flex items-center justify-center bg-primary/10 text-primary"
-                  >
-                    <User class="size-14 text-muted-foreground/60" />
-                  </div>
-                </div>
+            <!-- Cover Right: Status Indicator Badge -->
+            <Badge
+              :variant="currentPunch.isLate && settings.lateVisualEnabled ? 'destructive' : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')"
+              class="relative z-10 text-xs uppercase font-mono px-3 py-1 gap-1 shadow-xs font-bold"
+            >
+              <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5" />
+              <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5" />
+              <AlertCircle v-else class="size-3.5" />
+              <span>{{ currentPunch.statusLabel }}</span>
+            </Badge>
+          </div>
 
-                <!-- Direction Badge Pin -->
-                <div class="absolute -bottom-2.5 left-1/2 -translate-x-1/2">
-                  <span
-                    class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs border"
-                    :class="[
-                      currentPunch.direction === 'OUT' ? 'bg-rose-500 text-white border-rose-600' :
-                      currentPunch.direction === 'BREAK_OUT' ? 'bg-amber-500 text-white border-amber-600' :
-                      'bg-emerald-500 text-white border-emerald-600'
-                    ]"
-                  >
-                    {{ currentPunch.stateLabel }}
-                  </span>
+          <!-- 2. Profile Body Area (Overlapping Avatar & Content) -->
+          <div class="relative z-10 px-5 sm:px-8 pb-4 sm:pb-5 pt-0 flex flex-col items-center text-center">
+
+            <!-- Overlapping Profile Avatar Area -->
+            <div class="relative -mt-12 sm:-mt-14 mb-2">
+              <div
+                class="size-22 sm:size-26 rounded-2xl border-4 shadow-md overflow-hidden flex items-center justify-center transition-transform"
+                :class="hasCustomLateGraphic ? 'border-card/90 bg-black/40 backdrop-blur-xs ring-2 ring-destructive/40' : 'border-card bg-muted/60 ring-2 ring-primary/20'"
+              >
+                <!-- Real photo if available and not errored -->
+                <img
+                  v-if="currentPunch.photoUrl && !photoLoadError"
+                  :src="currentPunch.photoUrl"
+                  :alt="currentPunch.employeeName"
+                  class="size-full object-cover"
+                  @error="photoLoadError = true"
+                />
+                <!-- Avatar fallback placeholder -->
+                <div
+                  v-else
+                  class="size-full flex items-center justify-center bg-primary/10 text-primary"
+                >
+                  <User class="size-11 sm:size-13 text-muted-foreground/70" />
                 </div>
               </div>
 
-              <!-- Employee Details with Localized Readability Layer -->
-              <div
-                class="space-y-1 pt-1 transition-all"
-                :class="hasCustomLateGraphic ? 'px-5 py-2.5 rounded-xl bg-card/75 dark:bg-card/80 backdrop-blur-md border border-border/40 shadow-xs' : ''"
-              >
-                <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              <!-- Direction Badge Pin anchored to the avatar -->
+              <div class="absolute -bottom-2 left-1/2 -translate-x-1/2">
+                <span
+                  class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase tracking-wider shadow-sm border"
+                  :class="[
+                    currentPunch.direction === 'OUT' ? 'bg-rose-500 text-white border-rose-600' :
+                    currentPunch.direction === 'BREAK_OUT' ? 'bg-amber-500 text-white border-amber-600' :
+                    'bg-emerald-500 text-white border-emerald-600'
+                  ]"
+                >
+                  {{ currentPunch.stateLabel }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Employee Profile Identity & Punch Details -->
+            <div
+              class="w-full max-w-lg transition-all space-y-2"
+              :class="hasCustomLateGraphic ? 'p-3.5 sm:p-4 rounded-2xl bg-card/80 dark:bg-card/85 backdrop-blur-md border border-border/50 shadow-md' : ''"
+            >
+              <!-- Employee Name & Meta -->
+              <div class="space-y-0.5">
+                <h2 class="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight text-foreground">
                   {{ currentPunch.employeeName }}
                 </h2>
-                <div class="text-sm text-muted-foreground font-mono font-medium flex items-center justify-center gap-2 flex-wrap">
-                  <span>Bio ID: {{ currentPunch.userId }}</span>
+                <div class="text-xs sm:text-sm text-muted-foreground font-mono font-medium flex items-center justify-center gap-2 flex-wrap">
+                  <span class="font-semibold text-foreground/90">Bio ID: {{ currentPunch.userId }}</span>
                   <span class="text-border">•</span>
                   <span>{{ currentPunch.workGroup || 'Standard Crew' }}</span>
                   <span class="text-border">•</span>
@@ -610,83 +625,97 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <Separator class="my-1 max-w-md" />
-
-              <!-- Time & Date Display with Localized Readability Layer -->
+              <!-- Prominent Punch Time and Date Card Block -->
               <div
-                class="space-y-1 transition-all"
-                :class="hasCustomLateGraphic ? 'px-6 py-2.5 rounded-xl bg-card/75 dark:bg-card/80 backdrop-blur-md border border-border/40 shadow-xs' : ''"
+                class="py-2 px-4 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'bg-muted/40 border-border/60' : 'bg-muted/30 border-border/70'"
               >
-                <div class="text-3xl sm:text-4xl font-extrabold font-mono tracking-tight text-foreground">
+                <div class="text-3xl sm:text-4xl font-extrabold font-mono tracking-tight text-foreground leading-none">
                   {{ formatPunchTime(currentPunch.timestamp) }}
                 </div>
-                <div class="text-xs sm:text-sm text-muted-foreground font-medium">
+                <div class="text-xs text-muted-foreground font-medium mt-1 leading-none">
                   {{ formatPunchDate(currentPunch.timestamp) }}
                 </div>
               </div>
 
               <!-- Detailed Status Feedback Callout -->
               <div
-                class="w-full max-w-md rounded-xl border p-3 text-xs flex items-center justify-center gap-2 shadow-2xs"
+                class="w-full rounded-xl border p-2 text-xs flex items-center justify-center gap-2 shadow-2xs"
                 :class="[
                   currentPunch.isLate && settings.lateVisualEnabled
                     ? 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/30 font-semibold'
                     : currentPunch.statusCategory === 'undertime'
                     ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 font-semibold'
-                    : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 font-semibold',
-                  hasCustomLateGraphic ? 'backdrop-blur-md' : ''
+                    : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 font-semibold'
                 ]"
               >
-                <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-4 text-emerald-600 shrink-0" />
-                <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-4 text-amber-600 shrink-0" />
-                <AlertCircle v-else class="size-4 text-rose-600 shrink-0" />
-                <span>{{ currentPunch.statusDetail }}</span>
+                <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5 text-emerald-600 shrink-0" />
+                <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5 text-amber-600 shrink-0" />
+                <AlertCircle v-else class="size-3.5 text-rose-600 shrink-0" />
+                <span class="truncate font-medium">{{ currentPunch.statusDetail }}</span>
               </div>
             </div>
+          </div>
 
-            <!-- Bottom Auto-Dismiss Progress Bar -->
-            <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden">
-              <div
-                class="bg-primary h-full transition-all ease-linear"
-                :style="{ width: `${dismissProgress}%` }"
-              ></div>
-            </div>
+          <!-- Bottom Auto-Dismiss Progress Bar -->
+          <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden mt-auto">
+            <div
+              class="bg-primary h-full transition-all ease-linear"
+              :style="{ width: `${dismissProgress}%` }"
+            ></div>
           </div>
         </div>
 
-        <!-- IDLE / WAITING STATE CARD (Clean Presentation-Only) -->
+        <!-- IDLE / WAITING STATE CARD (Profile-Style Kiosk Design) -->
         <div
           v-else
-          class="bg-card text-card-foreground border rounded-xl md:rounded-2xl shadow-xs p-8 sm:p-12 text-center flex flex-col items-center justify-center space-y-6"
+          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col bg-card"
         >
-          <div class="size-16 rounded-2xl bg-muted/60 border flex items-center justify-center text-muted-foreground shadow-2xs">
-            <Fingerprint class="size-8 text-primary/80 animate-pulse" />
+          <!-- Idle Cover Banner -->
+          <div class="h-24 sm:h-28 w-full bg-gradient-to-r from-muted/60 via-muted/40 to-muted/80 border-b flex items-start justify-between p-3.5 sm:p-4">
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium bg-card/80 border text-muted-foreground">
+              <Fingerprint class="size-3.5 text-primary" />
+              <span>Terminal Standby</span>
+            </div>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-medium">
+              <span class="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>READY</span>
+            </div>
           </div>
 
-          <div class="space-y-1.5 max-w-md mx-auto">
-            <span class="text-[11px] font-bold uppercase tracking-wider text-muted-foreground font-mono block">
-              BIOMETRIC ATTENDANCE
-            </span>
-            <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-              Ready for biometric scan
-            </h2>
-            <p class="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-              Please scan your fingerprint on the terminal.
-            </p>
+          <!-- Idle Profile Body -->
+          <div class="px-6 sm:px-8 pb-6 sm:pb-8 pt-0 flex flex-col items-center text-center space-y-3">
+            <div class="relative -mt-12 sm:-mt-14 size-22 sm:size-26 rounded-2xl border-4 border-card bg-primary/10 text-primary shadow-md flex items-center justify-center">
+              <Fingerprint class="size-11 sm:size-13 text-primary animate-pulse" />
+            </div>
+
+            <div class="space-y-1 max-w-md mx-auto pt-1">
+              <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+                Ready for biometric scan
+              </h2>
+              <p class="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                Please place your registered finger on the optical sensor.
+              </p>
+            </div>
+
+            <div class="pt-1 flex items-center justify-center gap-2 text-xs text-muted-foreground font-mono">
+              <Server class="size-3 text-muted-foreground" />
+              <span>BISMAC BISBIO B-29b • Port 4370</span>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- Right / Session Stream: Recent Punches List (Maximum 7 Recent Punches) -->
-      <aside class="w-full lg:w-96 bg-card text-card-foreground border rounded-xl shadow-xs p-5 shrink-0 space-y-3">
-        <div class="flex items-center justify-between pb-3 border-b">
+      <aside class="w-full lg:w-80 xl:w-96 bg-card text-card-foreground border rounded-2xl shadow-sm p-3.5 sm:p-4 shrink-0 flex flex-col min-h-0 max-h-full">
+        <div class="flex items-center justify-between pb-2.5 border-b shrink-0">
           <div class="flex items-center gap-2">
             <History class="size-4 text-primary" />
             <h4 class="text-sm font-semibold text-foreground">
               Recent Punches
             </h4>
           </div>
-          <Badge variant="outline" class="text-[10px] font-mono">
+          <Badge variant="outline" class="text-[10px] font-mono font-bold">
             {{ recentPunches.length }} / 7
           </Badge>
         </div>
@@ -696,11 +725,11 @@ onUnmounted(() => {
           <p class="text-xs">No recent punches yet.</p>
         </div>
 
-        <div v-else class="space-y-2">
+        <div v-else class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pt-2 pr-0.5">
           <div
             v-for="punch in recentPunches"
             :key="punch.eventId || punch.id"
-            class="p-2.5 rounded-lg border bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between gap-3 text-xs"
+            class="p-2 sm:p-2.5 rounded-xl border bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2.5 text-xs"
           >
             <div class="min-w-0">
               <div class="font-semibold text-foreground truncate">
@@ -716,7 +745,7 @@ onUnmounted(() => {
             <div class="text-right shrink-0">
               <Badge
                 :variant="punch.statusVariant === 'destructive' && settings.lateVisualEnabled ? 'destructive' : (punch.statusVariant === 'warning' ? 'warning' : 'success')"
-                class="text-[10px] uppercase font-mono px-2 py-0.5"
+                class="text-[10px] uppercase font-mono px-2 py-0.5 font-bold"
               >
                 {{ punch.status }}
               </Badge>
@@ -727,7 +756,7 @@ onUnmounted(() => {
     </main>
 
     <!-- Footer Bar with Subtle Development/Testing Controls -->
-    <footer class="border-t bg-card px-4 sm:px-6 py-2.5 text-xs text-muted-foreground flex flex-col md:flex-row items-center justify-between gap-3 shrink-0 shadow-2xs">
+    <footer class="border-t bg-card px-4 sm:px-6 py-2 text-xs text-muted-foreground flex flex-col md:flex-row items-center justify-between gap-2 shrink-0 shadow-2xs">
       <!-- Status Info -->
       <div class="flex items-center gap-2">
         <span class="size-2 rounded-full" :class="settings.enabled ? 'bg-emerald-500' : 'bg-amber-500'"></span>
@@ -740,7 +769,7 @@ onUnmounted(() => {
         </span>
       </div>
 
-      <!-- Temporary Secondary Development / Testing Controls -->
+      <!-- Secondary Development / Testing Controls -->
       <div class="flex items-center gap-1.5 flex-wrap justify-center md:justify-end text-[11px]">
         <span class="text-[10px] font-mono uppercase text-muted-foreground/70 font-semibold mr-1">
           TEST:

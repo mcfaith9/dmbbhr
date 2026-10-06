@@ -11,10 +11,8 @@ import {
   RefreshCw,
   UserCheck,
   History,
-  Calendar,
   ChevronLeft,
   ChevronRight,
-  X,
   Plus,
   Send
 } from '@lucide/vue'
@@ -27,6 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DatePicker } from '@/components/ui/date-picker'
 import {
   Select,
   SelectContent,
@@ -133,12 +132,6 @@ function onHistorySearchInput() {
     historyPage.value = 1
     loadHistory()
   }, 250)
-}
-
-function clearHistoryDateFilter() {
-  historyDateFilter.value = ''
-  historyPage.value = 1
-  loadHistory()
 }
 
 function changeHistoryPage(newPage: number) {
@@ -966,25 +959,13 @@ onMounted(() => {
         </div>
 
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <!-- Date Filter -->
-          <div class="flex items-center gap-1.5">
-            <div class="relative flex items-center">
-              <Calendar class="absolute left-2.5 size-3.5 text-muted-foreground pointer-events-none" />
-              <input
-                type="date"
-                v-model="historyDateFilter"
-                class="pl-8 pr-7 text-xs h-8 rounded-md border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
-              />
-              <button
-                v-if="historyDateFilter"
-                type="button"
-                class="absolute right-2 text-muted-foreground hover:text-foreground p-0.5"
-                title="Clear date filter"
-                @click="clearHistoryDateFilter"
-              >
-                <X class="size-3" />
-              </button>
-            </div>
+          <!-- Date Filter using shadcn-vue DatePicker -->
+          <div class="w-full sm:w-48">
+            <DatePicker
+              v-model="historyDateFilter"
+              placeholder="Filter by date..."
+              class="w-full text-xs h-8 bg-card"
+            />
           </div>
 
           <!-- Search Field -->
