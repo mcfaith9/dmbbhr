@@ -426,17 +426,13 @@ onUnmounted(() => {
     <!-- Top Bar / Kiosk Header (Native DMBBHR Style) -->
     <header class="border-b bg-card px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
       <div class="flex items-center gap-2.5">
-        <div class="size-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-2xs overflow-hidden">
-          <img
-            src="/dbblogo.png"
-            alt="DBB Logo"
-            class="size-full object-contain"
-          />
+        <div class="size-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-2xs">
+          <Fingerprint class="size-4 text-primary" />
         </div>
         <div>
           <div class="flex items-center gap-1.5">
             <span class="font-bold text-sm tracking-tight text-foreground">
-              DMBB / DBB Biometrics
+              DMBBHR Biometrics
             </span>
             <Badge variant="outline" class="text-[9px] font-mono px-1.5 py-0 bg-muted/40">
               Live Kiosk
@@ -451,10 +447,10 @@ onUnmounted(() => {
 
       <!-- Live Clock Display (Clean Neutral DMBBHR Style) -->
       <div class="flex flex-col items-center justify-center px-3.5 py-1 rounded-lg bg-muted/40 border shadow-2xs">
-        <div class="font-mono text-lg sm:text-2xl font-bold tracking-tight text-foreground leading-none">
+        <div class="font-mono text-lg sm:text-xl font-bold tracking-tight text-foreground leading-none">
           {{ currentTimeStr }}
         </div>
-        <div class="text-[12px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
+        <div class="text-[11px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
           <CalendarIcon class="size-2.5 text-muted-foreground" />
           {{ currentDateStr }}
         </div>
@@ -546,7 +542,7 @@ onUnmounted(() => {
 
           <!-- 1. Profile Cover Area Header -->
           <div
-            class="relative w-full h-24 sm:h-28 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-4"
+            class="relative w-full h-20 sm:h-24 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-4"
             :class="[
               hasCustomLateGraphic
                 ? 'bg-transparent'
@@ -616,66 +612,75 @@ onUnmounted(() => {
             </Badge>
           </div>
 
-          <!-- 2. Profile Body Area (Overlapping Avatar & Content) -->
-          <div class="relative z-10 px-5 sm:px-8 pb-4 sm:pb-5 pt-0 flex flex-col items-center text-center">
+          <!-- 2. Profile Body Area (Horizontal Employee Section + Punch Details) -->
+          <div class="relative z-10 px-5 sm:px-8 pb-4 sm:pb-5 pt-2 sm:pt-3 flex flex-col items-center">
 
-            <!-- Overlapping Profile Avatar Area -->
-            <div class="relative -mt-12 sm:-mt-14 mb-2">
-              <div
-                class="size-36 sm:size-44 rounded-full border-4 shadow-md overflow-hidden flex items-center justify-center transition-transform"
-                :class="hasCustomLateGraphic
-                  ? 'border-card/90 bg-black/40 backdrop-blur-xs ring-2 ring-destructive/40'
-                  : 'border-card bg-muted/60 ring-2 ring-primary/20'"
-              >
-                <!-- Real photo if available and not errored -->
-                <img
-                  v-if="currentPunch.photoUrl && !photoLoadError"
-                  :src="currentPunch.photoUrl"
-                  :alt="currentPunch.employeeName"
-                  class="size-full object-cover"
-                  @error="photoLoadError = true"
-                />
-
-                <!-- Avatar fallback placeholder -->
-                <div
-                  v-else
-                  class="size-full rounded-full flex items-center justify-center bg-primary/10 text-primary"
-                >
-                  <User class="size-11 sm:size-13 text-muted-foreground/70" />
-                </div>
-              </div>
-
-              <!-- Direction Badge Pin anchored to the avatar -->
-              <div class="absolute -bottom-1 left-0 right-0 flex justify-center">
-                <span
-                  class="w-1/2 px-2.5 py-0.5 rounded-full text-[12px] font-mono font-extrabold uppercase tracking-wider shadow-sm border text-center"
-                  :class="[
-                    currentPunch.direction === 'OUT'
-                      ? 'bg-rose-500 text-white border-rose-600'
-                      : currentPunch.direction === 'BREAK_OUT'
-                        ? 'bg-amber-500 text-white border-amber-600'
-                        : 'bg-emerald-500 text-white border-emerald-600'
-                  ]"
-                >
-                  {{ currentPunch.stateLabel }}
-                </span>
-              </div>
-            </div>
-
-            <!-- Employee Profile Identity & Punch Details -->
+            <!-- Employee Profile Identity & Punch Details Container -->
             <div
-              class="w-full max-w-lg transition-all space-y-2"
+              class="w-full max-w-lg transition-all space-y-3"
               :class="hasCustomLateGraphic ? 'p-3.5 sm:p-4 rounded-2xl bg-card/80 dark:bg-card/85 backdrop-blur-md border border-border/50 shadow-md' : ''"
             >
-              <!-- Employee Name & Meta -->
-              <div class="space-y-0.5">
-                <h2 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-foreground">
-                  {{ currentPunch.employeeName }}
-                </h2>
-                <div class="text-xs sm:text-sm text-muted-foreground font-mono font-medium flex items-center justify-center gap-2 flex-wrap">
-                  <span class="font-semibold text-foreground/90">Bio ID: {{ currentPunch.userId }}</span>
-                  <span class="text-border">•</span>
-                  <span class="font-semibold text-foreground/90">DMBB Cebu</span>
+              <!-- Horizontal Employee Section: Circular Profile Photo (Left) + Information (Right) -->
+              <div class="flex items-center justify-center gap-5 sm:gap-6 py-1">
+                <!-- Circular Profile Image (120-130px, border-radius: 50%, object-fit: cover) -->
+                <div class="relative shrink-0">
+                  <div
+                    class="w-[124px] h-[124px] sm:w-[128px] sm:h-[128px] rounded-full border-4 shadow-md overflow-hidden flex items-center justify-center transition-transform"
+                    :class="hasCustomLateGraphic ? 'border-card/90 bg-black/40 backdrop-blur-xs ring-2 ring-destructive/40' : 'border-card bg-muted/60 ring-2 ring-primary/20'"
+                    style="border-radius: 50%; width: 126px; height: 126px;"
+                  >
+                    <!-- Real photo if available and not errored -->
+                    <img
+                      v-if="currentPunch.photoUrl && !photoLoadError"
+                      :src="currentPunch.photoUrl"
+                      :alt="currentPunch.employeeName"
+                      class="size-full object-cover"
+                      style="border-radius: 50%; object-fit: cover;"
+                      @error="photoLoadError = true"
+                    />
+                    <!-- Avatar fallback placeholder -->
+                    <div
+                      v-else
+                      class="size-full flex items-center justify-center bg-primary/10 text-primary"
+                      style="border-radius: 50%;"
+                    >
+                      <User class="size-14 sm:size-16 text-muted-foreground/70" />
+                    </div>
+                  </div>
+
+                  <!-- Direction Badge Pin anchored to the circular avatar -->
+                  <div class="absolute -bottom-2 left-0 right-0 flex justify-center">
+                    <span
+                      class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase tracking-wider shadow-sm border text-center"
+                      :class="[
+                        currentPunch.direction === 'OUT'
+                          ? 'bg-rose-500 text-white border-rose-600'
+                          : currentPunch.direction === 'BREAK_OUT'
+                            ? 'bg-amber-500 text-white border-amber-600'
+                            : 'bg-emerald-500 text-white border-emerald-600'
+                      ]"
+                    >
+                      {{ currentPunch.stateLabel }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Vertically Stacked Employee Information to the Right of Circular Image -->
+                <div class="flex flex-col justify-center text-left space-y-1 min-w-0 flex-1">
+                  <!-- Employee Name (Prominent & Large) -->
+                  <h2 class="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight text-foreground leading-tight truncate">
+                    {{ currentPunch.employeeName }}
+                  </h2>
+                  <!-- Bio ID -->
+                  <div class="text-xs sm:text-sm text-muted-foreground font-mono font-medium">
+                    <span class="font-semibold text-foreground/90">Bio ID: {{ currentPunch.userId || currentPunch.bioId }}</span>
+                  </div>
+                  <!-- Group & Department/company -->
+                  <div class="text-xs sm:text-sm text-muted-foreground font-medium flex items-center gap-1.5 flex-wrap">
+                    <span>{{ currentPunch.workGroup || 'Group C' }}</span>
+                    <span class="text-border">•</span>
+                    <span>{{ currentPunch.locationName || currentPunch.department || 'DBB CEBU' }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -697,7 +702,7 @@ onUnmounted(() => {
                 class="w-full rounded-xl border p-2 text-xs flex items-center justify-center gap-2 shadow-2xs"
                 :class="[
                   currentPunch.isLate && settings.lateVisualEnabled
-                    ? 'bg-rose-500/15 text-white-800 dark:text-rose-300 border-rose-500/30 font-semibold'
+                    ? 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/30 font-semibold'
                     : currentPunch.statusCategory === 'undertime'
                     ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 font-semibold'
                     : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 font-semibold'
@@ -705,7 +710,7 @@ onUnmounted(() => {
               >
                 <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5 text-emerald-600 shrink-0" />
                 <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5 text-amber-600 shrink-0" />
-                <AlertCircle v-else class="size-3.5 text-rose-800 shrink-0" />
+                <AlertCircle v-else class="size-3.5 text-rose-600 shrink-0" />
                 <span class="truncate font-medium">{{ currentPunch.statusDetail }}</span>
               </div>
             </div>
@@ -819,7 +824,7 @@ onUnmounted(() => {
         </span>
         <span class="text-border hidden sm:inline">·</span>
         <span class="text-[11px] text-muted-foreground hidden sm:inline">
-          DMBB / DBB Real-Time Biometric Terminal
+          DMBBHR Real-Time Biometric Terminal
         </span>
       </div>
 
