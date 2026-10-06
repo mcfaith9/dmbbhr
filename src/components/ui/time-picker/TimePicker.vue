@@ -285,14 +285,14 @@ function onOpenChange(open: boolean) {
             </div>
             <div
               ref="hourScrollRef"
-              class="h-[180px] overflow-y-auto pr-0.5 space-y-1 [scrollbar-width:thin] [scrollbar-color:hsl(var(--muted-foreground)/0.25)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/25 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45"
+              class="h-[180px] overflow-y-auto pr-0.5 [scrollbar-width:thin] [scrollbar-color:hsl(var(--muted-foreground)/0.25)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/25 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45"
             >
               <button
                 v-for="h in hours"
                 :key="h"
                 type="button"
                 :class="cn(
-                  'w-full h-7 rounded-md text-xs font-mono font-medium flex items-center justify-center transition-colors cursor-pointer select-none',
+                  'w-full h-6 rounded-md text-xs font-mono font-medium flex items-center justify-center transition-colors cursor-pointer select-none',
                   selectedHour === h
                     ? 'is-selected bg-primary text-primary-foreground font-bold shadow-2xs'
                     : 'text-foreground hover:bg-muted'
@@ -311,14 +311,14 @@ function onOpenChange(open: boolean) {
             </div>
             <div
               ref="minuteScrollRef"
-              class="h-[180px] overflow-y-auto pr-0.5 space-y-1 [scrollbar-width:thin] [scrollbar-color:hsl(var(--muted-foreground)/0.25)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/25 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45"
+              class="h-[180px] overflow-y-auto pr-0.5 [scrollbar-width:thin] [scrollbar-color:hsl(var(--muted-foreground)/0.25)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/25 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45"
             >
               <button
                 v-for="m in displayMinutes"
                 :key="m"
                 type="button"
                 :class="cn(
-                  'w-full h-7 rounded-md text-xs font-mono font-medium flex items-center justify-center transition-colors cursor-pointer select-none',
+                  'w-full h-6 rounded-md text-xs font-mono font-medium flex items-center justify-center transition-colors cursor-pointer select-none',
                   selectedMinute === m
                     ? 'is-selected bg-primary text-primary-foreground font-bold shadow-2xs'
                     : 'text-foreground hover:bg-muted'
@@ -374,7 +374,7 @@ function onOpenChange(open: boolean) {
               v-for="p in presets"
               :key="p.label"
               type="button"
-              class="h-7 px-1.5 text-[11px] font-mono font-medium rounded-md border border-border/70 bg-muted/40 hover:bg-accent hover:text-accent-foreground text-foreground transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
+              class="h-6 px-1.5 text-[11px] font-mono font-medium rounded-md border border-border/70 bg-muted/40 hover:bg-accent hover:text-accent-foreground text-foreground transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
               @click="applyPreset(p.h24, p.m)"
             >
               {{ p.label }}

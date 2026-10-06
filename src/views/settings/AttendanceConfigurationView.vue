@@ -457,12 +457,12 @@ onMounted(() => {
                 </span>
               </div>
 
-              <div class="flex items-center justify-between p-2 rounded-md bg-primary/5 border border-primary/20">
+              <div class="flex items-center justify-between p-1 rounded-md bg-primary/5 border border-primary/20">
                 <span class="text-foreground font-medium flex items-center gap-1.5">
                   <CalendarDays class="size-3.5 text-primary" />
                   Expected OUT:
                 </span>
-                <span class="font-mono font-bold text-primary text-sm">
+                <span class="font-mono font-bold text-primary">
                   {{ formatTime12h(wg.expected_out) }}
                 </span>
               </div>
