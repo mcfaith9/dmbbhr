@@ -316,7 +316,9 @@ export const attendanceRepository = {
         lunchEnd: wg?.lunchEnd || '13:00',
         gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
         manualAdjustment: adjustmentsByDate.get(dateStr),
-        approvedLeave: leavesByDate.get(dateStr)
+        approvedLeave: leavesByDate.get(dateStr),
+        employeeStatus: emp?.status || 'active',
+        resignationDate: emp?.resignationDate
       }
 
       const rec = processEmployeeDayPunches(cleanBioId, punches, dateStr, empContext, customConfig)

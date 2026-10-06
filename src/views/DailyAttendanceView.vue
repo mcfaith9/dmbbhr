@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/toggle-group'
 import BiometricSyncProgress from '@/components/BiometricSyncProgress.vue'
 import { DatePicker } from '@/components/ui/date-picker'
+import { TimePicker } from '@/components/ui/time-picker'
 import {
   Popover,
   PopoverTrigger,
@@ -88,7 +89,8 @@ const selectedDate = ref<string>(todayDateStr)
 const selectedLocation = ref<string>('all')
 const selectedWorkGroup = ref<string>('all')
 const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
-const activeStatusFilter = ref<'all' | 'on_time' | 'late' | 'discrepancy' | 'duplicates'>('all')
+const activeStatusFilter = ref<'all' | 'on_time' | 'late' | 'discrepancy' | 'duplicates' | 'resigned'>('all')
+const includeResigned = ref<boolean>(false)
 const searchQuery = ref<string>('')
 const loading = ref<boolean>(false)
 const dailyRecords = ref<DailyAttendanceRecord[]>([])
@@ -245,11 +247,18 @@ const stats = computed(() => {
   const likelyOutMissingIn = list.filter(r => r.status === 'Likely OUT — Missing IN' || r.status === 'Incomplete / Review' || r.is_missing_in).length
   const singlePunchNoOut = list.filter(r => r.status === 'Single Punch — No OUT').length
   const duplicateScans = list.filter(r => (r.duplicate_punches_count || 0) > 0).length
-  return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, duplicateScans }
+  const resignedCount = dailyRecords.value.filter(r => r.employee_status === 'resigned').length
+  return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, duplicateScans, resignedCount }
 })
 
 const filteredRecords = computed(() => {
   let list = dailyRecords.value
+
+  // By default, exclude resigned employees from current operational attendance view
+  // unless user specifically searched/filtered by this employee or explicitly viewing resigned
+  if (!activeEmployeeFilter.value && activeStatusFilter.value !== 'resigned' && !includeResigned.value) {
+    list = list.filter(r => r.employee_status !== 'resigned')
+  }
 
   // Status Filter Pill
   if (activeStatusFilter.value === 'on_time') {
@@ -260,6 +269,8 @@ const filteredRecords = computed(() => {
     list = list.filter(r => r.is_missing_in || r.status === 'Likely OUT — Missing IN' || r.status === 'Single Punch — No OUT' || r.status === 'Incomplete / Review')
   } else if (activeStatusFilter.value === 'duplicates') {
     list = list.filter(r => (r.duplicate_punches_count || 0) > 0)
+  } else if (activeStatusFilter.value === 'resigned') {
+    list = list.filter(r => r.employee_status === 'resigned')
   }
 
   // Search Filter
@@ -732,6 +743,16 @@ onUnmounted(() => {
           @click="activeStatusFilter = 'duplicates'"
         >
           Repeated Scans ({{ stats.duplicateScans }})
+        </button>
+
+        <button
+          v-if="stats.resignedCount > 0"
+          type="button"
+          class="px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap"
+          :class="activeStatusFilter === 'resigned' ? 'bg-destructive text-destructive-foreground shadow-xs' : 'bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'"
+          @click="activeStatusFilter = 'resigned'"
+        >
+          Resigned ({{ stats.resignedCount }})
         </button>
       </div>
 
@@ -1321,11 +1342,11 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <input
+              <TimePicker
                 v-model="manualInTime"
-                type="time"
-                step="60"
-                class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="--:--"
+                clearable
+                class="h-8 w-full"
               />
 
               <div v-if="inTimeStatus.state === 'invalid'" class="text-[11px] text-destructive font-medium">
@@ -1361,11 +1382,11 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <input
+              <TimePicker
                 v-model="manualOutTime"
-                type="time"
-                step="60"
-                class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="--:--"
+                clearable
+                class="h-8 w-full"
               />
 
               <div v-if="outTimeStatus.state === 'invalid'" class="text-[11px] text-destructive font-medium">
