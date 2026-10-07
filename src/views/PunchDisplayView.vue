@@ -50,6 +50,46 @@ let dismissProgressInterval: any = null
 const isDisplayPaused = ref(false)
 const photoLoadError = ref(false)
 
+// Configured Late visual reminder background validation
+const lateImageLoadError = ref(false)
+
+function validateLateImageUrl(url?: string) {
+  if (!url || !url.trim()) {
+    lateImageLoadError.value = false
+    return
+  }
+  const clean = url.trim()
+  if (typeof Image === 'undefined') {
+    lateImageLoadError.value = false
+    return
+  }
+  const img = new Image()
+  img.onload = () => {
+    lateImageLoadError.value = false
+  }
+  img.onerror = () => {
+    lateImageLoadError.value = true
+  }
+  img.src = clean
+}
+
+watch(
+  () => settings.value.customLateImageUrl,
+  (newUrl) => {
+    validateLateImageUrl(newUrl)
+  },
+  { immediate: true }
+)
+
+const isLateVisualActive = computed(() => {
+  return Boolean(
+    currentPunch.value?.isLate &&
+    settings.value.lateVisualEnabled &&
+    settings.value.customLateImageUrl?.trim() &&
+    !lateImageLoadError.value
+  )
+})
+
 // Canvas Confetti
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let confettiAnimationId: any = null
@@ -576,19 +616,35 @@ onUnmounted(() => {
       
       <!-- Primary Active Punch / Idle Display Card -->
       <section class="flex-1 min-h-0 flex flex-col justify-center max-w-2xl mx-auto w-full h-full">
-        <!-- CURRENT PUNCH CARD (Clean Flat Kiosk Profile) -->
+        <!-- CURRENT PUNCH CARD (Clean Flat Kiosk Profile with Configured Late Visual) -->
         <div
           v-if="currentPunch && settings.enabled"
           :key="currentPunch.eventId || currentPunch.id"
           class="relative bg-card text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between transition-all animate-in fade-in duration-200 h-full"
           :class="[
-            currentPunch.isLate && settings.lateVisualEnabled
-              ? 'border-destructive/30'
-              : 'border-border'
+            isLateVisualActive
+              ? 'border-destructive/40 shadow-md'
+              : (currentPunch.isLate && settings.lateVisualEnabled ? 'border-destructive/30' : 'border-border')
           ]"
         >
-          <!-- Card Header: Terminal Info & Status Badge -->
-          <div class="px-5 sm:px-6 pt-4 sm:pt-5 pb-3 border-b flex items-center justify-between shrink-0">
+          <!-- Configured Late Visual Background Layer (Layer 1: Behind content, only when late + enabled + image set) -->
+          <div
+            v-if="isLateVisualActive"
+            class="absolute inset-0 bg-cover bg-center bg-no-repeat pointer-events-none transition-all duration-300 z-0"
+            :style="{ backgroundImage: `url('${settings.customLateImageUrl.trim()}')` }"
+          ></div>
+
+          <!-- Subtle Readability Overlay (Layer 2: Keeps background visible while text remains legible) -->
+          <div
+            v-if="isLateVisualActive"
+            class="absolute inset-0 bg-background/65 dark:bg-background/75 backdrop-blur-[1px] pointer-events-none z-0"
+          ></div>
+
+          <!-- Card Header: Terminal Info & Status Badge (Layer 3: Foreground z-10) -->
+          <div
+            class="px-5 sm:px-6 pt-4 sm:pt-5 pb-3 border-b flex items-center justify-between shrink-0 relative z-10"
+            :class="isLateVisualActive ? 'bg-card/75 backdrop-blur-xs' : ''"
+          >
             <div class="flex items-center gap-2 text-xs font-mono text-muted-foreground">
               <Fingerprint class="size-3.5 text-primary shrink-0" />
               <span class="font-medium text-foreground">{{ currentPunch.deviceName || 'Biometric Terminal' }}</span>
@@ -601,11 +657,14 @@ onUnmounted(() => {
             </Badge>
           </div>
 
-          <!-- Main Profile Content: Balanced Vertical Flow -->
-          <div class="flex-1 flex flex-col justify-evenly items-center text-center px-4 sm:px-6 py-4 min-h-0">
+          <!-- Main Profile Content: Balanced Vertical Flow (Layer 3: Foreground z-10) -->
+          <div class="flex-1 flex flex-col justify-evenly items-center text-center px-4 sm:px-6 py-4 min-h-0 relative z-10">
             <!-- 1. Employee Photo & IN/OUT Direction Indicator -->
             <div class="flex flex-col items-center shrink-0">
-              <div class="size-28 sm:size-32 rounded-full border-4 border-muted/50 shadow-sm overflow-hidden bg-muted/20 flex items-center justify-center">
+              <div
+                class="size-28 sm:size-32 rounded-full border-4 shadow-sm overflow-hidden flex items-center justify-center"
+                :class="isLateVisualActive ? 'border-card ring-2 ring-rose-500/30 bg-card' : 'border-muted/50 bg-muted/20'"
+              >
                 <img
                   v-if="currentPunch.photoUrl && !photoLoadError"
                   :src="currentPunch.photoUrl"
@@ -643,7 +702,10 @@ onUnmounted(() => {
                 {{ currentPunch.employeeName }}
               </h2>
               <div class="flex items-center justify-center gap-2 text-xs sm:text-sm text-muted-foreground font-medium flex-wrap">
-                <span class="font-mono font-bold px-2 py-0.5 rounded bg-muted/60 border border-border/70 text-foreground">
+                <span
+                  class="font-mono font-bold px-2 py-0.5 rounded border text-foreground"
+                  :class="isLateVisualActive ? 'bg-card/90 border-border/80' : 'bg-muted/60 border-border/70'"
+                >
                   BIO ID: {{ currentPunch.userId || currentPunch.bioId }}
                 </span>
                 <span>•</span>
@@ -654,7 +716,10 @@ onUnmounted(() => {
             </div>
 
             <!-- 3. Current Punch Time & Date -->
-            <div class="w-full max-w-md mx-auto rounded-xl border bg-muted/20 border-border/80 px-4 py-3 flex flex-col items-center justify-center shadow-2xs">
+            <div
+              class="w-full max-w-md mx-auto rounded-xl border px-4 py-3 flex flex-col items-center justify-center shadow-2xs"
+              :class="isLateVisualActive ? 'bg-card/85 backdrop-blur-xs border-border/80' : 'bg-muted/20 border-border/80'"
+            >
               <div class="text-[11px] font-mono uppercase tracking-wider text-muted-foreground font-semibold">
                 {{ currentPunch.direction === 'OUT' ? 'Departure Time' : 'Arrival Time' }}
               </div>
@@ -672,7 +737,7 @@ onUnmounted(() => {
               class="w-full max-w-md mx-auto rounded-xl border px-3 py-2 flex items-center justify-center gap-2 text-xs sm:text-sm shadow-2xs"
               :class="[
                 currentPunch.isLate && settings.lateVisualEnabled
-                  ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30 font-semibold'
+                  ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30 font-semibold backdrop-blur-xs'
                   : currentPunch.statusCategory === 'undertime'
                     ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 font-semibold'
                     : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 font-semibold'
@@ -700,15 +765,24 @@ onUnmounted(() => {
               v-if="currentSchedule"
               class="w-full max-w-md mx-auto grid grid-cols-3 gap-2 text-center text-xs"
             >
-              <div class="p-2 rounded-lg border bg-muted/20 border-border/60">
+              <div
+                class="p-2 rounded-lg border"
+                :class="isLateVisualActive ? 'bg-card/85 backdrop-blur-xs border-border/80' : 'bg-muted/20 border-border/60'"
+              >
                 <div class="text-[10px] font-mono uppercase tracking-wider text-muted-foreground font-medium">Scheduled In</div>
                 <div class="font-mono font-bold text-foreground text-xs sm:text-sm mt-0.5">{{ currentSchedule.standardIn }}</div>
               </div>
-              <div class="p-2 rounded-lg border bg-muted/20 border-border/60">
+              <div
+                class="p-2 rounded-lg border"
+                :class="isLateVisualActive ? 'bg-card/85 backdrop-blur-xs border-border/80' : 'bg-muted/20 border-border/60'"
+              >
                 <div class="text-[10px] font-mono uppercase tracking-wider text-muted-foreground font-medium">Expected Out</div>
                 <div class="font-mono font-bold text-foreground text-xs sm:text-sm mt-0.5">{{ currentSchedule.expectedOut }}</div>
               </div>
-              <div class="p-2 rounded-lg border bg-muted/20 border-border/60">
+              <div
+                class="p-2 rounded-lg border"
+                :class="isLateVisualActive ? 'bg-card/85 backdrop-blur-xs border-border/80' : 'bg-muted/20 border-border/60'"
+              >
                 <div class="text-[10px] font-mono uppercase tracking-wider text-muted-foreground font-medium">Grace Period</div>
                 <div class="font-mono font-bold text-foreground text-xs sm:text-sm mt-0.5">{{ currentSchedule.gracePeriod }}m</div>
               </div>
@@ -716,7 +790,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Bottom Auto-Dismiss Progress Bar -->
-          <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden shrink-0 mt-auto">
+          <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden shrink-0 mt-auto relative z-10">
             <div
               class="bg-primary h-full transition-all ease-linear"
               :style="{ width: `${isDisplayPaused ? 100 : dismissProgress}%` }"
