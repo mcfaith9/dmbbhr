@@ -51,6 +51,7 @@ viteProcess.on('error', (err) => {
 
 // 2. Start Biometric Agent Process with Auto-Restart Supervisor
 // Uses process.execPath with agentScriptPath directly - NO shell: true!
+let isCleaningUp = false
 let agentProcess = null
 let agentRestartTimer = null
 
@@ -90,8 +91,6 @@ function spawnBiometricAgent() {
 spawnBiometricAgent()
 
 // 3. Clean termination handling
-let isCleaningUp = false
-
 function cleanup() {
   if (isCleaningUp) return
   isCleaningUp = true
