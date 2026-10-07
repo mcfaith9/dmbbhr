@@ -23,6 +23,11 @@ import { employeeService } from '@/services/employees'
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from '@/components/ui/avatar'
 
 const currentPunch = punchDisplayService.currentPunch
 const recentPunches = punchDisplayService.recentPunches
@@ -41,6 +46,8 @@ let clockTimer: any = null
 let dismissTimer: any = null
 const dismissProgress = ref(100)
 let dismissProgressInterval: any = null
+// Temporary UI-only pause; does not stop or disconnect the biometric pipeline.
+const isDisplayPaused = ref(false)
 const photoLoadError = ref(false)
 
 // Custom late reminder graphic error tracking & validation (supports JPG/JPEG, PNG, data URIs, local paths)
@@ -255,6 +262,8 @@ function cancelDisplayTimer() {
 }
 
 function startDisplayTimer() {
+  if (isDisplayPaused.value) return
+
   cancelDisplayTimer()
 
   const durationSec = settings.value.displayDurationSeconds || 5
@@ -273,6 +282,47 @@ function startDisplayTimer() {
       cancelDisplayTimer()
     }, totalMs)
   }
+}
+
+function pauseDisplay() {
+  if (isDisplayPaused.value) return
+
+  isDisplayPaused.value = true
+  cancelDisplayTimer()
+}
+
+function resumeDisplay() {
+  if (!isDisplayPaused.value) return
+
+  isDisplayPaused.value = false
+
+  if (currentPunch.value) {
+    startDisplayTimer()
+  }
+}
+
+function toggleDisplayPause() {
+  if (isDisplayPaused.value) {
+    resumeDisplay()
+  } else {
+    pauseDisplay()
+  }
+}
+
+function handleDisplayKeyboard(event: KeyboardEvent) {
+  if (event.key.toLowerCase() !== 'p') return
+
+  const target = event.target as HTMLElement | null
+
+  if (
+    target?.tagName === 'INPUT' ||
+    target?.tagName === 'TEXTAREA' ||
+    target?.isContentEditable
+  ) {
+    return
+  }
+
+  toggleDisplayPause()
 }
 
 // Watch incoming punch to handle immediate replacement and timer reset
@@ -299,8 +349,10 @@ watch(
       triggerSubtleConfetti()
     }
 
-    // Start fresh display timer for this punch
-    startDisplayTimer()
+    // Start fresh display timer for this punch unless the display is temporarily paused
+    if (!isDisplayPaused.value) {
+      startDisplayTimer()
+    }
   }
 )
 
@@ -409,11 +461,15 @@ onMounted(async () => {
 
   // Auto-connect to agent if available
   liveAttendanceService.connect()
+
+  // Development/UI adjustment shortcut: P = Pause/Resume display timer
+  window.addEventListener('keydown', handleDisplayKeyboard)
 })
 
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
   cancelDisplayTimer()
+  window.removeEventListener('keydown', handleDisplayKeyboard)
   if (confettiAnimationId) cancelAnimationFrame(confettiAnimationId)
 })
 </script>
@@ -426,13 +482,23 @@ onUnmounted(() => {
     <!-- Top Bar / Kiosk Header (Native DMBBHR Style) -->
     <header class="border-b bg-card px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
       <div class="flex items-center gap-2.5">
-        <div class="size-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-2xs">
-          <Fingerprint class="size-4 text-primary" />
+        <div class="flex flex-row flex-wrap items-center gap-12">
+          <div class="*:data-[slot=avatar]:ring-background flex -space-x-2 *:data-[slot=avatar]:ring-2">
+            <Avatar class="size-9 border-2 border-slate-500 bg-white">
+              <AvatarImage src="/dmbblogo.png" alt="DMBB Logo" />
+              <AvatarFallback>DMBB</AvatarFallback>
+            </Avatar>
+
+            <Avatar class="size-9 border-2 border-slate-500 bg-white">
+              <AvatarImage src="/dbblogo.png" alt="DBB Logo" />
+              <AvatarFallback>DBB</AvatarFallback>
+            </Avatar>
+          </div>
         </div>
         <div>
           <div class="flex items-center gap-1.5">
             <span class="font-bold text-sm tracking-tight text-foreground">
-              DMBBHR Biometrics
+              DMBB / DBB Biometrics
             </span>
             <Badge variant="outline" class="text-[9px] font-mono px-1.5 py-0 bg-muted/40">
               Live Kiosk
@@ -447,11 +513,11 @@ onUnmounted(() => {
 
       <!-- Live Clock Display (Clean Neutral DMBBHR Style) -->
       <div class="flex flex-col items-center justify-center px-3.5 py-1 rounded-lg bg-muted/40 border shadow-2xs">
-        <div class="font-mono text-lg sm:text-xl font-bold tracking-tight text-foreground leading-none">
+        <div class="font-mono text-xl sm:text-xl font-bold tracking-tight text-foreground leading-none">
           {{ currentTimeStr }}
         </div>
-        <div class="text-[11px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
-          <CalendarIcon class="size-2.5 text-muted-foreground" />
+        <div class="text-[12px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
+          <CalendarIcon class="size-3 text-muted-foreground" />
           {{ currentDateStr }}
         </div>
       </div>
@@ -461,7 +527,7 @@ onUnmounted(() => {
         <!-- Live Status Badge -->
         <div
           v-if="settings.enabled"
-          class="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-muted/50 border text-xs"
+          class="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-muted/50 border text-xs"
         >
           <span class="relative flex size-2">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -471,11 +537,21 @@ onUnmounted(() => {
         </div>
         <div
           v-else
-          class="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300"
+          class="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300"
         >
           <PowerOff class="size-3 text-amber-600" />
           <span class="font-mono text-[10px] font-medium">DISABLED</span>
         </div>
+
+        <!-- Temporary Development Pause Indicator -->
+        <Badge
+          v-if="isDisplayPaused"
+          variant="outline"
+          class="hidden sm:flex items-center gap-1 text-[10px] font-mono font-bold text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10"
+        >
+          <span class="size-1.5 rounded-full bg-amber-500"></span>
+          PAUSED
+        </Badge>
 
         <!-- Audio Toggle -->
         <Button
@@ -523,7 +599,7 @@ onUnmounted(() => {
         <div
           v-if="currentPunch && settings.enabled"
           :key="currentPunch.eventId || currentPunch.id"
-          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col transition-all animate-in fade-in zoom-in-95 duration-200"
+          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col transition-all animate-in fade-in zoom-in-95 duration-200 h-full"
           :class="[
             hasCustomLateGraphic
               ? 'border-destructive/40 shadow-xl'
@@ -668,18 +744,18 @@ onUnmounted(() => {
                 <!-- Vertically Stacked Employee Information to the Right of Circular Image -->
                 <div class="flex flex-col justify-center text-left space-y-1 min-w-0 flex-1">
                   <!-- Employee Name (Prominent & Large) -->
-                  <h2 class="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight text-foreground leading-tight truncate">
+                  <h2 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-foreground leading-tight truncate">
                     {{ currentPunch.employeeName }}
                   </h2>
                   <!-- Bio ID -->
                   <div class="text-xs sm:text-sm text-muted-foreground font-mono font-medium">
-                    <span class="font-semibold text-foreground/90">Bio ID: {{ currentPunch.userId || currentPunch.bioId }}</span>
+                    <span class="font-semibold text-foreground/90">BIO ID: {{ currentPunch.userId || currentPunch.bioId }}</span>
                   </div>
                   <!-- Group & Department/company -->
                   <div class="text-xs sm:text-sm text-muted-foreground font-medium flex items-center gap-1.5 flex-wrap">
-                    <span>{{ currentPunch.workGroup || 'Group C' }}</span>
-                    <span class="text-border">•</span>
-                    <span>{{ currentPunch.locationName || currentPunch.department || 'DBB CEBU' }}</span>
+                    <span>{{ currentPunch.department || 'DMBB CEBU' }}</span>                    
+                    <span class="text-border">•</span>               
+                    <span class="uppercase">{{ currentPunch.workGroup || 'Group C' }}</span>     
                   </div>
                 </div>
               </div>
@@ -699,7 +775,7 @@ onUnmounted(() => {
 
               <!-- Detailed Status Feedback Callout -->
               <div
-                class="w-full rounded-xl border p-2 text-xs flex items-center justify-center gap-2 shadow-2xs"
+                class="w-full rounded-xl border p-2 text-sm flex items-center justify-center gap-1 shadow-2xs"
                 :class="[
                   currentPunch.isLate && settings.lateVisualEnabled
                     ? 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/30 font-semibold'
@@ -720,7 +796,7 @@ onUnmounted(() => {
           <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden mt-auto">
             <div
               class="bg-primary h-full transition-all ease-linear"
-              :style="{ width: `${dismissProgress}%` }"
+              :style="{ width: `${isDisplayPaused ? 100 : dismissProgress}%` }"
             ></div>
           </div>
         </div>
@@ -833,6 +909,20 @@ onUnmounted(() => {
         <span class="text-[10px] font-mono uppercase text-muted-foreground/70 font-semibold mr-1">
           TEST:
         </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-[11px] font-mono cursor-pointer"
+          :class="isDisplayPaused
+            ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
+            : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'"
+          :title="isDisplayPaused ? 'Resume automatic punch display' : 'Pause automatic punch display'"
+          @click="toggleDisplayPause"
+        >
+          <Play class="size-2.5 mr-1" />
+          <span>{{ isDisplayPaused ? 'Resume Display' : 'Pause Display' }}</span>
+        </Button>
+
         <Button
           variant="ghost"
           size="sm"
