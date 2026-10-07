@@ -2165,11 +2165,11 @@ onUnmounted(() => {
     <!-- ============================================================= -->
     <div
       v-if="showImportModal && importPreview"
-      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200"
+      class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
     >
-      <div class="bg-card text-card-foreground border rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div class="bg-card text-card-foreground border rounded-xl shadow-2xl w-full max-w-4xl max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col overflow-hidden my-auto">
         <!-- Dialog Header -->
-        <div class="p-4 border-b bg-muted/30 flex items-center justify-between">
+        <div class="p-3.5 sm:p-4 border-b bg-muted/30 flex items-center justify-between shrink-0">
           <div class="space-y-0.5">
             <div class="flex items-center gap-2">
               <FileSpreadsheet class="size-5 text-primary" />
@@ -2195,7 +2195,7 @@ onUnmounted(() => {
         <!-- Success notification if completed -->
         <div
           v-if="importResultSuccess"
-          class="p-4 m-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-900 dark:text-emerald-200 flex flex-col gap-2.5 animate-in fade-in duration-200"
+          class="p-3 sm:p-4 m-3 sm:m-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-900 dark:text-emerald-200 flex flex-col gap-2.5 animate-in fade-in duration-200 shrink-0"
         >
           <div class="flex items-center gap-2">
             <CheckCircle2 class="size-5 text-emerald-600 shrink-0" />
@@ -2217,58 +2217,58 @@ onUnmounted(() => {
         <!-- Error notification -->
         <div
           v-if="importError"
-          class="p-3 m-4 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2"
+          class="p-3 m-3 sm:m-4 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2 shrink-0"
         >
           <AlertCircle class="size-4 shrink-0" />
           <span>{{ importError }}</span>
         </div>
 
         <!-- Summary KPI Counter Cards -->
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 p-4 border-b bg-card">
-          <div class="rounded-lg border p-2.5 bg-muted/20">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-2.5 p-3 sm:p-4 border-b bg-card shrink-0">
+          <div class="rounded-lg border p-2 sm:p-2.5 bg-muted/20">
             <div class="text-[11px] text-muted-foreground font-medium">Total Rows</div>
-            <div class="text-lg font-bold font-mono text-foreground">{{ importPreview.totalRows }}</div>
+            <div class="text-base sm:text-lg font-bold font-mono text-foreground">{{ importPreview.totalRows }}</div>
           </div>
-          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
+          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2 sm:p-2.5">
             <div class="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-tight">Updated</div>
-            <div class="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+            <div class="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
               {{ importPreview.updatedCount }}
             </div>
           </div>
-          <div class="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2.5">
+          <div class="rounded-lg border border-purple-500/30 bg-purple-500/5 p-2 sm:p-2.5">
             <div class="text-[11px] text-purple-700 dark:text-purple-400 font-medium leading-tight">Status Changed</div>
-            <div class="text-lg font-bold font-mono text-purple-600 dark:text-purple-400">
+            <div class="text-base sm:text-lg font-bold font-mono text-purple-600 dark:text-purple-400">
               {{ importPreview.statusUpdatedCount }}
             </div>
           </div>
-          <div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-2.5">
+          <div class="rounded-lg border border-blue-500/30 bg-blue-500/5 p-2 sm:p-2.5">
             <div class="text-[11px] text-blue-700 dark:text-blue-400 font-medium leading-tight">New Employees</div>
-            <div class="text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
+            <div class="text-base sm:text-lg font-bold font-mono text-blue-600 dark:text-blue-400">
               {{ importPreview.newCount }}
             </div>
           </div>
-          <div class="rounded-lg border p-2.5 bg-muted/20">
+          <div class="rounded-lg border p-2 sm:p-2.5 bg-muted/20">
             <div class="text-[11px] text-muted-foreground font-medium">Unchanged</div>
-            <div class="text-lg font-bold font-mono text-foreground">
+            <div class="text-base sm:text-lg font-bold font-mono text-foreground">
               {{ importPreview.unchangedCount }}
             </div>
           </div>
-          <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 sm:p-2.5">
             <div class="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-tight">Warnings</div>
-            <div class="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+            <div class="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
               {{ importPreview.warningsCount }}
             </div>
           </div>
-          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-2.5">
+          <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-2 sm:p-2.5">
             <div class="text-[11px] text-destructive font-medium leading-tight">Invalid Rows</div>
-            <div class="text-lg font-bold font-mono text-destructive">
+            <div class="text-base sm:text-lg font-bold font-mono text-destructive">
               {{ importPreview.invalidCount }}
             </div>
           </div>
         </div>
 
         <!-- Target Status Breakdown strip -->
-        <div class="px-4 py-2 bg-muted/30 border-b flex items-center justify-between text-xs flex-wrap gap-2">
+        <div class="px-3 sm:px-4 py-2 bg-muted/30 border-b flex items-center justify-between text-xs flex-wrap gap-2 shrink-0">
           <div class="flex items-center gap-3 text-muted-foreground font-mono">
             <span class="text-foreground font-medium">Status Breakdown:</span>
             <span class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
@@ -2292,7 +2292,7 @@ onUnmounted(() => {
         <!-- Warning notice if unknown groups or warnings -->
         <div
           v-if="importPreview.warningsCount > 0"
-          class="px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2"
+          class="px-3 sm:px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2 shrink-0"
         >
           <AlertTriangle class="size-4 shrink-0 text-amber-600" />
           <span>
@@ -2301,7 +2301,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Filter & Search Toolbar -->
-        <div class="p-3 border-b bg-muted/20 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+        <div class="p-2.5 sm:p-3 border-b bg-muted/20 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 shrink-0">
           <div class="flex items-center gap-1 overflow-x-auto text-xs pb-1 sm:pb-0">
             <button
               type="button"
@@ -2379,12 +2379,12 @@ onUnmounted(() => {
         </div>
 
         <!-- Unified Table Area (Scrollable) -->
-        <div class="flex-1 overflow-y-auto min-h-[300px] max-h-[50vh]">
+        <div class="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
           <div v-if="filteredPreviewRows.length === 0" class="text-center py-12 text-xs text-muted-foreground">
             No rows match the selected filter.
           </div>
           <Table v-else>
-            <TableHeader class="sticky top-0 bg-muted/80 backdrop-blur-xs z-10 shadow-xs">
+            <TableHeader class="sticky top-0 bg-muted/95 backdrop-blur-xs z-10 shadow-xs">
               <TableRow class="text-xs">
                 <TableHead class="w-[85px] font-semibold">ID</TableHead>
                 <TableHead class="font-semibold">Name</TableHead>
@@ -2482,11 +2482,11 @@ onUnmounted(() => {
         </div>
 
         <!-- Dialog Footer Actions -->
-        <div class="p-4 border-t bg-muted/30 flex items-center justify-between gap-2 flex-wrap">
+        <div class="p-3 sm:p-4 border-t bg-muted/30 flex items-center justify-between gap-2 flex-wrap shrink-0">
           <div class="text-xs text-muted-foreground">
             Ready to apply <strong>{{ importPreview.recordsToApply.length }}</strong> employee profile changes to the local database.
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             <Button
               variant="outline"
               size="sm"
