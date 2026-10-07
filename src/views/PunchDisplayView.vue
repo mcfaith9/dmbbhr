@@ -171,6 +171,38 @@ function formatPunchDate(isoStr: string) {
   }
 }
 
+function formatHHMM(timeStr?: string) {
+  if (!timeStr) return ''
+  const [hStr, mStr] = timeStr.split(':')
+  const h = parseInt(hStr, 10)
+  const m = parseInt(mStr, 10)
+  if (isNaN(h)) return timeStr
+  const hour12 = h % 12 || 12
+  const ampm = h >= 12 ? 'PM' : 'AM'
+  return `${hour12}:${String(m || 0).padStart(2, '0')} ${ampm}`
+}
+
+const currentSchedule = computed(() => {
+  if (!currentPunch.value) return null
+  const punchWg = currentPunch.value.workGroup
+  const punchWgCode = currentPunch.value.workGroupCode
+  const wg = workGroups.value.find(
+    g => g.name === punchWg || g.code === punchWgCode || g.id === punchWg
+  )
+  if (wg) {
+    return {
+      standardIn: wg.standard_in ? formatHHMM(wg.standard_in) : '8:00 AM',
+      expectedOut: wg.expected_out ? formatHHMM(wg.expected_out) : '5:00 PM',
+      gracePeriod: wg.grace_period_minutes ?? 15
+    }
+  }
+  return {
+    standardIn: '8:00 AM',
+    expectedOut: '5:00 PM',
+    gracePeriod: 15
+  }
+})
+
 // Lightweight, graceful confetti burst for qualifying on-time/early IN punches
 function triggerSubtleConfetti() {
   if (!settings.value.confettiEnabled || !canvasRef.value) return
@@ -594,63 +626,61 @@ onUnmounted(() => {
     <main class="flex-1 min-h-0 px-3 sm:px-6 py-2.5 sm:py-3.5 flex flex-col lg:flex-row gap-4 max-w-7xl mx-auto w-full items-stretch justify-center overflow-hidden">
       
       <!-- Primary Active Punch / Idle Display Card -->
-      <section class="flex-1 min-h-0 flex flex-col justify-center max-w-2xl mx-auto w-full">
+      <section class="flex-1 min-h-0 flex flex-col justify-center max-w-2xl mx-auto w-full h-full">
         <!-- CURRENT PUNCH CARD (Modern Profile/Post Card Composition) -->
         <div
           v-if="currentPunch && settings.enabled"
           :key="currentPunch.eventId || currentPunch.id"
-          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col transition-all animate-in fade-in zoom-in-95 duration-200 h-full"
+          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between transition-all animate-in fade-in zoom-in-95 duration-200 h-full"
           :class="[
             hasCustomLateGraphic
-              ? 'border-destructive/40 shadow-xl'
+              ? 'border-destructive/40 shadow-xl bg-transparent'
               : (currentPunch.isLate && settings.lateVisualEnabled ? 'border-destructive/30 bg-card' : 'bg-card border-border/80')
           ]"
         >
           <!-- Full-Card/Cover Wallpaper for Late IN Punches when Custom Graphic Configured (supports JPG/JPEG, PNG) -->
           <template v-if="hasCustomLateGraphic">
             <div
-              class="absolute inset-0 bg-cover bg-center bg-no-repeat scale-105 transition-transform duration-700 pointer-events-none"
+              class="absolute inset-0 bg-cover bg-center bg-no-repeat transition-transform duration-700 pointer-events-none"
               :style="{ backgroundImage: `url('${settings.customLateImageUrl.trim()}')` }"
             ></div>
-            <!-- Subtle localized gradient (NOT heavy opaque bg-card/85 wash, NO full blur) so the wallpaper is clearly visible -->
-            <div class="absolute inset-0 bg-gradient-to-b from-black/40 via-black/15 to-black/55 pointer-events-none"></div>
+            <!-- Subtle readability overlay so wallpaper is clearly visible while text stays crisp -->
+            <div class="absolute inset-0 bg-black/50 dark:bg-black/60 pointer-events-none"></div>
           </template>
 
           <!-- 1. Profile Cover Area Header -->
           <div
-            class="relative w-full h-20 sm:h-24 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-4"
+            class="relative w-full h-28 sm:h-36 md:h-40 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-4"
             :class="[
               hasCustomLateGraphic
                 ? 'bg-transparent'
-                : 'bg-gradient-to-r from-primary/20 via-primary/10 to-muted/60 border-b border-border/40'
+                : (currentPunch.isLate && settings.lateVisualEnabled
+                    ? 'bg-gradient-to-r from-rose-950/70 via-rose-900/50 to-zinc-900 border-b border-rose-500/30'
+                    : 'bg-gradient-to-r from-slate-900 via-slate-800 to-zinc-900 dark:from-zinc-950 dark:via-zinc-900 dark:to-black border-b border-border/40')
             ]"
           >
             <!-- Decorative pattern on clean cover -->
             <div
               v-if="!hasCustomLateGraphic"
-              class="absolute inset-0 opacity-25 bg-[radial-gradient(circle_at_20%_30%,_var(--tw-gradient-stops))] from-primary/30 via-transparent to-transparent pointer-events-none"
+              class="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_30%_30%,_var(--tw-gradient-stops))] from-primary/40 via-transparent to-transparent pointer-events-none"
             ></div>
 
             <!-- Cover Left: Biometric Terminal Badge -->
             <div
-              class="relative z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider shadow-2xs"
+              class="relative z-10 flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider shadow-sm"
               :class="
                 hasCustomLateGraphic
-                  ? 'bg-black/55 text-white backdrop-blur-md border border-white/20'
-                  : currentPunch.isLate && settings.lateVisualEnabled
-                    ? 'bg-destructive/90 text-white border border-destructive/40'
-                    : 'bg-card/80 text-foreground border border-border/60 backdrop-blur-xs'
+                  ? 'bg-black/60 text-white backdrop-blur-md border border-white/20'
+                  : (currentPunch.isLate && settings.lateVisualEnabled
+                      ? 'bg-destructive/90 text-white border border-destructive/40'
+                      : 'bg-card/85 text-foreground border border-border/70 backdrop-blur-xs')
               "
             >
               <Fingerprint
                 class="size-3.5"
-                :class="
-                  hasCustomLateGraphic || (currentPunch.isLate && settings.lateVisualEnabled)
-                    ? 'text-white'
-                    : 'text-primary'
-                "
+                :class="hasCustomLateGraphic || (currentPunch.isLate && settings.lateVisualEnabled) ? 'text-white' : 'text-primary'"
               />
-              <span>Biometric Punch</span>
+              <span>{{ currentPunch.deviceName || 'Biometric Terminal' }}</span>
             </div>
 
             <!-- Cover Right: Status Indicator Badge -->
@@ -658,142 +688,228 @@ onUnmounted(() => {
               :variant="
                 currentPunch.isLate && settings.lateVisualEnabled
                   ? 'destructive'
-                  : currentPunch.statusCategory === 'undertime'
-                    ? 'warning'
-                    : 'success'
+                  : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
               "
               :class="[
-                'relative z-10 text-xs uppercase font-mono px-3 py-1 gap-1 shadow-xs font-bold',
-                currentPunch.isLate && settings.lateVisualEnabled
-                  ? 'text-white'
-                  : ''
+                'relative z-10 text-xs uppercase font-mono px-3 py-1 gap-1.5 shadow-sm font-bold',
+                currentPunch.isLate && settings.lateVisualEnabled ? 'text-white' : ''
               ]"
             >
               <CheckCircle2
                 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'"
                 class="size-3.5"
               />
-
               <AlertTriangle
                 v-else-if="currentPunch.statusCategory === 'undertime'"
                 class="size-3.5"
               />
-
               <AlertCircle
                 v-else
                 class="size-3.5"
               />
-
               <span>{{ currentPunch.statusLabel }}</span>
             </Badge>
           </div>
 
-          <!-- 2. Profile Body Area (Horizontal Employee Section + Punch Details) -->
-          <div class="relative z-10 px-5 sm:px-8 pb-4 sm:pb-5 pt-2 sm:pt-3 flex flex-col items-center">
-
-            <!-- Employee Profile Identity & Punch Details Container -->
-            <div
-              class="w-full max-w-lg transition-all space-y-3"
-              :class="hasCustomLateGraphic ? 'p-3.5 sm:p-4 rounded-2xl bg-card/80 dark:bg-card/85 backdrop-blur-md border border-border/50 shadow-md' : ''"
-            >
-              <!-- Horizontal Employee Section: Circular Profile Photo (Left) + Information (Right) -->
-              <div class="flex items-center justify-center gap-5 sm:gap-6 py-1">
-                <!-- Circular Profile Image (120-130px, border-radius: 50%, object-fit: cover) -->
-                <div class="relative shrink-0">
-                  <div
-                    class="w-[124px] h-[124px] sm:w-[128px] sm:h-[128px] rounded-full border-4 shadow-md overflow-hidden flex items-center justify-center transition-transform"
-                    :class="hasCustomLateGraphic ? 'border-card/90 bg-black/40 backdrop-blur-xs ring-2 ring-destructive/40' : 'border-card bg-muted/60 ring-2 ring-primary/20'"
-                    style="border-radius: 50%; width: 126px; height: 126px;"
-                  >
-                    <!-- Real photo if available and not errored -->
-                    <img
-                      v-if="currentPunch.photoUrl && !photoLoadError"
-                      :src="currentPunch.photoUrl"
-                      :alt="currentPunch.employeeName"
-                      class="size-full object-cover"
-                      style="border-radius: 50%; object-fit: cover;"
-                      @error="photoLoadError = true"
-                    />
-                    <!-- Avatar fallback placeholder -->
-                    <div
-                      v-else
-                      class="size-full flex items-center justify-center bg-primary/10 text-primary"
-                      style="border-radius: 50%;"
-                    >
-                      <User class="size-14 sm:size-16 text-muted-foreground/70" />
-                    </div>
-                  </div>
-
-                  <!-- Direction Badge Pin anchored to the circular avatar -->
-                  <div class="absolute -bottom-2 left-0 right-0 flex justify-center">
-                    <span
-                      class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase tracking-wider shadow-sm border text-center"
-                      :class="[
-                        currentPunch.direction === 'OUT'
-                          ? 'bg-rose-500 text-white border-rose-600'
-                          : currentPunch.direction === 'BREAK_OUT'
-                            ? 'bg-amber-500 text-white border-amber-600'
-                            : 'bg-emerald-500 text-white border-emerald-600'
-                      ]"
-                    >
-                      {{ currentPunch.stateLabel }}
-                    </span>
-                  </div>
-                </div>
-
-                <!-- Vertically Stacked Employee Information to the Right of Circular Image -->
-                <div class="flex flex-col justify-center text-left space-y-1 min-w-0 flex-1">
-                  <!-- Employee Name (Prominent & Large) -->
-                  <h2 class="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight text-foreground leading-tight truncate">
-                    {{ currentPunch.employeeName }}
-                  </h2>
-                  <!-- Bio ID -->
-                  <div class="text-xs sm:text-sm text-muted-foreground font-mono font-medium">
-                    <span class="font-semibold text-foreground/90">BIO ID: {{ currentPunch.userId || currentPunch.bioId }}</span>
-                  </div>
-                  <!-- Group & Department/company -->
-                  <div class="text-xs sm:text-sm text-muted-foreground font-medium flex items-center gap-1.5 flex-wrap">
-                    <span>{{ currentPunch.department || 'DMBB CEBU' }}</span>                    
-                    <span class="text-border">•</span>               
-                    <span class="uppercase">{{ currentPunch.workGroup || 'Group C' }}</span>     
-                  </div>
-                </div>
-              </div>
-
-              <!-- Prominent Punch Time and Date Card Block -->
+          <!-- 2. Circular Employee Photo (Centered Overlapping Bottom Edge of Cover) -->
+          <div class="flex justify-center -mt-14 sm:-mt-16 md:-mt-18 relative z-20 shrink-0">
+            <div class="relative">
               <div
-                class="py-2 px-4 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'bg-muted/40 border-border/60' : 'bg-muted/30 border-border/70'"
-              >
-                <div class="text-3xl sm:text-4xl font-extrabold font-mono tracking-tight text-foreground leading-none">
-                  {{ formatPunchTime(currentPunch.timestamp) }}
-                </div>
-                <div class="text-xs text-muted-foreground font-medium mt-1 leading-none">
-                  {{ formatPunchDate(currentPunch.timestamp) }}
-                </div>
-              </div>
-
-              <!-- Detailed Status Feedback Callout -->
-              <div
-                class="w-full rounded-xl border p-2 text-sm flex items-center justify-center gap-1 shadow-2xs"
+                class="size-28 sm:size-32 md:size-36 rounded-full border-4 shadow-xl overflow-hidden flex items-center justify-center transition-transform"
                 :class="[
-                  currentPunch.isLate && settings.lateVisualEnabled
-                    ? 'bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/30 font-semibold'
-                    : currentPunch.statusCategory === 'undertime'
-                    ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 font-semibold'
-                    : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 font-semibold'
+                  hasCustomLateGraphic
+                    ? 'border-slate-900 ring-4 ring-rose-500/40 bg-zinc-950 shadow-2xl'
+                    : (currentPunch.isLate && settings.lateVisualEnabled
+                        ? 'border-card ring-4 ring-rose-500/40 bg-zinc-900 shadow-xl'
+                        : 'border-card ring-4 ring-card/90 dark:ring-background/90 bg-muted/60 shadow-xl')
                 ]"
               >
-                <CheckCircle2 v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'" class="size-3.5 text-emerald-600 shrink-0" />
-                <AlertTriangle v-else-if="currentPunch.statusCategory === 'undertime'" class="size-3.5 text-amber-600 shrink-0" />
-                <AlertCircle v-else class="size-3.5 text-rose-600 shrink-0" />
-                <span class="truncate font-medium">{{ currentPunch.statusDetail }}</span>
+                <!-- Real photo if available and not errored -->
+                <img
+                  v-if="currentPunch.photoUrl && !photoLoadError"
+                  :src="currentPunch.photoUrl"
+                  :alt="currentPunch.employeeName"
+                  class="size-full object-cover"
+                  @error="photoLoadError = true"
+                />
+                <!-- Avatar fallback placeholder -->
+                <div
+                  v-else
+                  class="size-full flex items-center justify-center bg-primary/10 text-primary"
+                >
+                  <User class="size-14 sm:size-16 text-muted-foreground/70" />
+                </div>
+              </div>
+
+              <!-- Direction Badge Pin anchored to the circular avatar -->
+              <div class="absolute -bottom-2.5 left-0 right-0 flex justify-center">
+                <span
+                  class="px-3 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-black uppercase tracking-wider shadow-md border text-center"
+                  :class="[
+                    currentPunch.direction === 'OUT'
+                      ? 'bg-rose-500 text-white border-rose-600'
+                      : currentPunch.direction === 'BREAK_OUT'
+                        ? 'bg-amber-500 text-white border-amber-600'
+                        : currentPunch.direction === 'BREAK_IN'
+                          ? 'bg-blue-500 text-white border-blue-600'
+                          : 'bg-emerald-500 text-white border-emerald-600'
+                  ]"
+                >
+                  {{ currentPunch.stateLabel }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Profile Content Area (Identity + Punch Card + Schedule) -->
+          <div class="flex-1 flex flex-col justify-between px-4 sm:px-6 md:px-8 pt-4 pb-2 min-h-0 relative z-10">
+            <!-- A. Employee Identity -->
+            <div class="text-center space-y-1">
+              <h2
+                class="text-2xl sm:text-3xl font-extrabold tracking-tight truncate leading-tight"
+                :class="hasCustomLateGraphic ? 'text-white drop-shadow-md' : 'text-foreground'"
+              >
+                {{ currentPunch.employeeName }}
+              </h2>
+
+              <!-- BIO ID and Department -->
+              <div
+                class="flex items-center justify-center gap-2 text-xs sm:text-sm font-medium flex-wrap"
+                :class="hasCustomLateGraphic ? 'text-zinc-200' : 'text-muted-foreground'"
+              >
+                <span
+                  class="font-mono font-bold px-2 py-0.5 rounded border"
+                  :class="hasCustomLateGraphic ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/70 border-border/70 text-foreground'"
+                >
+                  BIO ID: {{ currentPunch.userId || currentPunch.bioId }}
+                </span>
+                <span :class="hasCustomLateGraphic ? 'text-zinc-400' : 'text-border'">•</span>
+                <span class="font-semibold">{{ currentPunch.department || 'Operations' }}</span>
+              </div>
+
+              <!-- Work Group and Location -->
+              <div
+                class="flex items-center justify-center gap-2 text-xs font-medium"
+                :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground/90'"
+              >
+                <span class="uppercase font-semibold">{{ currentPunch.workGroup || 'Group C' }}</span>
+                <span :class="hasCustomLateGraphic ? 'text-zinc-400' : 'text-border'">•</span>
+                <span>{{ currentPunch.locationName || 'DBB CEBU' }}</span>
+              </div>
+            </div>
+
+            <!-- B. Punch Information Card -->
+            <div
+              class="w-full max-w-lg mx-auto rounded-2xl border p-4 sm:p-5 flex flex-col items-center text-center shadow-xs transition-all my-2"
+              :class="[
+                hasCustomLateGraphic
+                  ? 'bg-black/60 dark:bg-black/70 backdrop-blur-md border-white/20 text-white shadow-xl'
+                  : (currentPunch.isLate && settings.lateVisualEnabled
+                      ? 'bg-rose-500/10 dark:bg-rose-950/20 border-rose-500/30 text-foreground'
+                      : 'bg-muted/35 dark:bg-muted/20 border-border/70 text-foreground')
+              ]"
+            >
+              <div
+                class="text-[11px] font-mono uppercase tracking-widest font-bold mb-1"
+                :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+              >
+                {{ currentPunch.direction === 'OUT' ? 'Departure Time' : 'Arrival Time' }}
+              </div>
+
+              <!-- Exact Punch Time -->
+              <div
+                class="text-4xl sm:text-5xl font-mono font-black tracking-tight leading-none my-1"
+                :class="hasCustomLateGraphic ? 'text-white drop-shadow-md' : 'text-foreground'"
+              >
+                {{ formatPunchTime(currentPunch.timestamp) }}
+              </div>
+
+              <!-- Punch Date -->
+              <div
+                class="text-xs sm:text-sm font-medium mt-1 mb-3.5 flex items-center gap-1.5"
+                :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+              >
+                <CalendarIcon class="size-3.5" />
+                <span>{{ formatPunchDate(currentPunch.timestamp) }}</span>
+              </div>
+
+              <!-- Attendance Result Strip -->
+              <div
+                class="w-full rounded-xl py-2 px-3 flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold border shadow-2xs"
+                :class="[
+                  currentPunch.isLate && settings.lateVisualEnabled
+                    ? 'bg-rose-500/20 text-rose-300 dark:text-rose-200 border-rose-500/40'
+                    : currentPunch.statusCategory === 'undertime'
+                      ? 'bg-amber-500/20 text-amber-200 border-amber-500/40'
+                      : 'bg-emerald-500/20 text-emerald-300 dark:text-emerald-200 border-emerald-500/40'
+                ]"
+              >
+                <CheckCircle2
+                  v-if="!currentPunch.isLate && currentPunch.statusCategory !== 'undertime'"
+                  class="size-4 shrink-0 text-emerald-400"
+                />
+                <AlertTriangle
+                  v-else-if="currentPunch.statusCategory === 'undertime'"
+                  class="size-4 shrink-0 text-amber-400"
+                />
+                <AlertCircle
+                  v-else
+                  class="size-4 shrink-0 text-rose-400"
+                />
+                <span class="uppercase tracking-wide font-mono font-bold">{{ currentPunch.statusLabel }}</span>
+                <span class="opacity-50 font-normal">•</span>
+                <span class="font-medium truncate">{{ currentPunch.statusDetail }}</span>
+              </div>
+            </div>
+
+            <!-- C. Supporting Schedule Context -->
+            <div
+              v-if="currentSchedule"
+              class="w-full max-w-lg mx-auto grid grid-cols-3 gap-2 sm:gap-3 text-center text-xs"
+            >
+              <div
+                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'bg-black/50 border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+              >
+                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Scheduled In</span>
+                <span
+                  class="font-mono font-bold text-xs sm:text-sm mt-0.5"
+                  :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
+                >
+                  {{ currentSchedule.standardIn }}
+                </span>
+              </div>
+
+              <div
+                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'bg-black/50 border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+              >
+                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Expected Out</span>
+                <span
+                  class="font-mono font-bold text-xs sm:text-sm mt-0.5"
+                  :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
+                >
+                  {{ currentSchedule.expectedOut }}
+                </span>
+              </div>
+
+              <div
+                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'bg-black/50 border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+              >
+                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Grace Period</span>
+                <span
+                  class="font-mono font-bold text-xs sm:text-sm mt-0.5"
+                  :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
+                >
+                  {{ currentSchedule.gracePeriod }} mins
+                </span>
               </div>
             </div>
           </div>
 
           <!-- Bottom Auto-Dismiss Progress Bar -->
-          <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1 overflow-hidden mt-auto">
+          <div v-if="(settings.displayDurationSeconds || 5) > 0" class="w-full bg-muted/40 h-1.5 overflow-hidden shrink-0 relative z-10">
             <div
               class="bg-primary h-full transition-all ease-linear"
               :style="{ width: `${isDisplayPaused ? 100 : dismissProgress}%` }"
@@ -804,40 +920,43 @@ onUnmounted(() => {
         <!-- IDLE / WAITING STATE CARD (Profile-Style Kiosk Design) -->
         <div
           v-else
-          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col bg-card"
+          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col bg-card h-full justify-between"
         >
           <!-- Idle Cover Banner -->
-          <div class="h-24 sm:h-28 w-full bg-gradient-to-r from-muted/60 via-muted/40 to-muted/80 border-b flex items-start justify-between p-3.5 sm:p-4">
-            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium bg-card/80 border text-muted-foreground">
+          <div class="h-28 sm:h-36 md:h-40 w-full bg-gradient-to-r from-slate-900 via-slate-800 to-zinc-900 dark:from-zinc-950 dark:via-zinc-900 dark:to-black border-b border-border/40 shrink-0 flex items-start justify-between p-3.5 sm:p-4 relative">
+            <div class="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-mono font-semibold tracking-wider uppercase bg-card/80 border text-foreground shadow-2xs backdrop-blur-xs">
               <Fingerprint class="size-3.5 text-primary" />
               <span>Terminal Standby</span>
             </div>
-            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-medium">
+            <div class="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-mono bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 font-bold shadow-2xs">
               <span class="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
               <span>READY</span>
             </div>
           </div>
 
-          <!-- Idle Profile Body -->
-          <div class="px-6 sm:px-8 pb-6 sm:pb-8 pt-0 flex flex-col items-center text-center space-y-3">
-            <div class="relative -mt-12 sm:-mt-14 size-22 sm:size-26 rounded-2xl border-4 border-card bg-primary/10 text-primary shadow-md flex items-center justify-center">
-              <Fingerprint class="size-11 sm:size-13 text-primary animate-pulse" />
+          <!-- Idle Avatar Centered Overlapping Cover -->
+          <div class="flex justify-center -mt-14 sm:-mt-16 md:-mt-18 relative z-20 shrink-0">
+            <div class="size-28 sm:size-32 md:size-36 rounded-full border-4 border-card ring-4 ring-card/80 dark:ring-background/80 shadow-xl bg-primary/10 text-primary flex items-center justify-center">
+              <Fingerprint class="size-14 sm:size-16 text-primary animate-pulse" />
             </div>
+          </div>
 
-            <div class="space-y-1 max-w-md mx-auto pt-1">
-              <h2 class="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-                Ready for biometric scan
-              </h2>
-              <p class="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                Please place your registered finger on the optical sensor.
-              </p>
-            </div>
-
-            <div class="pt-1 flex items-center justify-center gap-2 text-xs text-muted-foreground font-mono">
+          <!-- Idle Instructions Body -->
+          <div class="flex-1 flex flex-col justify-center items-center text-center px-6 py-4 space-y-2 min-h-0">
+            <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+              Ready for Biometric Scan
+            </h2>
+            <p class="text-xs sm:text-sm text-muted-foreground max-w-sm leading-relaxed">
+              Place your registered finger on the optical sensor to record your attendance punch.
+            </p>
+            <div class="pt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground font-mono">
               <Server class="size-3 text-muted-foreground" />
               <span>BISMAC BISBIO B-29b • Port 4370</span>
             </div>
           </div>
+
+          <!-- Standby footer line -->
+          <div class="h-1.5 w-full bg-muted/40 shrink-0"></div>
         </div>
       </section>
 
