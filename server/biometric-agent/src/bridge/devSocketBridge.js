@@ -118,12 +118,17 @@ class DevSocketBridge {
         return;
       }
 
-      if (req.url === '/api/logs') {
+      if (req.url === '/api/logs' || req.url.startsWith('/api/logs?')) {
+        const urlObj = new URL(req.url, 'http://localhost');
+        const fetchAll = urlObj.searchParams.get('all') === 'true';
+        const limit = parseInt(urlObj.searchParams.get('limit') || '50', 10);
+        const logsToSend = fetchAll ? this.deviceLogs : this.deviceLogs.slice(-limit);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'ok',
-          count: this.deviceLogs.length,
-          logs: this.deviceLogs
+          totalCount: this.deviceLogs.length,
+          count: logsToSend.length,
+          logs: logsToSend
         }));
         return;
       }
@@ -222,12 +227,13 @@ class DevSocketBridge {
 
       this.clients.add(client);
 
-      // Immediately send current live device status, all retrieved device logs, and recent events
+      // Immediately send current live device status, recent logs (last 50 for instant UI load), and recent events
+      // Cap initial handshake so reopening Chrome is instant and never dumps megabytes into memory
       this.sendToClient(client, {
         type: 'INITIAL_STATE',
         payload: {
           device: { ...this.deviceState },
-          logs: this.deviceLogs,
+          logs: this.deviceLogs.slice(-50),
           recentEvents: this.recentEvents.slice(0, 10)
         }
       });

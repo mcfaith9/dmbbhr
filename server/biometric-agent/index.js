@@ -157,6 +157,30 @@ async function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+// Zero Silent Exits: Catch unhandled exceptions and promise rejections
+// Log cleanly and trigger automatic socket drop recovery instead of killing the Node process
+process.on('uncaughtException', (err) => {
+  const errMsg = err?.message || String(err);
+  log(`[WARNING - Uncaught Exception]: ${errMsg}`);
+  if (err?.stack) {
+    console.error(err.stack);
+  }
+  if (!isShuttingDown) {
+    handleRealtimeSocketDrop(`Uncaught error: ${errMsg}`);
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  const reasonMsg = reason instanceof Error ? reason.message : String(reason);
+  log(`[WARNING - Unhandled Rejection]: ${reasonMsg}`);
+  if (reason instanceof Error && reason.stack) {
+    console.error(reason.stack);
+  }
+  if (!isShuttingDown) {
+    handleRealtimeSocketDrop(`Unhandled rejection: ${reasonMsg}`);
+  }
+});
+
 // Entry point
 bridge.start();
 startRealtimeAgent();

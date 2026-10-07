@@ -133,15 +133,6 @@ class LiveAttendanceService {
           this.notifyStatusListeners()
         }
       }
-
-      const logsRes = await fetch(`${httpBase}/api/logs`, { signal: AbortSignal.timeout(3000) })
-      if (logsRes.ok) {
-        const logData = await logsRes.json()
-        if (Array.isArray(logData.logs) && logData.logs.length > 0) {
-          attendanceService.setDeviceLogs(logData.logs)
-          this.notifyLogsListeners()
-        }
-      }
     } catch {
       // Quiet fallback if agent is not running
     }

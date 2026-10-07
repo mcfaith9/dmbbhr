@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { Monitor, ExternalLink } from '@lucide/vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { punchDisplayService } from '@/services/punchDisplay'
+import { Button } from '@/components/ui/button'
 import {
   SidebarProvider,
   SidebarInset,
@@ -109,6 +112,20 @@ const breadcrumbs = computed(() => {
                 BISMAC B-29b
               </span>
             </router-link>
+
+            <!-- Dedicated Monitor 2 Punch Display Launcher -->
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 gap-1.5 text-xs font-medium cursor-pointer"
+              title="Launch dedicated Punch Display window for Monitor 2"
+              @click="punchDisplayService.openPunchDisplay()"
+            >
+              <Monitor class="size-3.5 text-primary" />
+              <span class="hidden sm:inline">Punch Display</span>
+              <span class="text-[10px] text-muted-foreground font-mono hidden lg:inline">(Monitor 2)</span>
+              <ExternalLink class="size-3 text-muted-foreground" />
+            </Button>
           </div>
         </header>
 
