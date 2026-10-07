@@ -49,26 +49,45 @@ viteProcess.on('error', (err) => {
   console.error('\n[Vite Server Launch Error]:', err.message);
 })
 
-// 2. Start Biometric Agent Process
-// Using process.execPath with agentScriptPath directly - NO shell: true!
-console.log('Starting Biometric Agent...\n');
-const agentProcess = spawn(process.execPath, [agentScriptPath], {
-  cwd: rootDir,
-  stdio: 'inherit',
-  windowsHide: false
-})
+// 2. Start Biometric Agent Process with Auto-Restart Supervisor
+// Uses process.execPath with agentScriptPath directly - NO shell: true!
+let agentProcess = null
+let agentRestartTimer = null
 
-agentProcess.on('error', (err) => {
-  console.error('\n[Biometric Agent Launch Error]:', err.message);
-})
+function spawnBiometricAgent() {
+  if (isCleaningUp) return
 
-agentProcess.on('exit', (code, signal) => {
-  if (code !== null && code !== 0) {
-    console.warn(`\n[Biometric Agent] Process exited with code ${code}`);
-  } else if (signal) {
-    console.log(`\n[Biometric Agent] Process terminated with signal ${signal}`);
-  }
-})
+  console.log('[Supervisor] Spawning Biometric Agent process...\n')
+  agentProcess = spawn(process.execPath, [agentScriptPath], {
+    cwd: rootDir,
+    stdio: 'inherit',
+    windowsHide: false
+  })
+
+  agentProcess.on('error', (err) => {
+    console.error('\n[Biometric Agent Launch Error]:', err.message)
+  })
+
+  agentProcess.on('exit', (code, signal) => {
+    if (isCleaningUp) return
+
+    if (code !== null && code !== 0) {
+      console.warn(`\n[Supervisor] Biometric Agent process exited unexpectedly with code ${code}.`)
+    } else if (signal) {
+      console.warn(`\n[Supervisor] Biometric Agent process terminated with signal ${signal}.`)
+    } else {
+      console.warn(`\n[Supervisor] Biometric Agent stopped unexpectedly.`)
+    }
+
+    console.log('[Supervisor] Auto-restarting Biometric Agent in 5 seconds to maintain shift continuity...')
+    agentRestartTimer = setTimeout(() => {
+      agentRestartTimer = null
+      spawnBiometricAgent()
+    }, 5000)
+  })
+}
+
+spawnBiometricAgent()
 
 // 3. Clean termination handling
 let isCleaningUp = false
@@ -76,19 +95,24 @@ let isCleaningUp = false
 function cleanup() {
   if (isCleaningUp) return
   isCleaningUp = true
-  console.log('\n[DMBBHR] Shutting down Vite and Biometric Agent...');
-  
+  console.log('\n[DMBBHR] Shutting down Vite and Biometric Agent...')
+
+  if (agentRestartTimer) {
+    clearTimeout(agentRestartTimer)
+    agentRestartTimer = null
+  }
+
   if (agentProcess && !agentProcess.killed) {
-    try { agentProcess.kill('SIGINT'); } catch {}
+    try { agentProcess.kill('SIGINT') } catch {}
   }
   if (viteProcess && !viteProcess.killed) {
-    try { viteProcess.kill('SIGINT'); } catch {}
+    try { viteProcess.kill('SIGINT') } catch {}
   }
-  
+
   setTimeout(() => {
-    try { if (agentProcess && !agentProcess.killed) agentProcess.kill('SIGKILL'); } catch {}
-    try { if (viteProcess && !viteProcess.killed) viteProcess.kill('SIGKILL'); } catch {}
-    process.exit(0);
+    try { if (agentProcess && !agentProcess.killed) agentProcess.kill('SIGKILL') } catch {}
+    try { if (viteProcess && !viteProcess.killed) viteProcess.kill('SIGKILL') } catch {}
+    process.exit(0)
   }, 1000)
 }
 
