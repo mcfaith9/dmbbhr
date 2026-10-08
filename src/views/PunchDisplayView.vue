@@ -263,7 +263,7 @@ function hideAnnouncement() {
   }
 }
 
-const IDLE_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes idle time
+const IDLE_TIMEOUT_MS = 1 * 60 * 1000 // 3 minutes idle time
 
 function resetIdleTimer() {
   if (idleTimer) {
@@ -763,7 +763,7 @@ onUnmounted(() => {
 
             <!-- Celebrant Name & Dept -->
             <div class="space-y-1 sm:space-y-1.5">
-              <h3 class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-foreground leading-tight">
+              <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight">
                 {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
               </h3>
               <div v-if="currentAnnouncement.department" class="text-sm sm:text-base md:text-lg font-mono text-muted-foreground uppercase tracking-widest font-semibold">
@@ -779,7 +779,7 @@ onUnmounted(() => {
 
           <!-- Standard Announcement / Reminder Layout -->
           <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4">
-            <h3 class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
+            <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
               {{ currentAnnouncement.title }}
             </h3>
             <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
