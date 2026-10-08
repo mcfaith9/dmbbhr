@@ -1125,104 +1125,48 @@ onUnmounted(() => {
             <!-- C1. TODAY'S PUNCH RECAP (When Direction is OUT) -->
             <div
               v-if="currentPunch.direction === 'OUT'"
-              class="w-full max-w-lg mx-auto rounded-2xl border p-3.5 sm:p-4 text-center shadow-2xs transition-all my-1"
-              :class="[
-                hasCustomLateGraphic
-                  ? 'border-white/20 bg-black/45 text-white backdrop-blur-md'
-                  : 'bg-muted/30 border-border/70 text-foreground'
-              ]"
+              class="w-full max-w-lg mx-auto grid grid-cols-3 gap-2 sm:gap-3 text-center text-xs"
             >
-              <!-- Recap Header -->
               <div
-                class="flex items-center justify-between border-b pb-2 mb-2.5 text-[11px]"
-                :class="hasCustomLateGraphic ? 'border-white/15' : 'border-border/60'"
+                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span
-                  class="font-mono uppercase tracking-widest font-black flex items-center gap-1.5"
-                  :class="hasCustomLateGraphic ? 'text-white' : 'text-primary'"
-                >
-                  <Clock class="size-3.5" />
-                  <span>TODAY'S PUNCH RECAP</span>
-                </span>
-                <span
-                  class="font-mono text-[10px] uppercase tracking-wider opacity-75"
-                  :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
-                >
-                  Daily Shift Summary
+                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Time In</span>
+                <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
+                  {{ recapTimeIn }}
                 </span>
               </div>
 
-              <!-- Two Column Time Grid: TIME IN vs TIME OUT -->
-              <div class="grid grid-cols-2 gap-2.5 sm:gap-3 mb-2.5">
-                <!-- TIME IN -->
-                <div
-                  class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="hasCustomLateGraphic ? 'border-white/15 bg-white/5' : 'bg-card border-border/60'"
-                >
-                  <span class="text-[10px] font-mono uppercase tracking-wider font-semibold opacity-80">TIME IN</span>
-                  <span
-                    class="font-mono font-extrabold text-sm sm:text-base mt-0.5 tracking-tight"
-                    :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
-                  >
-                    {{ recapTimeIn }}
-                  </span>
-                  <span
-                    class="text-[9px] font-mono uppercase tracking-wider mt-0.5"
-                    :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
-                  >
-                    Actual
-                  </span>
-                </div>
-
-                <!-- TIME OUT -->
-                <div
-                  class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="hasCustomLateGraphic ? 'border-white/15 bg-white/5' : 'bg-card border-border/60'"
-                >
-                  <span class="text-[10px] font-mono uppercase tracking-wider font-semibold opacity-80">TIME OUT</span>
-                  <span
-                    class="font-mono font-extrabold text-sm sm:text-base mt-0.5 tracking-tight"
-                    :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
-                  >
-                    {{ formatPunchTime(currentPunch.timestamp) }}
-                  </span>
-                  <span
-                    class="text-[9px] font-mono uppercase tracking-wider mt-0.5"
-                    :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
-                  >
-                    Actual
-                  </span>
-                </div>
-              </div>
-
-              <!-- Scheduled Times (Secondary) -->
               <div
-                v-if="currentSchedule"
-                class="text-[11px] font-mono text-center flex items-center justify-center gap-1.5 opacity-90 mb-2"
-                :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="uppercase tracking-wider">Scheduled:</span>
-                <span class="font-bold" :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'">
-                  {{ currentSchedule.standardIn }} → {{ currentSchedule.expectedOut }}
+                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Time Out</span>
+                <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
+                  {{ formatPunchTime(currentPunch.timestamp) }}
                 </span>
               </div>
 
-              <!-- Existing Attendance Result -->
-              <div class="flex justify-center mt-1">
-                <Badge
-                  :variant="
-                    currentPunch.isLate
-                      ? 'destructive'
-                      : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
-                  "
-                  class="px-3.5 py-1 text-xs font-mono font-black uppercase tracking-wider"
-                  :class="currentPunch.isLate ? 'text-white' : ''"
-                >
-                  {{ recapResultText }}
-                </Badge>
+              <div
+                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+              >
+                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Remarks</span>
+                <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
+                  <Badge
+                    :variant="
+                      currentPunch.isLate
+                        ? 'destructive'
+                        : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
+                    "
+                    class="px-3.5 py-1 text-xs font-mono font-black uppercase tracking-wider"
+                    :class="currentPunch.isLate ? 'text-white' : ''"
+                  >
+                    {{ recapResultText }}
+                  </Badge>
+                </span>
               </div>
             </div>
-
             <!-- C2. Supporting Schedule Context (When Direction is NOT OUT) -->
             <div
               v-else-if="currentSchedule"
