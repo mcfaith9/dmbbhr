@@ -93,6 +93,31 @@ let eventCounter = 0
 const PRIMARY_CHANNEL_NAME = 'dmbbhr-punch-display'
 const FALLBACK_CHANNEL_NAME = 'dmbbhr-punch-channel'
 const SETTINGS_KEY = 'dmbbhr_punch_display_settings'
+const OFFSET_STORAGE_KEY = 'dmbbhr_device_time_offset'
+const LAST_DEVICE_TIME_KEY = 'dmbbhr_last_device_timestamp'
+
+function loadInitialOffset(): number | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = localStorage.getItem(OFFSET_STORAGE_KEY)
+    if (stored !== null && stored !== '') {
+      const val = Number(stored)
+      return isNaN(val) ? null : val
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+function loadInitialDeviceTimestamp(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return localStorage.getItem(LAST_DEVICE_TIME_KEY)
+  } catch {
+    return null
+  }
+}
 
 const DEFAULT_SETTINGS: PunchDisplaySettings = {
   enabled: true,
@@ -126,6 +151,13 @@ class PunchDisplayService {
   
   // Persistent Settings
   public settings = ref<PunchDisplaySettings>(this.loadSettings())
+
+  // Device Wall-Clock Synchronization State
+  // Calculates: deviceTimeOffset = devicePunchTimestampMs - browserNowMs
+  // Visual clock = Date.now() + deviceTimeOffset
+  public deviceTimeOffset = ref<number | null>(loadInitialOffset())
+  public clockSource = ref<'device' | 'local'>(loadInitialOffset() !== null ? 'device' : 'local')
+  public lastDeviceTimestamp = ref<string | null>(loadInitialDeviceTimestamp())
 
   constructor() {
     this.initChannels()
@@ -215,6 +247,16 @@ class PunchDisplayService {
 
       if (event.data.type === 'SETTINGS_UPDATED' && event.data.payload) {
         this.settings.value = { ...DEFAULT_SETTINGS, ...event.data.payload }
+        return
+      }
+
+      if (event.data.type === 'DEVICE_CLOCK_OFFSET' && event.data.payload) {
+        const offset = Number(event.data.payload.offset)
+        if (!isNaN(offset)) {
+          this.deviceTimeOffset.value = offset
+          this.clockSource.value = 'device'
+          this.lastDeviceTimestamp.value = event.data.payload.deviceTimestamp || null
+        }
         return
       }
 
@@ -471,9 +513,76 @@ class PunchDisplayService {
     this.currentPunch.value = { ...event }
     this.punchHistory.value = this.recentPunches.value
 
+    // Refresh navbar clock offset directly from the incoming biometric punch timestamp
+    if (event.timestamp) {
+      this.updateDeviceTimeOffset(event.timestamp)
+    }
+
     if (this.settings.value.soundEnabled) {
       this.playChime()
     }
+  }
+
+  /**
+   * Refreshes the display clock offset from a valid biometric punch timestamp.
+   * Preserves the device's clock exactly without adjusting or fixing the hardware time.
+   *
+   * deviceTimeOffset = devicePunchTimestampMs - browserNowMs
+   * Punch Display Clock = Date.now() + deviceTimeOffset
+   */
+  public updateDeviceTimeOffset = (deviceTimestampStr: string): void => {
+    if (!deviceTimestampStr) return
+    try {
+      const deviceDate = new Date(deviceTimestampStr)
+      const deviceMs = deviceDate.getTime()
+      if (isNaN(deviceMs)) return
+
+      const now = Date.now()
+      const offset = deviceMs - now
+      this.deviceTimeOffset.value = offset
+      this.clockSource.value = 'device'
+      this.lastDeviceTimestamp.value = deviceTimestampStr
+
+      try {
+        localStorage.setItem(OFFSET_STORAGE_KEY, String(offset))
+        localStorage.setItem(LAST_DEVICE_TIME_KEY, deviceTimestampStr)
+      } catch {
+        // ignore
+      }
+
+      // Broadcast clock offset update to other open tabs / child windows
+      const msg = {
+        type: 'DEVICE_CLOCK_OFFSET',
+        payload: {
+          offset,
+          deviceTimestamp: deviceTimestampStr
+        }
+      }
+      try {
+        this.primaryChannel?.postMessage(msg)
+        this.fallbackChannel?.postMessage(msg)
+      } catch {
+        // ignore
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Returns the current device time offset in milliseconds.
+   * Priority 1: Last known biometric offset (if previously received / stored)
+   * Priority 2: 0 (normal browser local time) if never received
+   */
+  public getDeviceTimeOffset = (): number => {
+    return this.deviceTimeOffset.value ?? 0
+  }
+
+  /**
+   * Computes the current wall-clock date matching the BISBIO device time.
+   */
+  public getDeviceAlignedDate = (): Date => {
+    return new Date(Date.now() + this.getDeviceTimeOffset())
   }
 
   public formatTimeDisplay(isoStr: string): string {

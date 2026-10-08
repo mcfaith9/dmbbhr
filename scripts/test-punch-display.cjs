@@ -470,4 +470,78 @@ assert.strictEqual(simulateAnnounce(punch1), false, 'Duplicate event must NOT an
 const punch2 = { eventId: 'ev-punch-2', bioId: '25065', direction: 'IN', timestamp: '2026-10-05T08:05:08' }
 assert.strictEqual(simulateAnnounce(punch2), true, 'Subsequent new punch announces')
 
-console.log('✅ ALL PUNCH DISPLAY & VOICE ANNOUNCEMENT TESTS PASSED SUCCESSFULLY! 🎉')
+// 18. Biometric Device Clock Offset & Navbar Clock Acceptance Tests
+class ClockManager {
+  constructor() {
+    this.deviceTimeOffset = null
+    this.clockSource = 'local'
+  }
+
+  updateDeviceTimeOffset(deviceTimestampStr, currentMockTimeMs) {
+    const deviceMs = new Date(deviceTimestampStr).getTime()
+    if (isNaN(deviceMs)) return
+    this.deviceTimeOffset = deviceMs - currentMockTimeMs
+    this.clockSource = 'device'
+  }
+
+  getDeviceTimeOffset() {
+    return this.deviceTimeOffset ?? 0
+  }
+
+  getDisplayTime(currentMockTimeMs) {
+    return new Date(currentMockTimeMs + this.getDeviceTimeOffset())
+  }
+
+  formatTime(date) {
+    return new Intl.DateTimeFormat('en-PH', {
+      timeZone: 'Asia/Manila',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }).format(date)
+  }
+}
+
+// Test E — Fresh startup with no biometric timestamp
+const clockMgr = new ClockManager()
+assert.strictEqual(clockMgr.clockSource, 'local', 'Test E: Fresh startup source is local')
+assert.strictEqual(clockMgr.getDeviceTimeOffset(), 0, 'Test E: Fresh startup offset is 0')
+
+// Test A — Device behind PC (PC: 10:05:00 AM, Device: 10:02:15 AM)
+// Mock base: 2026-10-08 10:05:00 Asia/Manila (+08:00)
+const mockPcTime = new Date('2026-10-08T10:05:00+08:00').getTime()
+const devicePunchTime = '2026-10-08T10:02:15+08:00' // 2m 45s behind PC
+
+// Device punch arrives:
+clockMgr.updateDeviceTimeOffset(devicePunchTime, mockPcTime)
+
+assert.strictEqual(clockMgr.clockSource, 'device', 'Test A: Source switched to device')
+assert.strictEqual(clockMgr.deviceTimeOffset, -165000, 'Test A: Offset is -165,000ms (-2m45s)')
+
+const navbarClockAtPunch = clockMgr.getDisplayTime(mockPcTime)
+assert.strictEqual(clockMgr.formatTime(navbarClockAtPunch), '10:02:15 AM', 'Test A: Navbar clock must match punch time (10:02:15 AM)')
+assert.notStrictEqual(clockMgr.formatTime(navbarClockAtPunch), '10:05:00 AM', 'Test A: Navbar clock must NOT be PC time')
+
+// Test B — Clock continues ticking forward locally without device contact
+// 30 seconds elapse on PC:
+const mockPcTimeAfter30s = mockPcTime + 30000
+const navbarClockAfter30s = clockMgr.getDisplayTime(mockPcTimeAfter30s)
+assert.strictEqual(clockMgr.formatTime(navbarClockAfter30s), '10:02:45 AM', 'Test B: After 30s, navbar clock must advance to 10:02:45 AM')
+
+// Test C — Device disconnects
+// Biometric connection is severed, no punches arrive for 5 minutes (300,000ms)
+const mockPcTimeAfter5m = mockPcTimeAfter30s + 270000
+const navbarClockDisconnected = clockMgr.getDisplayTime(mockPcTimeAfter5m)
+assert.strictEqual(clockMgr.formatTime(navbarClockDisconnected), '10:07:15 AM', 'Test C: Disconnected clock continues with last known offset')
+assert.strictEqual(clockMgr.deviceTimeOffset, -165000, 'Test C: Offset is preserved during disconnect')
+
+// Test D — Reconnect and new punch received
+// Device sends next punch at 10:07:20 AM (device time) when PC is at 10:10:00 AM
+const mockPcTimeAtReconnect = mockPcTimeAfter5m
+const newDevicePunchTime = '2026-10-08T10:07:20+08:00'
+clockMgr.updateDeviceTimeOffset(newDevicePunchTime, mockPcTimeAtReconnect)
+const navbarClockReconnected = clockMgr.getDisplayTime(mockPcTimeAtReconnect)
+assert.strictEqual(clockMgr.formatTime(navbarClockReconnected), '10:07:20 AM', 'Test D: Reconnected navbar matches new punch time')
+
+console.log('✅ ALL PUNCH DISPLAY, VOICE ANNOUNCEMENT & DEVICE CLOCK TESTS PASSED SUCCESSFULLY! 🎉')

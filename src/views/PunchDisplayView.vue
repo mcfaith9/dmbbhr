@@ -36,6 +36,7 @@ import {
 const currentPunch = punchDisplayService.currentPunch
 const recentPunches = punchDisplayService.recentPunches
 const settings = punchDisplayService.settings
+const clockSource = punchDisplayService.clockSource
 const isFullscreen = ref(false)
 
 const employees = ref<Employee[]>([])
@@ -110,14 +111,14 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 let confettiAnimationId: any = null
 
 function updateClock() {
-  const now = new Date()
+  const displayDate = punchDisplayService.getDeviceAlignedDate()
   currentTimeStr.value = new Intl.DateTimeFormat('en-PH', {
     timeZone: 'Asia/Manila',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: true
-  }).format(now)
+  }).format(displayDate)
 
   currentDateStr.value = new Intl.DateTimeFormat('en-PH', {
     timeZone: 'Asia/Manila',
@@ -125,7 +126,7 @@ function updateClock() {
     month: 'long',
     day: 'numeric',
     year: 'numeric'
-  }).format(now)
+  }).format(displayDate)
 }
 
 function toggleSound() {
@@ -637,6 +638,12 @@ watch(
 
     const punch = currentPunch.value
 
+    // Synchronize navbar clock offset directly with the biometric punch timestamp
+    if (punch.timestamp) {
+      punchDisplayService.updateDeviceTimeOffset(punch.timestamp)
+      updateClock()
+    }
+
     // Trigger celebration only for qualifying positive IN (early / on-time)
     if (
       settings.value.confettiEnabled &&
@@ -940,10 +947,18 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Live Clock Display (Clean Neutral DMBBHR Style) -->
-      <div class="flex flex-col items-center justify-center px-3.5 py-1 rounded-lg bg-muted/40 border shadow-2xs">
-        <div class="font-mono text-xl sm:text-xl font-bold tracking-tight text-foreground leading-none">
-          {{ currentTimeStr }}
+      <!-- Live Clock Display (Matches BISMAC BISBIO B-29b Biometric Hardware Time) -->
+      <div class="flex flex-col items-center justify-center px-3.5 py-1">
+        <div class="flex items-center gap-1.5 leading-none">
+          <span class="font-mono text-xl sm:text-xl font-bold tracking-tight text-foreground leading-none">
+            {{ currentTimeStr }}
+          </span>
+          <span
+            class="text-[9px] font-mono px-1 py-0.5 rounded font-bold uppercase tracking-wider"
+            :class="clockSource === 'device' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30' : 'bg-muted text-muted-foreground border border-border/60'"
+          >
+            {{ clockSource === 'device' ? 'DEVICE TIME' : 'LOCAL TIME' }}
+          </span>
         </div>
         <div class="text-[12px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
           <CalendarIcon class="size-3 text-muted-foreground" />
