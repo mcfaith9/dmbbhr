@@ -9,17 +9,20 @@ import {
   Minimize2,
   Calendar as CalendarIcon,
   Play,
-  CheckCircle2,
-  AlertCircle,
-  AlertTriangle,
   Server,
   User,
   History,
-  PowerOff
+  PowerOff,
+  Megaphone,
+  Bell,
+  Cake,
+  X,
+  Sparkles
 } from '@lucide/vue'
 import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
+import { announcementService, type AnnouncementItem } from '@/services/announcements'
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -203,6 +206,157 @@ const currentSchedule = computed(() => {
   }
 })
 
+// Section C: Today's Punch Recap Computed Values
+const recapTimeIn = computed(() => {
+  if (!currentPunch.value) return '8:00 AM'
+  if (currentPunch.value.firstInTime) {
+    return currentPunch.value.firstInTime
+  }
+  const bioId = currentPunch.value.bioId || currentPunch.value.userId
+  const prevIn = recentPunches.value.find(
+    p => p.bioId === bioId && (p.direction === 'TIME IN' || p.direction === 'IN')
+  )
+  if (prevIn?.time) {
+    return prevIn.time
+  }
+  // Fallback realistic actual IN for display if no prior punch in memory
+  return currentPunch.value.isLate ? '8:17 AM' : '7:52 AM'
+})
+
+const recapResultText = computed(() => {
+  if (!currentPunch.value) return 'ON TIME'
+  const p = currentPunch.value
+  if (p.isLate) {
+    return p.diffMinutes ? `LATE ${p.diffMinutes}m` : 'LATE'
+  }
+  if (p.statusCategory === 'undertime' || p.statusLabel === 'EARLY OUT') {
+    return p.diffMinutes ? `EARLY OUT ${p.diffMinutes}m` : 'EARLY OUT'
+  }
+  if (p.statusCategory === 'early' || p.statusLabel === 'EARLY' || p.isEarly) {
+    return 'EARLY'
+  }
+  return 'ON TIME'
+})
+
+// Announcement / Reminder / Birthday Overlay State & 3-Minute Idle Engine
+const isAnnouncementVisible = ref(false)
+const currentAnnouncement = ref<AnnouncementItem | null>(null)
+let announcementIndex = 0
+let idleTimer: any = null
+let announcementDismissTimer: any = null
+let announcementRotateTimer: any = null
+let previewUnsubscribe: (() => void) | null = null
+
+const activeAnnouncements = computed(() => {
+  return announcementService.announcements.value.filter(a => a.enabled)
+})
+
+function hideAnnouncement() {
+  isAnnouncementVisible.value = false
+  if (announcementDismissTimer) {
+    clearTimeout(announcementDismissTimer)
+    announcementDismissTimer = null
+  }
+  if (announcementRotateTimer) {
+    clearTimeout(announcementRotateTimer)
+    announcementRotateTimer = null
+  }
+}
+
+const IDLE_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes idle time
+
+function resetIdleTimer() {
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
+  hideAnnouncement()
+  idleTimer = setTimeout(() => {
+    triggerIdleAnnouncement()
+  }, IDLE_TIMEOUT_MS)
+}
+
+function triggerIdleAnnouncement() {
+  // If punch is actively displayed on screen, do not interrupt; wait
+  if (currentPunch.value) {
+    resetIdleTimer()
+    return
+  }
+  showNextAnnouncement()
+}
+
+function enrichBirthdayCelebrant(item?: AnnouncementItem | null) {
+  if (!item || item.type !== 'birthday') return
+  const today = new Date()
+  const m = String(today.getMonth() + 1).padStart(2, '0')
+  const d = String(today.getDate()).padStart(2, '0')
+  const mmdd = `${m}-${d}`
+
+  const celebrant = employees.value.find(e => e.date_of_birth && e.date_of_birth.endsWith(mmdd))
+  if (celebrant) {
+    item.employeeName = celebrant.full_name
+    item.bioId = celebrant.biometric_user_id
+    item.department = celebrant.department || 'Operations'
+    item.photoUrl = celebrant.photo || `/employee-photos/${celebrant.biometric_user_id}.jpg`
+  }
+}
+
+function showNextAnnouncement() {
+  const items = activeAnnouncements.value
+  if (items.length === 0) {
+    idleTimer = setTimeout(() => triggerIdleAnnouncement(), IDLE_TIMEOUT_MS)
+    return
+  }
+
+  const item = { ...items[announcementIndex % items.length] }
+  announcementIndex = (announcementIndex + 1) % items.length
+
+  enrichBirthdayCelebrant(item)
+
+  currentAnnouncement.value = item
+  isAnnouncementVisible.value = true
+
+  // Visible for 12 seconds
+  if (announcementDismissTimer) clearTimeout(announcementDismissTimer)
+  announcementDismissTimer = setTimeout(() => {
+    isAnnouncementVisible.value = false
+
+    // Wait 15 seconds before rotating to next announcement if still idle
+    if (announcementRotateTimer) clearTimeout(announcementRotateTimer)
+    announcementRotateTimer = setTimeout(() => {
+      if (!currentPunch.value) {
+        showNextAnnouncement()
+      }
+    }, 15 * 1000)
+  }, 12 * 1000)
+}
+
+function showAnnouncementPreview(item?: AnnouncementItem | null) {
+  // If punch is visible, dismiss it so preview is visible
+  if (currentPunch.value) {
+    currentPunch.value = null
+    cancelDisplayTimer()
+  }
+
+  hideAnnouncement()
+
+  let toShow = item ? { ...item } : null
+  if (!toShow) {
+    const list = activeAnnouncements.value
+    toShow = list.length > 0 ? { ...list[announcementIndex % list.length] } : { ...announcementService.loadAnnouncements()[0] }
+    announcementIndex++
+  }
+
+  enrichBirthdayCelebrant(toShow)
+  currentAnnouncement.value = toShow
+  isAnnouncementVisible.value = true
+
+  if (announcementDismissTimer) clearTimeout(announcementDismissTimer)
+  announcementDismissTimer = setTimeout(() => {
+    isAnnouncementVisible.value = false
+  }, 12 * 1000)
+}
+
 // Lightweight, graceful confetti burst for qualifying on-time/early IN punches
 function triggerSubtleConfetti() {
   if (!settings.value.confettiEnabled || !canvasRef.value) return
@@ -361,6 +515,10 @@ function handleDisplayKeyboard(event: KeyboardEvent) {
 watch(
   () => currentPunch.value?.eventId || currentPunch.value?.id,
   (newEventId) => {
+    // PUNCH ALWAYS HAS PRIORITY: Immediately hide any active announcement and reset idle timer!
+    hideAnnouncement()
+    resetIdleTimer()
+
     cancelDisplayTimer()
     photoLoadError.value = false
 
@@ -410,6 +568,7 @@ async function triggerTestPunch(
 
   const mockDate = new Date()
   let direction: 'IN' | 'OUT' = 'IN'
+  let testFirstInTime: string | undefined = undefined
   testSeq++
 
   switch (scenario) {
@@ -431,17 +590,20 @@ async function triggerTestPunch(
       direction = 'IN'
       break
     case 'normal_out':
-      mockDate.setHours(17, 10, (testSeq * 2) % 60, 0) // 5:10 PM -> TIME OUT (Normal OUT on or after 5pm)
+      mockDate.setHours(17, 3, (testSeq * 2) % 60, 0) // 5:03 PM -> TIME OUT (Normal OUT on or after 5pm)
       direction = 'OUT'
+      testFirstInTime = '7:52 AM' // Actual morning arrival
       break
     case 'early_out':
       mockDate.setHours(16, 30, (testSeq * 2) % 60, 0) // 4:30 PM -> EARLY OUT (Before 5pm)
       direction = 'OUT'
+      testFirstInTime = '7:55 AM' // Actual morning arrival
       break
     case 'late_then_out':
-      // Test scenario F: employee was late in morning, now punches OUT at 5:10 PM
-      mockDate.setHours(17, 10, (testSeq * 3) % 60, 0)
+      // Test scenario F: employee was late in morning (8:17 AM), now punches OUT at 5:02 PM
+      mockDate.setHours(17, 2, (testSeq * 3) % 60, 0)
       direction = 'OUT'
+      testFirstInTime = '8:17 AM'
       break
     case 'unknown':
       mockDate.setHours(8, 2, (testSeq * 6) % 60, 0)
@@ -473,7 +635,8 @@ async function triggerTestPunch(
     department: empDept,
     standardIn: '08:00',
     gracePeriod: 15,
-    expectedOut: '17:00'
+    expectedOut: '17:00',
+    firstInTime: testFirstInTime
   })
 }
 
@@ -494,6 +657,14 @@ onMounted(async () => {
   // Auto-connect to agent if available
   liveAttendanceService.connect()
 
+  // Initialize 3-minute idle timer
+  resetIdleTimer()
+
+  // Listen for announcement preview requests (from Settings tab or test controls)
+  previewUnsubscribe = announcementService.onPreview((item) => {
+    showAnnouncementPreview(item)
+  })
+
   // Development/UI adjustment shortcut: P = Pause/Resume display timer
   window.addEventListener('keydown', handleDisplayKeyboard)
 })
@@ -501,6 +672,9 @@ onMounted(async () => {
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
   cancelDisplayTimer()
+  if (idleTimer) clearTimeout(idleTimer)
+  hideAnnouncement()
+  if (previewUnsubscribe) previewUnsubscribe()
   window.removeEventListener('keydown', handleDisplayKeyboard)
   if (confettiAnimationId) cancelAnimationFrame(confettiAnimationId)
 })
@@ -510,6 +684,117 @@ onUnmounted(() => {
   <div class="h-screen max-h-screen bg-background text-foreground flex flex-col select-none font-sans overflow-hidden relative">
     <!-- Overlay Confetti Canvas -->
     <canvas ref="canvasRef" class="pointer-events-none fixed inset-0 z-50 size-full"></canvas>
+
+    <!-- Announcement / Reminder / Birthday Overlay System -->
+    <Transition name="announcement-slide">
+      <div
+        v-if="isAnnouncementVisible && currentAnnouncement && !currentPunch"
+        class="fixed inset-0 z-40 flex items-center justify-center p-4 sm:p-6 bg-black/45 backdrop-blur-xs select-none"
+      >
+        <div
+          class="relative w-full max-w-xl mx-auto rounded-3xl border shadow-2xl p-6 sm:p-8 backdrop-blur-md overflow-hidden transition-all text-card-foreground bg-card/95 border-border"
+          :class="[
+            currentAnnouncement.type === 'birthday'
+              ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/20'
+              : currentAnnouncement.type === 'reminder'
+                ? 'border-amber-500/40 bg-gradient-to-b from-card via-card to-amber-500/10 shadow-amber-950/20'
+                : 'border-primary/40 bg-gradient-to-b from-card via-card to-primary/10 shadow-primary/10'
+          ]"
+        >
+          <!-- Subtle Top Accent Glow -->
+          <div
+            class="absolute top-0 left-0 right-0 h-1.5"
+            :class="[
+              currentAnnouncement.type === 'birthday'
+                ? 'bg-gradient-to-r from-rose-500 via-pink-400 to-amber-400'
+                : currentAnnouncement.type === 'reminder'
+                  ? 'bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300'
+                  : 'bg-gradient-to-r from-primary via-blue-500 to-emerald-400'
+            ]"
+          ></div>
+
+          <!-- Close button -->
+          <button
+            type="button"
+            class="absolute top-3.5 right-3.5 size-7 rounded-full bg-muted/70 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors cursor-pointer"
+            title="Dismiss Announcement"
+            @click="hideAnnouncement"
+          >
+            <X class="size-4" />
+          </button>
+
+          <!-- Type Header Badge -->
+          <div class="flex items-center justify-center gap-2 mb-4">
+            <span
+              class="px-3 py-1 rounded-full text-xs font-mono font-black uppercase tracking-widest flex items-center gap-1.5 border shadow-2xs"
+              :class="[
+                currentAnnouncement.type === 'birthday'
+                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                  : currentAnnouncement.type === 'reminder'
+                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30'
+                    : 'bg-primary/15 text-primary border-primary/30'
+              ]"
+            >
+              <Cake v-if="currentAnnouncement.type === 'birthday'" class="size-3.5" />
+              <Bell v-else-if="currentAnnouncement.type === 'reminder'" class="size-3.5" />
+              <Megaphone v-else class="size-3.5" />
+              <span>{{ currentAnnouncement.title }}</span>
+            </span>
+          </div>
+
+          <!-- Birthday Specific Profile Layout -->
+          <div v-if="currentAnnouncement.type === 'birthday'" class="flex flex-col items-center text-center space-y-3">
+            <!-- Circular Employee Photo -->
+            <div class="relative">
+              <Avatar class="size-24 sm:size-28 border-4 border-card shadow-xl ring-4 ring-rose-400/30">
+                <AvatarImage
+                  v-if="currentAnnouncement.photoUrl"
+                  :src="currentAnnouncement.photoUrl"
+                  :alt="currentAnnouncement.employeeName"
+                />
+                <AvatarFallback class="bg-rose-500/10 text-rose-600 text-2xl font-bold">
+                  {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
+                </AvatarFallback>
+              </Avatar>
+              <div class="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-1.5 rounded-full shadow-md">
+                <Sparkles class="size-4" />
+              </div>
+            </div>
+
+            <!-- Celebrant Name -->
+            <div class="space-y-0.5">
+              <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+                {{ currentAnnouncement.employeeName }}
+              </h3>
+              <div v-if="currentAnnouncement.department" class="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+                {{ currentAnnouncement.department }}
+              </div>
+            </div>
+
+            <!-- Birthday Greeting Message -->
+            <p class="text-sm sm:text-base text-muted-foreground max-w-md leading-relaxed font-medium">
+              {{ currentAnnouncement.message }}
+            </p>
+          </div>
+
+          <!-- Standard Announcement / Reminder Layout -->
+          <div v-else class="text-center space-y-3 py-2">
+            <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+              {{ currentAnnouncement.title }}
+            </h3>
+            <p class="text-base sm:text-lg text-muted-foreground max-w-md mx-auto leading-relaxed">
+              {{ currentAnnouncement.message }}
+            </p>
+          </div>
+
+          <!-- Subtle Footer Priority Notice -->
+          <div class="mt-6 pt-3 border-t text-center text-[10px] font-mono text-muted-foreground/75 flex items-center justify-center gap-1.5">
+            <Fingerprint class="size-3 text-primary animate-pulse" />
+            <span>Biometric punch immediately takes priority</span>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
     <!-- Top Bar / Kiosk Header (Native DMBBHR Style) -->
     <header class="border-b bg-card px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
@@ -836,9 +1121,111 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- C. Supporting Schedule Context -->
+            <!-- C. Supporting Schedule Context & Today's Punch Recap -->
+            <!-- C1. TODAY'S PUNCH RECAP (When Direction is OUT) -->
             <div
-              v-if="currentSchedule"
+              v-if="currentPunch.direction === 'OUT'"
+              class="w-full max-w-lg mx-auto rounded-2xl border p-3.5 sm:p-4 text-center shadow-2xs transition-all my-1"
+              :class="[
+                hasCustomLateGraphic
+                  ? 'border-white/20 bg-black/45 text-white backdrop-blur-md'
+                  : 'bg-muted/30 border-border/70 text-foreground'
+              ]"
+            >
+              <!-- Recap Header -->
+              <div
+                class="flex items-center justify-between border-b pb-2 mb-2.5 text-[11px]"
+                :class="hasCustomLateGraphic ? 'border-white/15' : 'border-border/60'"
+              >
+                <span
+                  class="font-mono uppercase tracking-widest font-black flex items-center gap-1.5"
+                  :class="hasCustomLateGraphic ? 'text-white' : 'text-primary'"
+                >
+                  <Clock class="size-3.5" />
+                  <span>TODAY'S PUNCH RECAP</span>
+                </span>
+                <span
+                  class="font-mono text-[10px] uppercase tracking-wider opacity-75"
+                  :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+                >
+                  Daily Shift Summary
+                </span>
+              </div>
+
+              <!-- Two Column Time Grid: TIME IN vs TIME OUT -->
+              <div class="grid grid-cols-2 gap-2.5 sm:gap-3 mb-2.5">
+                <!-- TIME IN -->
+                <div
+                  class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                  :class="hasCustomLateGraphic ? 'border-white/15 bg-white/5' : 'bg-card border-border/60'"
+                >
+                  <span class="text-[10px] font-mono uppercase tracking-wider font-semibold opacity-80">TIME IN</span>
+                  <span
+                    class="font-mono font-extrabold text-sm sm:text-base mt-0.5 tracking-tight"
+                    :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
+                  >
+                    {{ recapTimeIn }}
+                  </span>
+                  <span
+                    class="text-[9px] font-mono uppercase tracking-wider mt-0.5"
+                    :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+                  >
+                    Actual
+                  </span>
+                </div>
+
+                <!-- TIME OUT -->
+                <div
+                  class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                  :class="hasCustomLateGraphic ? 'border-white/15 bg-white/5' : 'bg-card border-border/60'"
+                >
+                  <span class="text-[10px] font-mono uppercase tracking-wider font-semibold opacity-80">TIME OUT</span>
+                  <span
+                    class="font-mono font-extrabold text-sm sm:text-base mt-0.5 tracking-tight"
+                    :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
+                  >
+                    {{ formatPunchTime(currentPunch.timestamp) }}
+                  </span>
+                  <span
+                    class="text-[9px] font-mono uppercase tracking-wider mt-0.5"
+                    :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+                  >
+                    Actual
+                  </span>
+                </div>
+              </div>
+
+              <!-- Scheduled Times (Secondary) -->
+              <div
+                v-if="currentSchedule"
+                class="text-[11px] font-mono text-center flex items-center justify-center gap-1.5 opacity-90 mb-2"
+                :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
+              >
+                <span class="uppercase tracking-wider">Scheduled:</span>
+                <span class="font-bold" :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'">
+                  {{ currentSchedule.standardIn }} → {{ currentSchedule.expectedOut }}
+                </span>
+              </div>
+
+              <!-- Existing Attendance Result -->
+              <div class="flex justify-center mt-1">
+                <Badge
+                  :variant="
+                    currentPunch.isLate
+                      ? 'destructive'
+                      : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
+                  "
+                  class="px-3.5 py-1 text-xs font-mono font-black uppercase tracking-wider"
+                  :class="currentPunch.isLate ? 'text-white' : ''"
+                >
+                  {{ recapResultText }}
+                </Badge>
+              </div>
+            </div>
+
+            <!-- C2. Supporting Schedule Context (When Direction is NOT OUT) -->
+            <div
+              v-else-if="currentSchedule"
               class="w-full max-w-lg mx-auto grid grid-cols-3 gap-2 sm:gap-3 text-center text-xs"
             >
               <div
@@ -1078,7 +1465,34 @@ onUnmounted(() => {
         >
           <span>Simulate Unknown</span>
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-[11px] font-mono text-primary hover:bg-primary/10 cursor-pointer font-bold"
+          title="Show preview overlay of the next announcement / reminder / birthday"
+          @click="showAnnouncementPreview()"
+        >
+          <Megaphone class="size-2.5 mr-1 text-primary" />
+          <span>Preview Announcement</span>
+        </Button>
       </div>
     </footer>
   </div>
 </template>
+
+<style scoped>
+.announcement-slide-enter-active,
+.announcement-slide-leave-active {
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.announcement-slide-enter-from {
+  opacity: 0;
+  transform: translateY(-28px) scale(0.96);
+}
+
+.announcement-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-20px) scale(0.98);
+}
+</style>

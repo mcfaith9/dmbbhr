@@ -54,6 +54,7 @@ export interface PunchDisplayEvent {
   isLate: boolean
   isEarly: boolean
   diffMinutes?: number
+  firstInTime?: string
 }
 
 export interface PunchDisplaySettings {
@@ -468,6 +469,7 @@ class PunchDisplayService {
       gracePeriod?: number
       expectedOut?: string
       photoUrl?: string
+      firstInTime?: string
     }
   ) => {
     // If Punch Display is disabled in settings, do not broadcast
@@ -591,6 +593,24 @@ class PunchDisplayService {
 
     const resolvedPhoto = employee?.photo || (normalizedBioId ? `/employee-photos/${normalizedBioId}.jpg` : undefined) || extra?.photoUrl
 
+    let resolvedFirstInTime: string | undefined = extra?.firstInTime
+    if (!resolvedFirstInTime && direction === 'OUT') {
+      try {
+        const todayStr = getManilaDateString(new Date(log.attendance_time))
+        const todayPunches = await punchRepository.getPunchesByDate(todayStr)
+        const userPunchesToday = todayPunches.filter(p => p.user_id === normalizedBioId && p.id !== log.id)
+        if (userPunchesToday.length > 0) {
+          const sorted = [...userPunchesToday].sort((a, b) => new Date(a.attendance_time).getTime() - new Date(b.attendance_time).getTime())
+          const earliest = sorted.find(p => p.state === 1 || (p as any).direction === 'IN') || sorted[0]
+          if (earliest?.attendance_time) {
+            resolvedFirstInTime = this.formatTimeDisplay(earliest.attendance_time)
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const event: PunchDisplayEvent = {
       id: uniqueEventId,
       eventId: uniqueEventId,
@@ -619,7 +639,8 @@ class PunchDisplayService {
       statusVariant: status.statusVariant,
       isLate: status.isLate,
       isEarly: status.isEarly,
-      diffMinutes: status.diffMinutes
+      diffMinutes: status.diffMinutes,
+      firstInTime: resolvedFirstInTime
     }
 
     this.handleIncomingPunch(event)

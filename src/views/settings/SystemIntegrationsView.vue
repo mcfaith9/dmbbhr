@@ -20,10 +20,14 @@ import {
   Radio,
   Wifi,
   Sparkles,
-  Trash2
+  Trash2,
+  Megaphone,
+  Bell,
+  Cake
 } from '@lucide/vue'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { punchDisplayService } from '@/services/punchDisplay'
+import { announcementService, type AnnouncementItem } from '@/services/announcements'
 import { authService } from '@/services/auth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -66,6 +70,18 @@ function clearLateGraphic() {
   lateGraphicUrlInput.value = ''
   lateGraphicPreviewError.value = false
   punchDisplayService.saveSettings({ customLateImageUrl: '' })
+}
+
+// Announcements management state
+const announcementsList = announcementService.announcements
+
+function triggerAnnouncementPreview(item?: AnnouncementItem) {
+  announcementService.triggerPreview(item || null)
+}
+
+function toggleAnnouncement(id: string, enabled: boolean) {
+  const updated = announcementsList.value.map(a => a.id === id ? { ...a, enabled } : a)
+  announcementService.saveAnnouncements(updated)
 }
 
 function syncFromRoute() {
@@ -438,6 +454,88 @@ onMounted(() => {
 
             <div v-else class="text-[11px] text-muted-foreground italic">
               No custom graphic URL set. The Punch Display uses the standard clean late visual styling.
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. Announcements / Reminders / Birthday Overlay Section -->
+        <div class="p-4 rounded-xl border bg-card space-y-3">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2.5">
+            <div>
+              <Label class="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <Megaphone class="size-4 text-primary" />
+                <span>Announcements, Reminders & Birthday Overlay</span>
+              </Label>
+              <p class="text-[11px] text-muted-foreground mt-0.5">
+                Automatically slides into the Punch Display after <strong>3 minutes of idle</strong> (no punches). When a punch arrives, the overlay immediately disappears with highest priority.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <Button
+                variant="default"
+                size="sm"
+                class="h-8 gap-1.5 text-xs shadow-xs cursor-pointer font-bold bg-primary text-primary-foreground hover:bg-primary/90"
+                title="Immediately test and show the announcement overlay on the Punch Display"
+                @click="triggerAnnouncementPreview()"
+              >
+                <Megaphone class="size-3.5" />
+                <span>Show Preview</span>
+              </Button>
+            </div>
+          </div>
+
+          <!-- Announcement Items List -->
+          <div class="space-y-2.5">
+            <div
+              v-for="item in announcementsList"
+              :key="item.id"
+              class="p-3 rounded-xl border bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+            >
+              <div class="flex items-start gap-2.5 min-w-0">
+                <div
+                  class="size-8 rounded-lg flex items-center justify-center shrink-0 border mt-0.5"
+                  :class="[
+                    item.type === 'birthday'
+                      ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                      : item.type === 'reminder'
+                        ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                        : 'bg-primary/10 text-primary border-primary/20'
+                  ]"
+                >
+                  <Cake v-if="item.type === 'birthday'" class="size-4" />
+                  <Bell v-else-if="item.type === 'reminder'" class="size-4" />
+                  <Megaphone v-else class="size-4" />
+                </div>
+                <div class="min-w-0 space-y-0.5">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-foreground uppercase text-[11px] font-mono tracking-wider">
+                      {{ item.title }}
+                    </span>
+                    <Badge variant="outline" class="text-[9px] uppercase font-mono px-1.5 py-0">
+                      {{ item.type }}
+                    </Badge>
+                  </div>
+                  <p class="text-xs text-muted-foreground truncate max-w-lg">
+                    {{ item.type === 'birthday' ? `${item.employeeName} — ${item.message}` : item.message }}
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2.5 self-end sm:self-center shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2 text-[11px] cursor-pointer"
+                  title="Preview this specific announcement item"
+                  @click="triggerAnnouncementPreview(item)"
+                >
+                  <span>Preview Item</span>
+                </Button>
+                <Switch
+                  :model-value="item.enabled"
+                  @update:model-value="toggleAnnouncement(item.id, $event)"
+                />
+              </div>
             </div>
           </div>
         </div>

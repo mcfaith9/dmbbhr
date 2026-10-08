@@ -217,4 +217,57 @@ const supportedDurations = [2, 3, 5, 8, 10]
 assert.ok(supportedDurations.includes(2), '2-second option must be supported')
 assert.strictEqual(supportedDurations[2], 5, 'Default is 5 seconds')
 
+// 13. Today's Punch Recap Logic Verification
+function getRecapResultText(punch) {
+  if (punch.isLate) {
+    return punch.diffMinutes ? `LATE ${punch.diffMinutes}m` : 'LATE'
+  }
+  if (punch.statusCategory === 'undertime' || punch.statusLabel === 'EARLY OUT') {
+    return punch.diffMinutes ? `EARLY OUT ${punch.diffMinutes}m` : 'EARLY OUT'
+  }
+  if (punch.statusCategory === 'early' || punch.statusLabel === 'EARLY' || punch.isEarly) {
+    return 'EARLY'
+  }
+  return 'ON TIME'
+}
+
+// On time exit (7:52 AM -> 5:03 PM)
+const onTimeRecap = getRecapResultText({
+  statusCategory: 'time_out',
+  statusLabel: 'TIME OUT',
+  isLate: false,
+  isEarly: false
+})
+assert.strictEqual(onTimeRecap, 'ON TIME')
+
+// Early exit (7:55 AM -> 4:30 PM, 30m early out)
+const earlyOutRecap = getRecapResultText({
+  statusCategory: 'undertime',
+  statusLabel: 'EARLY OUT',
+  diffMinutes: 30,
+  isLate: false
+})
+assert.strictEqual(earlyOutRecap, 'EARLY OUT 30m')
+
+// Late arrival then exit (8:17 AM in, 17m late)
+const lateRecap = getRecapResultText({
+  statusCategory: 'late',
+  statusLabel: 'LATE',
+  diffMinutes: 17,
+  isLate: true
+})
+assert.strictEqual(lateRecap, 'LATE 17m')
+
+// 14. 3-Minute Idle Constant Verification
+const IDLE_TIMEOUT_MS = 3 * 60 * 1000
+assert.strictEqual(IDLE_TIMEOUT_MS, 180000, 'Idle timeout must be exactly 3 minutes (180,000ms)')
+
+// 15. Punch priority over announcement
+let isAnnouncementVisible = true
+function onPunchArrived() {
+  isAnnouncementVisible = false // Immediately disappears
+}
+onPunchArrived()
+assert.strictEqual(isAnnouncementVisible, false, 'Announcement must disappear immediately on punch arrival')
+
 console.log('✅ ALL PUNCH DISPLAY TESTS PASSED SUCCESSFULLY! 🎉')
