@@ -685,25 +685,25 @@ onUnmounted(() => {
     <!-- Overlay Confetti Canvas -->
     <canvas ref="canvasRef" class="pointer-events-none fixed inset-0 z-50 size-full"></canvas>
 
-    <!-- Announcement / Reminder / Birthday Overlay System -->
+    <!-- Announcement / Reminder / Birthday Overlay System (High-Visibility TV / Monitor Display) -->
     <Transition name="announcement-slide">
       <div
         v-if="isAnnouncementVisible && currentAnnouncement && !currentPunch"
-        class="fixed inset-0 z-40 flex items-center justify-center p-4 sm:p-6 bg-black/45 backdrop-blur-xs select-none"
+        class="fixed inset-0 z-40 flex items-center justify-center p-4 sm:p-8 md:p-12 bg-black/55 backdrop-blur-xs select-none"
       >
         <div
-          class="relative w-full max-w-xl mx-auto rounded-3xl border shadow-2xl p-6 sm:p-8 backdrop-blur-md overflow-hidden transition-all text-card-foreground bg-card/95 border-border"
+          class="relative w-[94%] sm:w-[86%] md:w-[76%] lg:w-[68%] max-w-5xl mx-auto rounded-3xl border shadow-2xl p-8 sm:p-12 md:p-14 backdrop-blur-md overflow-hidden transition-all text-card-foreground bg-card/95 border-border/80"
           :class="[
             currentAnnouncement.type === 'birthday'
-              ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/20'
+              ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/25'
               : currentAnnouncement.type === 'reminder'
-                ? 'border-amber-500/40 bg-gradient-to-b from-card via-card to-amber-500/10 shadow-amber-950/20'
-                : 'border-primary/40 bg-gradient-to-b from-card via-card to-primary/10 shadow-primary/10'
+                ? 'border-amber-500/40 bg-gradient-to-b from-card via-card to-amber-500/10 shadow-amber-950/25'
+                : 'border-primary/40 bg-gradient-to-b from-card via-card to-primary/10 shadow-primary/15'
           ]"
         >
-          <!-- Subtle Top Accent Glow -->
+          <!-- Subtle Top Accent Glow Bar -->
           <div
-            class="absolute top-0 left-0 right-0 h-1.5"
+            class="absolute top-0 left-0 right-0 h-2"
             :class="[
               currentAnnouncement.type === 'birthday'
                 ? 'bg-gradient-to-r from-rose-500 via-pink-400 to-amber-400'
@@ -716,17 +716,17 @@ onUnmounted(() => {
           <!-- Close button -->
           <button
             type="button"
-            class="absolute top-3.5 right-3.5 size-7 rounded-full bg-muted/70 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors cursor-pointer"
+            class="absolute top-4 right-4 sm:top-5 sm:right-5 size-9 sm:size-10 rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors cursor-pointer shadow-xs"
             title="Dismiss Announcement"
             @click="hideAnnouncement"
           >
-            <X class="size-4" />
+            <X class="size-5" />
           </button>
 
-          <!-- Type Header Badge -->
-          <div class="flex items-center justify-center gap-2 mb-4">
+          <!-- Type Header Badge (Large TV Scale) -->
+          <div class="flex items-center justify-center mb-6 sm:mb-8">
             <span
-              class="px-3 py-1 rounded-full text-xs font-mono font-black uppercase tracking-widest flex items-center gap-1.5 border shadow-2xs"
+              class="px-5 sm:px-6 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm md:text-base font-mono font-black uppercase tracking-widest flex items-center gap-2 sm:gap-2.5 border shadow-sm"
               :class="[
                 currentAnnouncement.type === 'birthday'
                   ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
@@ -735,62 +735,62 @@ onUnmounted(() => {
                     : 'bg-primary/15 text-primary border-primary/30'
               ]"
             >
-              <Cake v-if="currentAnnouncement.type === 'birthday'" class="size-3.5" />
-              <Bell v-else-if="currentAnnouncement.type === 'reminder'" class="size-3.5" />
-              <Megaphone v-else class="size-3.5" />
-              <span>{{ currentAnnouncement.title }}</span>
+              <Cake v-if="currentAnnouncement.type === 'birthday'" class="size-5 sm:size-6" />
+              <Bell v-else-if="currentAnnouncement.type === 'reminder'" class="size-5 sm:size-6" />
+              <Megaphone v-else class="size-5 sm:size-6" />
+              <span>{{ currentAnnouncement.type === 'birthday' ? 'HAPPY BIRTHDAY!' : currentAnnouncement.type.toUpperCase() }}</span>
             </span>
           </div>
 
           <!-- Birthday Specific Profile Layout -->
-          <div v-if="currentAnnouncement.type === 'birthday'" class="flex flex-col items-center text-center space-y-3">
-            <!-- Circular Employee Photo -->
+          <div v-if="currentAnnouncement.type === 'birthday'" class="flex flex-col items-center text-center space-y-4 sm:space-y-6">
+            <!-- Circular Celebrant Photo -->
             <div class="relative">
-              <Avatar class="size-24 sm:size-28 border-4 border-card shadow-xl ring-4 ring-rose-400/30">
+              <Avatar class="size-28 sm:size-36 md:size-44 border-4 sm:border-8 border-card shadow-2xl ring-4 sm:ring-8 ring-rose-400/30">
                 <AvatarImage
                   v-if="currentAnnouncement.photoUrl"
                   :src="currentAnnouncement.photoUrl"
                   :alt="currentAnnouncement.employeeName"
                 />
-                <AvatarFallback class="bg-rose-500/10 text-rose-600 text-2xl font-bold">
+                <AvatarFallback class="bg-rose-500/10 text-rose-600 text-3xl sm:text-5xl font-black">
                   {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
                 </AvatarFallback>
               </Avatar>
-              <div class="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-1.5 rounded-full shadow-md">
-                <Sparkles class="size-4" />
+              <div class="absolute -bottom-2 -right-2 bg-amber-400 text-slate-950 p-2 sm:p-2.5 rounded-full shadow-lg">
+                <Sparkles class="size-5 sm:size-6" />
               </div>
             </div>
 
-            <!-- Celebrant Name -->
-            <div class="space-y-0.5">
-              <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-                {{ currentAnnouncement.employeeName }}
+            <!-- Celebrant Name & Dept -->
+            <div class="space-y-1 sm:space-y-1.5">
+              <h3 class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-foreground leading-tight">
+                {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
               </h3>
-              <div v-if="currentAnnouncement.department" class="text-xs font-mono text-muted-foreground uppercase tracking-wider">
+              <div v-if="currentAnnouncement.department" class="text-sm sm:text-base md:text-lg font-mono text-muted-foreground uppercase tracking-widest font-semibold">
                 {{ currentAnnouncement.department }}
               </div>
             </div>
 
             <!-- Birthday Greeting Message -->
-            <p class="text-sm sm:text-base text-muted-foreground max-w-md leading-relaxed font-medium">
+            <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl leading-relaxed font-medium">
               {{ currentAnnouncement.message }}
             </p>
           </div>
 
           <!-- Standard Announcement / Reminder Layout -->
-          <div v-else class="text-center space-y-3 py-2">
-            <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+          <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4">
+            <h3 class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
               {{ currentAnnouncement.title }}
             </h3>
-            <p class="text-base sm:text-lg text-muted-foreground max-w-md mx-auto leading-relaxed">
+            <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
               {{ currentAnnouncement.message }}
             </p>
           </div>
 
           <!-- Subtle Footer Priority Notice -->
-          <div class="mt-6 pt-3 border-t text-center text-[10px] font-mono text-muted-foreground/75 flex items-center justify-center gap-1.5">
-            <Fingerprint class="size-3 text-primary animate-pulse" />
-            <span>Biometric punch immediately takes priority</span>
+          <div class="mt-8 sm:mt-12 pt-4 sm:pt-5 border-t text-center text-xs sm:text-sm font-mono text-muted-foreground/75 flex items-center justify-center gap-2">
+            <Fingerprint class="size-4 sm:size-5 text-primary animate-pulse" />
+            <span>Biometric scan immediately takes priority</span>
           </div>
         </div>
       </div>

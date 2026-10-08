@@ -270,4 +270,56 @@ function onPunchArrived() {
 onPunchArrived()
 assert.strictEqual(isAnnouncementVisible, false, 'Announcement must disappear immediately on punch arrival')
 
+// 16. BroadcastChannel DataCloneError Prevention & Plain Object Serialization
+function toPlainAnnouncement(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  if ('stopPropagation' in raw || 'preventDefault' in raw || 'target' in raw) {
+    return null
+  }
+  const rawType = String(raw.type || 'announcement').toLowerCase().trim()
+  const cleanType = rawType === 'reminder' ? 'reminder' : (rawType === 'birthday' ? 'birthday' : 'announcement')
+
+  return {
+    id: String(raw.id || `ann-${Date.now()}`),
+    type: cleanType,
+    title: String(raw.title || '').trim(),
+    message: String(raw.message || '').trim(),
+    enabled: Boolean(raw.enabled !== false),
+    employeeName: raw.employeeName ? String(raw.employeeName).trim() : undefined,
+    bioId: raw.bioId ? String(raw.bioId).trim() : undefined,
+    photoUrl: raw.photoUrl ? String(raw.photoUrl).trim() : undefined,
+    department: raw.department ? String(raw.department).trim() : undefined
+  }
+}
+
+// Simulated Vue Reactive Proxy with getters/symbols and DOM Event
+const mockDomEvent = {
+  target: {},
+  type: 'click',
+  stopPropagation: () => {},
+  preventDefault: () => {}
+}
+assert.strictEqual(toPlainAnnouncement(mockDomEvent), null, 'DOM click events must not be serialized')
+
+const rawAnnouncement = {
+  id: 'ann-test-1',
+  type: 'reminder',
+  title: 'Daily Reminder',
+  message: 'Please remember to log your attendance.',
+  enabled: true
+}
+const plainObj = toPlainAnnouncement(rawAnnouncement)
+assert.ok(plainObj, 'Plain object must be created')
+assert.strictEqual(plainObj.type, 'reminder')
+assert.strictEqual(plainObj.title, 'Daily Reminder')
+
+// Test structuredClone (Node.js 17+)
+if (typeof structuredClone === 'function') {
+  const cloned = structuredClone({
+    type: 'ANNOUNCEMENT_SHOW',
+    announcement: plainObj
+  })
+  assert.strictEqual(cloned.announcement.title, 'Daily Reminder')
+}
+
 console.log('✅ ALL PUNCH DISPLAY TESTS PASSED SUCCESSFULLY! 🎉')
