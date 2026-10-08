@@ -31,6 +31,7 @@ import {
 } from '@lucide/vue'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { punchDisplayService } from '@/services/punchDisplay'
+import { punchVoiceService } from '@/services/punchVoiceService'
 import { announcementService, type AnnouncementItem, type AnnouncementType } from '@/services/announcements'
 import { authService } from '@/services/auth'
 import { Button } from '@/components/ui/button'
@@ -66,6 +67,23 @@ const activeTab = ref<SystemTab>('punch-display')
 // Punch display settings local state
 const lateGraphicUrlInput = ref(punchDisplayService.settings.value.customLateImageUrl || '')
 const lateGraphicPreviewError = ref(false)
+
+// Voice announcements state
+const availableVoices = ref<SpeechSynthesisVoice[]>([])
+const isTtsSupported = ref(punchVoiceService.isSupported())
+
+function refreshVoices() {
+  availableVoices.value = punchVoiceService.getVoices()
+}
+
+function testCurrentVoice() {
+  punchVoiceService.testVoice({
+    volume: punchDisplayService.settings.value.punchDisplayVoiceVolume,
+    rate: punchDisplayService.settings.value.punchDisplayVoiceRate,
+    pitch: punchDisplayService.settings.value.punchDisplayVoicePitch,
+    voiceURI: punchDisplayService.settings.value.punchDisplayVoiceURI
+  })
+}
 
 watch(
   () => punchDisplayService.settings.value.customLateImageUrl,
@@ -200,6 +218,16 @@ watch(() => [route.query.tab, route.query.section], () => {
 
 onMounted(() => {
   syncFromRoute()
+  refreshVoices()
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.onvoiceschanged = () => {
+        refreshVoices()
+      }
+    } catch {
+      // ignore
+    }
+  }
 })
 </script>
 
@@ -555,6 +583,187 @@ onMounted(() => {
 
             <div v-else class="text-[11px] text-muted-foreground italic">
               No custom graphic URL set. The Punch Display uses the standard clean late visual styling.
+            </div>
+          </div>
+        </div>
+
+        <!-- Voice Announcements (Text-to-Speech / TTS) Section -->
+        <div class="p-4 sm:p-5 rounded-xl border bg-card space-y-4 shadow-2xs">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
+            <div class="space-y-0.5">
+              <div class="flex items-center gap-2">
+                <Volume2 class="size-4 text-primary" />
+                <Label class="text-sm font-bold text-foreground">Voice Announcements (Text-to-Speech)</Label>
+                <Badge
+                  :variant="punchDisplayService.settings.value.punchDisplayVoiceEnabled ? 'outline' : 'secondary'"
+                  class="text-[10px] font-mono px-2 py-0.2"
+                  :class="punchDisplayService.settings.value.punchDisplayVoiceEnabled ? 'border-emerald-500/30 text-emerald-700 dark:text-emerald-300 bg-emerald-500/10' : ''"
+                >
+                  {{ punchDisplayService.settings.value.punchDisplayVoiceEnabled ? 'Enabled' : 'Disabled' }}
+                </Badge>
+              </div>
+              <p class="text-xs text-muted-foreground mt-0.5">
+                Automatically speak short, time-aware greetings upon punch detection (e.g., "Good morning, [Name]", "Goodbye, [Name]. Take care", "Good morning, [Name]. You are late").
+              </p>
+            </div>
+
+            <!-- Master Toggle & Test Voice Button -->
+            <div class="flex items-center gap-2.5 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs gap-1.5 font-medium cursor-pointer shadow-2xs"
+                :disabled="!isTtsSupported"
+                title="Test audio greeting with the selected voice parameters"
+                @click="testCurrentVoice"
+              >
+                <Play class="size-3 text-primary" />
+                <span>Test Voice</span>
+              </Button>
+              <Switch
+                :model-value="punchDisplayService.settings.value.punchDisplayVoiceEnabled"
+                @update:model-value="punchDisplayService.saveSettings({ punchDisplayVoiceEnabled: $event })"
+              />
+            </div>
+          </div>
+
+          <!-- Controls Grid -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 text-xs">
+            <!-- 1. Voice Selector -->
+            <div class="space-y-1.5 sm:col-span-2">
+              <Label class="text-[11px] font-medium text-foreground">
+                Voice Selection
+              </Label>
+              <Select
+                :model-value="punchDisplayService.settings.value.punchDisplayVoiceURI || 'default'"
+                @update:model-value="punchDisplayService.saveSettings({ punchDisplayVoiceURI: !$event || $event === 'default' ? '' : String($event) })"
+              >
+                <SelectTrigger class="h-8 text-xs bg-card">
+                  <SelectValue placeholder="System Default Voice" />
+                </SelectTrigger>
+                <SelectContent class="max-h-60">
+                  <SelectGroup>
+                    <SelectItem value="default">System Default Voice</SelectItem>
+                    <SelectItem
+                      v-for="voice in availableVoices"
+                      :key="voice.voiceURI"
+                      :value="voice.voiceURI"
+                    >
+                      {{ voice.name }} ({{ voice.lang }})
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <p class="text-[10px] text-muted-foreground">
+                {{ availableVoices.length > 0 ? `${availableVoices.length} voice options available in browser.` : 'Using system default speech engine.' }}
+              </p>
+            </div>
+
+            <!-- 2. Volume -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between">
+                <Label class="text-[11px] font-medium text-foreground">
+                  Volume
+                </Label>
+                <span class="font-mono text-[10px] text-muted-foreground font-semibold">
+                  {{ Math.round((punchDisplayService.settings.value.punchDisplayVoiceVolume ?? 0.8) * 100) }}%
+                </span>
+              </div>
+              <Select
+                :model-value="String(punchDisplayService.settings.value.punchDisplayVoiceVolume ?? 0.8)"
+                @update:model-value="punchDisplayService.saveSettings({ punchDisplayVoiceVolume: parseFloat(String($event)) })"
+              >
+                <SelectTrigger class="h-8 text-xs bg-card">
+                  <SelectValue placeholder="80% (Default)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="0.2">20% (Low)</SelectItem>
+                    <SelectItem value="0.4">40%</SelectItem>
+                    <SelectItem value="0.6">60%</SelectItem>
+                    <SelectItem value="0.8">80% (Default)</SelectItem>
+                    <SelectItem value="1">100% (Maximum)</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <p class="text-[10px] text-muted-foreground">
+                Announcer speech output volume.
+              </p>
+            </div>
+
+            <!-- 3. Speed (Rate) -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between">
+                <Label class="text-[11px] font-medium text-foreground">
+                  Speed (Rate)
+                </Label>
+                <span class="font-mono text-[10px] text-muted-foreground font-semibold">
+                  {{ (punchDisplayService.settings.value.punchDisplayVoiceRate ?? 1.0).toFixed(1) }}x
+                </span>
+              </div>
+              <Select
+                :model-value="String(punchDisplayService.settings.value.punchDisplayVoiceRate ?? 1.0)"
+                @update:model-value="punchDisplayService.saveSettings({ punchDisplayVoiceRate: parseFloat(String($event)) })"
+              >
+                <SelectTrigger class="h-8 text-xs bg-card">
+                  <SelectValue placeholder="1.0x (Normal)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="0.8">0.8x (Slower)</SelectItem>
+                    <SelectItem value="0.9">0.9x</SelectItem>
+                    <SelectItem value="1">1.0x (Normal / Default)</SelectItem>
+                    <SelectItem value="1.1">1.1x (Brisk)</SelectItem>
+                    <SelectItem value="1.25">1.25x (Fast)</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <p class="text-[10px] text-muted-foreground">
+                Cadence of spoken greeting.
+              </p>
+            </div>
+
+            <!-- 4. Pitch -->
+            <div class="space-y-1.5 sm:col-span-2 lg:col-span-2">
+              <div class="flex items-center justify-between">
+                <Label class="text-[11px] font-medium text-foreground">
+                  Voice Pitch
+                </Label>
+                <span class="font-mono text-[10px] text-muted-foreground font-semibold">
+                  {{ (punchDisplayService.settings.value.punchDisplayVoicePitch ?? 1.0).toFixed(1) }}
+                </span>
+              </div>
+              <Select
+                :model-value="String(punchDisplayService.settings.value.punchDisplayVoicePitch ?? 1.0)"
+                @update:model-value="punchDisplayService.saveSettings({ punchDisplayVoicePitch: parseFloat(String($event)) })"
+              >
+                <SelectTrigger class="h-8 text-xs bg-card">
+                  <SelectValue placeholder="1.0 (Natural)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="0.8">0.8 (Deeper)</SelectItem>
+                    <SelectItem value="0.9">0.9</SelectItem>
+                    <SelectItem value="1">1.0 (Natural / Default)</SelectItem>
+                    <SelectItem value="1.1">1.1</SelectItem>
+                    <SelectItem value="1.2">1.2 (Higher)</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <p class="text-[10px] text-muted-foreground">
+                Tonal pitch of speech utterance.
+              </p>
+            </div>
+
+            <!-- Announcement Rules Guide Box -->
+            <div class="sm:col-span-2 lg:col-span-2 p-2.5 rounded-lg border bg-muted/20 text-[11px] text-muted-foreground space-y-1">
+              <div class="font-semibold text-foreground text-[11px]">Announcement Guide:</div>
+              <div class="grid grid-cols-2 gap-1 text-[10px] font-mono">
+                <div>• Before 12:00: <span class="text-foreground">"Good morning"</span></div>
+                <div>• 12:00–17:59: <span class="text-foreground">"Good afternoon"</span></div>
+                <div>• 18:00+: <span class="text-foreground">"Good evening"</span></div>
+                <div>• TIME OUT: <span class="text-foreground">"Goodbye, [Name]. Take care."</span></div>
+              </div>
             </div>
           </div>
         </div>

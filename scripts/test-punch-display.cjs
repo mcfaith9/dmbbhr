@@ -322,4 +322,152 @@ if (typeof structuredClone === 'function') {
   assert.strictEqual(cloned.announcement.title, 'Daily Reminder')
 }
 
-console.log('✅ ALL PUNCH DISPLAY TESTS PASSED SUCCESSFULLY! 🎉')
+// 17. Voice Announcement / Text-to-Speech (TTS) Verification
+function formatSpokenName(name) {
+  if (!name || typeof name !== 'string') return ''
+  const clean = name.replace(/<[^>]*>/g, '').trim()
+  if (!clean) return ''
+  if (/^unknown(\s+employee)?$/i.test(clean) || /^biometric\s+user$/i.test(clean) || /^user\d+$/i.test(clean)) {
+    return ''
+  }
+  if (clean.includes(',')) {
+    const parts = clean.split(',').map(s => s.trim())
+    if (parts.length >= 2 && parts[1]) {
+      return `${parts[1]} ${parts[0]}`.replace(/[^\w\s.,'-]/gi, ' ').replace(/\s+/g, ' ').trim()
+    }
+  }
+  return clean.replace(/[^\w\s.,'-]/gi, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function getTimeAwareGreeting(timestampStr) {
+  const date = new Date(timestampStr)
+  let hour = date.getHours()
+  try {
+    const phTimeStr = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      hour: 'numeric',
+      hour12: false
+    }).format(date)
+    const h = parseInt(phTimeStr, 10)
+    if (!isNaN(h)) hour = h
+  } catch {}
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function buildPunchAnnouncement(event) {
+  const spokenName = formatSpokenName(event.employeeName)
+  const isOut = event.direction === 'OUT' || event.direction === 'BREAK_OUT'
+
+  if (isOut) {
+    return spokenName ? `Goodbye, ${spokenName}. Take care.` : 'Goodbye. Take care.'
+  }
+
+  const greeting = getTimeAwareGreeting(event.timestamp)
+
+  if (event.isLate) {
+    return spokenName ? `${greeting}, ${spokenName}. You are late.` : `${greeting}. You are late.`
+  }
+
+  return spokenName ? `${greeting}, ${spokenName}.` : `${greeting}.`
+}
+
+// 17.1 Name formatting tests
+assert.strictEqual(formatSpokenName('Cabigas, Marc Louie'), 'Marc Louie Cabigas', 'Format Last, First -> First Last')
+assert.strictEqual(formatSpokenName('Ronald Cantillas'), 'Ronald Cantillas', 'Format standard First Last')
+assert.strictEqual(formatSpokenName('Unknown Employee'), '', 'Unknown employee should yield empty name')
+assert.strictEqual(formatSpokenName('user25065'), '', 'Raw user id should yield empty name')
+
+// 17.2 Time-aware greeting tests
+assert.strictEqual(getTimeAwareGreeting('2026-10-05T08:05:00+08:00'), 'Good morning', '8:05 AM is Good morning')
+assert.strictEqual(getTimeAwareGreeting('2026-10-05T11:59:00+08:00'), 'Good morning', '11:59 AM is Good morning')
+assert.strictEqual(getTimeAwareGreeting('2026-10-05T12:00:00+08:00'), 'Good afternoon', '12:00 PM is Good afternoon')
+assert.strictEqual(getTimeAwareGreeting('2026-10-05T17:03:00+08:00'), 'Good afternoon', '5:03 PM is Good afternoon')
+assert.strictEqual(getTimeAwareGreeting('2026-10-05T18:00:00+08:00'), 'Good evening', '6:00 PM is Good evening')
+assert.strictEqual(getTimeAwareGreeting('2026-10-05T20:30:00+08:00'), 'Good evening', '8:30 PM is Good evening')
+
+// 17.3 TIME IN announcements (On Time, Late, Morning, Afternoon, Evening)
+const onTimeMorningIn = {
+  employeeName: 'Cabigas, Marc Louie',
+  timestamp: '2026-10-05T08:05:00+08:00',
+  direction: 'IN',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(onTimeMorningIn), 'Good morning, Marc Louie Cabigas.')
+
+const lateMorningIn = {
+  employeeName: 'Cabigas, Marc Louie',
+  timestamp: '2026-10-05T08:35:00+08:00',
+  direction: 'IN',
+  isLate: true
+}
+assert.strictEqual(buildPunchAnnouncement(lateMorningIn), 'Good morning, Marc Louie Cabigas. You are late.')
+
+const onTimeAfternoonIn = {
+  employeeName: 'Santos, Maria',
+  timestamp: '2026-10-05T13:00:00+08:00',
+  direction: 'IN',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(onTimeAfternoonIn), 'Good afternoon, Maria Santos.')
+
+const eveningIn = {
+  employeeName: 'Robert Cruz',
+  timestamp: '2026-10-05T19:00:00+08:00',
+  direction: 'IN',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(eveningIn), 'Good evening, Robert Cruz.')
+
+// 17.4 TIME OUT announcements (Always "Goodbye, [Name]. Take care.")
+const regularOut = {
+  employeeName: 'Cabigas, Marc Louie',
+  timestamp: '2026-10-05T17:05:00+08:00',
+  direction: 'OUT',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(regularOut), 'Goodbye, Marc Louie Cabigas. Take care.')
+
+const earlyOutVoice = {
+  employeeName: 'Cabigas, Marc Louie',
+  timestamp: '2026-10-05T16:30:00+08:00',
+  direction: 'OUT',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(earlyOutVoice), 'Goodbye, Marc Louie Cabigas. Take care.')
+
+// 17.5 Fallback announcements without employee name
+const anonymousIn = {
+  employeeName: 'Unknown Employee',
+  timestamp: '2026-10-05T08:00:00+08:00',
+  direction: 'IN',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(anonymousIn), 'Good morning.')
+
+const anonymousOut = {
+  employeeName: 'Unknown Employee',
+  timestamp: '2026-10-05T17:00:00+08:00',
+  direction: 'OUT',
+  isLate: false
+}
+assert.strictEqual(buildPunchAnnouncement(anonymousOut), 'Goodbye. Take care.')
+
+// 17.6 Duplicate key prevention
+const spokenKeys = new Set()
+function simulateAnnounce(event) {
+  const key = event.eventId || `${event.bioId}_${event.direction}_${event.timestamp}`
+  if (spokenKeys.has(key)) return false
+  spokenKeys.add(key)
+  return true
+}
+
+const punch1 = { eventId: 'ev-punch-1', bioId: '25065', direction: 'IN', timestamp: '2026-10-05T08:05:00' }
+assert.strictEqual(simulateAnnounce(punch1), true, 'First event announces')
+assert.strictEqual(simulateAnnounce(punch1), false, 'Duplicate event must NOT announce again')
+
+const punch2 = { eventId: 'ev-punch-2', bioId: '25065', direction: 'IN', timestamp: '2026-10-05T08:05:08' }
+assert.strictEqual(simulateAnnounce(punch2), true, 'Subsequent new punch announces')
+
+console.log('✅ ALL PUNCH DISPLAY & VOICE ANNOUNCEMENT TESTS PASSED SUCCESSFULLY! 🎉')

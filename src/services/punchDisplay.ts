@@ -64,6 +64,18 @@ export interface PunchDisplaySettings {
   confettiEnabled: boolean // Confetti = ON / OFF (default: true)
   lateVisualEnabled: boolean // Late Visual = ON / OFF (default: true)
   customLateImageUrl: string
+  // Voice Announcements / Text-to-Speech (TTS)
+  punchDisplayVoiceEnabled: boolean
+  punchDisplayVoiceVolume: number // 0.0 - 1.0 (default: 0.8)
+  punchDisplayVoiceRate: number // 0.5 - 2.0 (default: 1.0)
+  punchDisplayVoicePitch: number // 0.5 - 1.5 (default: 1.0)
+  punchDisplayVoiceURI: string // Voice identifier
+  // Backward compatibility aliases
+  voiceEnabled?: boolean
+  voiceVolume?: number
+  voiceRate?: number
+  voicePitch?: number
+  voiceURI?: string
 }
 
 /**
@@ -88,7 +100,17 @@ const DEFAULT_SETTINGS: PunchDisplaySettings = {
   soundEnabled: true,
   confettiEnabled: true,
   lateVisualEnabled: true,
-  customLateImageUrl: ''
+  customLateImageUrl: '',
+  punchDisplayVoiceEnabled: false,
+  punchDisplayVoiceVolume: 0.8,
+  punchDisplayVoiceRate: 1.0,
+  punchDisplayVoicePitch: 1.0,
+  punchDisplayVoiceURI: '',
+  voiceEnabled: false,
+  voiceVolume: 0.8,
+  voiceRate: 1.0,
+  voicePitch: 1.0,
+  voiceURI: ''
 }
 
 class PunchDisplayService {
@@ -124,7 +146,35 @@ class PunchDisplayService {
   }
 
   public saveSettings = (newSettings: Partial<PunchDisplaySettings>) => {
-    this.settings.value = { ...this.settings.value, ...newSettings }
+    const updated: Partial<PunchDisplaySettings> = { ...newSettings }
+    // Keep punchDisplayVoice* and voice* aliases strictly synchronized
+    if (newSettings.punchDisplayVoiceEnabled !== undefined) {
+      updated.voiceEnabled = newSettings.punchDisplayVoiceEnabled
+    } else if (newSettings.voiceEnabled !== undefined) {
+      updated.punchDisplayVoiceEnabled = newSettings.voiceEnabled
+    }
+    if (newSettings.punchDisplayVoiceVolume !== undefined) {
+      updated.voiceVolume = newSettings.punchDisplayVoiceVolume
+    } else if (newSettings.voiceVolume !== undefined) {
+      updated.punchDisplayVoiceVolume = newSettings.voiceVolume
+    }
+    if (newSettings.punchDisplayVoiceRate !== undefined) {
+      updated.voiceRate = newSettings.punchDisplayVoiceRate
+    } else if (newSettings.voiceRate !== undefined) {
+      updated.punchDisplayVoiceRate = newSettings.voiceRate
+    }
+    if (newSettings.punchDisplayVoicePitch !== undefined) {
+      updated.voicePitch = newSettings.punchDisplayVoicePitch
+    } else if (newSettings.voicePitch !== undefined) {
+      updated.punchDisplayVoicePitch = newSettings.voicePitch
+    }
+    if (newSettings.punchDisplayVoiceURI !== undefined) {
+      updated.voiceURI = newSettings.punchDisplayVoiceURI
+    } else if (newSettings.voiceURI !== undefined) {
+      updated.punchDisplayVoiceURI = newSettings.voiceURI
+    }
+
+    this.settings.value = { ...this.settings.value, ...updated }
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings.value))
     } catch {

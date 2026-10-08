@@ -20,6 +20,7 @@ import {
   Sparkles
 } from '@lucide/vue'
 import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
+import { punchVoiceService } from '@/services/punchVoiceService'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
 import { announcementService, type AnnouncementItem } from '@/services/announcements'
@@ -646,6 +647,9 @@ watch(
       triggerSubtleConfetti()
     }
 
+    // Optional voice announcement (TTS) for the detected punch event
+    punchVoiceService.announcePunch(punch, settings.value)
+
     // Start fresh display timer for this punch unless the display is temporarily paused
     if (!isDisplayPaused.value) {
       startDisplayTimer()
@@ -777,6 +781,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  punchVoiceService.cancelSpeech()
   if (clockTimer) clearInterval(clockTimer)
   cancelDisplayTimer()
   if (idleTimer) clearTimeout(idleTimer)
