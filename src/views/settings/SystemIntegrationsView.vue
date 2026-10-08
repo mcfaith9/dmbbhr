@@ -115,7 +115,7 @@ function openEditDialog(item: AnnouncementItem) {
   editingAnnouncementId.value = item.id
   formType.value = item.type
   formTitle.value = item.title
-  formMessage.value = item.message
+  formMessage.value = (item.message || '').slice(0, 250)
   formEnabled.value = item.enabled
   formEmployeeName.value = item.employeeName || ''
   formBioId.value = item.bioId || ''
@@ -126,7 +126,7 @@ function openEditDialog(item: AnnouncementItem) {
 
 function saveAnnouncementForm() {
   const cleanTitle = formTitle.value.trim()
-  const cleanMessage = formMessage.value.trim()
+  const cleanMessage = formMessage.value.trim().slice(0, 250)
 
   if (!cleanTitle) {
     formError.value = 'Please provide a title for the announcement.'
@@ -789,9 +789,13 @@ onMounted(() => {
                 <Label class="text-xs font-semibold">Message</Label>
                 <Textarea
                   v-model="formMessage"
+                  maxlength="250"
                   placeholder="e.g. Please proceed to the conference room at 3:00 PM."
                   class="min-h-20 text-xs bg-background"
                 />
+                <div class="text-[11px] font-mono text-muted-foreground text-right">
+                  {{ (formMessage || '').length }} / 250
+                </div>
               </div>
 
               <!-- Birthday Celebrant Fields -->

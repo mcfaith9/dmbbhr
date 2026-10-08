@@ -62,7 +62,7 @@ export function toPlainAnnouncement(raw: any): AnnouncementItem | null {
     id: String(raw.id || `ann-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
     type: cleanType,
     title: String(raw.title || '').trim(),
-    message: String(raw.message || '').trim(),
+    message: String(raw.message || '').trim().slice(0, 250),
     enabled: Boolean(raw.enabled !== false),
     employeeName: raw.employeeName ? String(raw.employeeName).trim() : undefined,
     bioId: raw.bioId ? String(raw.bioId).trim() : undefined,

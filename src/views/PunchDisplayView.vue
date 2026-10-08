@@ -238,39 +238,46 @@ const recapResultText = computed(() => {
   return 'ON TIME'
 })
 
-// Announcement / Reminder / Birthday Overlay State & 3-Minute Idle Engine
+// Announcement / Reminder / Birthday Overlay State & Sequential Engine
 const isAnnouncementVisible = ref(false)
 const currentAnnouncement = ref<AnnouncementItem | null>(null)
 let announcementIndex = 0
 let idleTimer: any = null
 let announcementDismissTimer: any = null
-let announcementRotateTimer: any = null
+let announcementDelayTimer: any = null
+let isPlayingSequence = false
 let previewUnsubscribe: (() => void) | null = null
 
 const activeAnnouncements = computed(() => {
   return announcementService.announcements.value.filter(a => a.enabled)
 })
 
-function hideAnnouncement() {
+function stopAnnouncementSequence() {
+  isPlayingSequence = false
   isAnnouncementVisible.value = false
+  currentAnnouncement.value = null
   if (announcementDismissTimer) {
     clearTimeout(announcementDismissTimer)
     announcementDismissTimer = null
   }
-  if (announcementRotateTimer) {
-    clearTimeout(announcementRotateTimer)
-    announcementRotateTimer = null
+  if (announcementDelayTimer) {
+    clearTimeout(announcementDelayTimer)
+    announcementDelayTimer = null
   }
 }
 
-const IDLE_TIMEOUT_MS = 1 * 60 * 1000 // 3 minutes idle time
+function hideAnnouncement() {
+  stopAnnouncementSequence()
+  resetIdleTimer()
+}
+
+const IDLE_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes idle time
 
 function resetIdleTimer() {
   if (idleTimer) {
     clearTimeout(idleTimer)
     idleTimer = null
   }
-  hideAnnouncement()
   idleTimer = setTimeout(() => {
     triggerIdleAnnouncement()
   }, IDLE_TIMEOUT_MS)
@@ -282,7 +289,7 @@ function triggerIdleAnnouncement() {
     resetIdleTimer()
     return
   }
-  showNextAnnouncement()
+  startAnnouncementSequence()
 }
 
 function enrichBirthdayCelebrant(item?: AnnouncementItem | null) {
@@ -301,60 +308,159 @@ function enrichBirthdayCelebrant(item?: AnnouncementItem | null) {
   }
 }
 
-function showNextAnnouncement() {
-  const items = activeAnnouncements.value
-  if (items.length === 0) {
-    idleTimer = setTimeout(() => triggerIdleAnnouncement(), IDLE_TIMEOUT_MS)
+function startAnnouncementSequence(startingItem?: AnnouncementItem | null) {
+  // Biometric punch ALWAYS has immediate priority
+  if (currentPunch.value) {
     return
   }
 
-  const item = { ...items[announcementIndex % items.length] }
-  announcementIndex = (announcementIndex + 1) % items.length
+  // Clear existing announcement timers
+  if (announcementDismissTimer) {
+    clearTimeout(announcementDismissTimer)
+    announcementDismissTimer = null
+  }
+  if (announcementDelayTimer) {
+    clearTimeout(announcementDelayTimer)
+    announcementDelayTimer = null
+  }
 
+  const list = activeAnnouncements.value
+
+  if (list.length === 0) {
+    // If no enabled announcements, but user specifically previewed an item:
+    if (startingItem) {
+      const singleItem = { ...startingItem }
+      enrichBirthdayCelebrant(singleItem)
+      currentAnnouncement.value = singleItem
+      isAnnouncementVisible.value = true
+      isPlayingSequence = true
+
+      const durationSeconds = settings.value.displayDurationSeconds || 5
+      const displayDurationMs = Math.max(1, durationSeconds) * 1000
+
+      announcementDismissTimer = setTimeout(() => {
+        stopAnnouncementSequence()
+        resetIdleTimer()
+      }, displayDurationMs)
+      return
+    }
+
+    // Nothing to display if no announcements enabled
+    stopAnnouncementSequence()
+    resetIdleTimer()
+    return
+  }
+
+  // If a specific startingItem was provided, find its index in the enabled list
+  if (startingItem) {
+    const foundIdx = list.findIndex(a => a.id === startingItem.id)
+    if (foundIdx !== -1) {
+      announcementIndex = foundIdx
+    } else {
+      // Previewing a specific item not in enabled list: play it first, then continue sequence after 1s
+      const customItem = { ...startingItem }
+      enrichBirthdayCelebrant(customItem)
+      currentAnnouncement.value = customItem
+      isAnnouncementVisible.value = true
+      isPlayingSequence = true
+
+      const durationSeconds = settings.value.displayDurationSeconds || 5
+      const displayDurationMs = Math.max(1, durationSeconds) * 1000
+
+      announcementDismissTimer = setTimeout(() => {
+        isAnnouncementVisible.value = false
+        // 1-second delay before playing active enabled sequence
+        announcementDelayTimer = setTimeout(() => {
+          announcementDelayTimer = null
+          if (currentPunch.value || !isPlayingSequence) {
+            stopAnnouncementSequence()
+            return
+          }
+          announcementIndex = 0
+          playSequentialStep()
+        }, 1000)
+      }, displayDurationMs)
+      return
+    }
+  }
+
+  isPlayingSequence = true
+  playSequentialStep()
+}
+
+function playSequentialStep() {
+  // Biometric punch ALWAYS has immediate absolute priority!
+  if (currentPunch.value || !isPlayingSequence) {
+    stopAnnouncementSequence()
+    return
+  }
+
+  const list = activeAnnouncements.value
+  if (list.length === 0) {
+    stopAnnouncementSequence()
+    resetIdleTimer()
+    return
+  }
+
+  const item = { ...list[announcementIndex % list.length] }
   enrichBirthdayCelebrant(item)
 
   currentAnnouncement.value = item
   isAnnouncementVisible.value = true
 
-  // Visible for 12 seconds
+  // Use configured display duration from existing Punch Display settings
+  const durationSeconds = settings.value.displayDurationSeconds || 5
+  const displayDurationMs = Math.max(1, durationSeconds) * 1000
+
   if (announcementDismissTimer) clearTimeout(announcementDismissTimer)
   announcementDismissTimer = setTimeout(() => {
-    isAnnouncementVisible.value = false
+    onAnnouncementStepFinished()
+  }, displayDurationMs)
+}
 
-    // Wait 15 seconds before rotating to next announcement if still idle
-    if (announcementRotateTimer) clearTimeout(announcementRotateTimer)
-    announcementRotateTimer = setTimeout(() => {
-      if (!currentPunch.value) {
-        showNextAnnouncement()
-      }
-    }, 15 * 1000)
-  }, 12 * 1000)
+function onAnnouncementStepFinished() {
+  // Biometric punch interrupt check
+  if (currentPunch.value || !isPlayingSequence) {
+    stopAnnouncementSequence()
+    return
+  }
+
+  // Slide announcement out
+  isAnnouncementVisible.value = false
+
+  const list = activeAnnouncements.value
+  if (list.length === 0) {
+    stopAnnouncementSequence()
+    resetIdleTimer()
+    return
+  }
+
+  // Advance to next enabled announcement in rotation
+  announcementIndex = (announcementIndex + 1) % list.length
+
+  // WAIT 1 SECOND (1000 ms) before showing next enabled announcement
+  const DELAY_BETWEEN_ANNOUNCEMENTS_MS = 1000
+  if (announcementDelayTimer) clearTimeout(announcementDelayTimer)
+  announcementDelayTimer = setTimeout(() => {
+    announcementDelayTimer = null
+    // If a biometric punch arrived during the 1-second delay, cancel immediately
+    if (currentPunch.value || !isPlayingSequence) {
+      stopAnnouncementSequence()
+      return
+    }
+    // Show next enabled announcement
+    playSequentialStep()
+  }, DELAY_BETWEEN_ANNOUNCEMENTS_MS)
 }
 
 function showAnnouncementPreview(item?: AnnouncementItem | null) {
-  // If punch is visible, dismiss it so preview is visible
+  // If punch is visible, dismiss it so preview can be viewed
   if (currentPunch.value) {
     currentPunch.value = null
     cancelDisplayTimer()
   }
 
-  hideAnnouncement()
-
-  let toShow = item ? { ...item } : null
-  if (!toShow) {
-    const list = activeAnnouncements.value
-    toShow = list.length > 0 ? { ...list[announcementIndex % list.length] } : { ...announcementService.loadAnnouncements()[0] }
-    announcementIndex++
-  }
-
-  enrichBirthdayCelebrant(toShow)
-  currentAnnouncement.value = toShow
-  isAnnouncementVisible.value = true
-
-  if (announcementDismissTimer) clearTimeout(announcementDismissTimer)
-  announcementDismissTimer = setTimeout(() => {
-    isAnnouncementVisible.value = false
-  }, 12 * 1000)
+  startAnnouncementSequence(item)
 }
 
 // Lightweight, graceful confetti burst for qualifying on-time/early IN punches
@@ -466,6 +572,7 @@ function startDisplayTimer() {
     dismissTimer = setTimeout(() => {
       currentPunch.value = null
       cancelDisplayTimer()
+      resetIdleTimer()
     }, totalMs)
   }
 }
