@@ -948,7 +948,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Live Clock Display (Matches BISMAC BISBIO B-29b Biometric Hardware Time) -->
-      <div class="flex flex-col items-center justify-center px-3.5 py-1 rounded-lg bg-muted/40 border shadow-2xs">
+      <div class="flex flex-col items-center justify-center px-3.5 py-1">
         <div class="flex items-center gap-1.5 leading-none">
           <span class="font-mono text-xl sm:text-xl font-bold tracking-tight text-foreground leading-none">
             {{ currentTimeStr }}
