@@ -976,7 +976,7 @@ onUnmounted(() => {
         <!-- Celebratory Flying Balloons and Lightweight Confetti Layer (Celebration for Birthday) -->
         <div
           v-if="currentAnnouncement.type === 'birthday'"
-          class="pointer-events-none fixed inset-0 z-[999] overflow-hidden"
+          class="pointer-events-none fixed inset-0 z-30 overflow-hidden"
           aria-hidden="true"
         >
           <!-- Flying Balloons: Float gently upward from bottom of screen beyond top -->
@@ -1216,18 +1216,18 @@ onUnmounted(() => {
 
       <!-- Live Clock Display (PC Time Minus 5 Minutes in Asia/Manila) -->
       <div class="flex flex-col items-center justify-center px-3.5 py-1">
-        <div class="flex items-center gap-1.5 leading-none">
-          <span class="font-mono text-xl sm:text-xl font-bold tracking-tight text-foreground leading-none">
+        <div class="flex items-center gap-2 leading-none">
+          <span class="font-mono text-xl sm:text-2xl lg:text-3xl font-black tracking-tight text-foreground leading-none">
             {{ currentTimeStr }}
           </span>
           <span
-            class="text-[9px] font-mono px-1 py-0.5 rounded font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
+            class="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
           >
             DISPLAY TIME
           </span>
         </div>
-        <div class="text-[12px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
-          <CalendarIcon class="size-3 text-muted-foreground" />
+        <div class="text-xs sm:text-sm text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
+          <CalendarIcon class="size-3 sm:size-3.5 text-muted-foreground" />
           {{ currentDateStr }}
         </div>
       </div>
@@ -1301,15 +1301,15 @@ onUnmounted(() => {
     </div>
 
     <!-- Main Content Area: Kiosk Viewport Centered without Unnecessary Scrollbar -->
-    <main class="flex-1 min-h-0 px-3 sm:px-6 py-2.5 sm:py-3.5 flex flex-col lg:flex-row gap-4 max-w-7xl mx-auto w-full items-stretch justify-center overflow-hidden">
+    <main class="flex-1 min-h-0 px-3 sm:px-6 lg:px-8 xl:px-12 py-2 sm:py-3.5 lg:py-5 flex flex-col lg:flex-row gap-4 sm:gap-6 xl:gap-8 max-w-[1920px] mx-auto w-full items-stretch justify-center overflow-hidden">
       
       <!-- Primary Active Punch / Idle Display Card -->
-      <section class="flex-1 min-h-0 flex flex-col justify-center max-w-2xl mx-auto w-full h-full">
+      <section class="flex-1 min-h-0 flex flex-col justify-center max-w-4xl lg:max-w-5xl xl:max-w-6xl mx-auto w-full h-full">
         <!-- CURRENT PUNCH CARD (Modern Profile/Post Card Composition) -->
         <div
           v-if="currentPunch && settings.enabled"
           :key="currentPunch.eventId || currentPunch.id"
-          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between transition-all animate-in fade-in zoom-in-95 duration-200 h-full"
+          class="relative text-card-foreground border rounded-2xl lg:rounded-3xl shadow-sm overflow-hidden flex flex-col justify-between transition-all animate-in fade-in zoom-in-95 duration-200 h-full"
           :class="[
             hasCustomLateGraphic
               ? 'border-destructive/40 shadow-xl bg-transparent'
@@ -1329,7 +1329,7 @@ onUnmounted(() => {
 
           <!-- 1. Profile Cover Area Header -->
           <div
-            class="relative w-full h-28 sm:h-36 md:h-40 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-4"
+            class="relative w-full h-28 sm:h-36 md:h-40 lg:h-44 xl:h-48 shrink-0 overflow-hidden flex items-start justify-between p-3.5 sm:p-5 lg:p-6"
           >
             <!-- Decorative pattern on clean cover -->
             <div
@@ -1339,7 +1339,7 @@ onUnmounted(() => {
 
             <!-- Cover Left: Biometric Terminal Badge -->
             <div
-              class="relative z-10 flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-mono font-bold uppercase tracking-wider"
+              class="relative z-10 flex items-center gap-2 px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg text-xs sm:text-sm lg:text-base font-mono font-bold uppercase tracking-wider shadow-xs"
               :class="
                 hasCustomLateGraphic
                   ? 'bg-black/60 text-white backdrop-blur-md border border-white/20'
@@ -1349,7 +1349,7 @@ onUnmounted(() => {
               "
             >
               <Fingerprint
-                class="size-3.5"
+                class="size-4 sm:size-5"
                 :class="hasCustomLateGraphic || (currentPunch.isLate && settings.lateVisualEnabled) ? 'text-white' : 'text-primary'"
               />
               <span>{{ currentPunch.deviceName || 'Biometric Terminal' }}</span>
@@ -1364,7 +1364,7 @@ onUnmounted(() => {
                     ? 'warning'
                     : 'success'
               "
-              class="px-3 py-1 text-xs font-semibold uppercase text-[11px]"
+              class="px-3.5 sm:px-5 py-1 sm:py-1.5 text-xs sm:text-sm lg:text-base font-bold uppercase tracking-wider"
               :class="currentPunch.isLate ? 'text-white' : ''"
             >
               {{ currentPunch.statusLabel }}
@@ -1372,16 +1372,16 @@ onUnmounted(() => {
           </div>
 
           <!-- 2. Circular Employee Photo (Centered Overlapping Bottom Edge of Cover) -->
-          <div class="flex justify-center -mt-14 sm:-mt-16 md:-mt-18 relative z-20 shrink-0">
+          <div class="flex justify-center -mt-14 sm:-mt-18 md:-mt-20 lg:-mt-22 xl:-mt-24 relative z-20 shrink-0">
             <div class="relative">
               <div
-                class="size-28 sm:size-32 md:size-36 rounded-full border-4 shadow-xl overflow-hidden flex items-center justify-center transition-transform"
+                class="size-28 sm:size-36 md:size-40 lg:size-44 xl:size-48 2xl:size-52 rounded-full border-4 sm:border-[5px] shadow-2xl overflow-hidden flex items-center justify-center transition-transform"
                 :class="[
                   hasCustomLateGraphic
-                    ? 'shadow-2xl'
+                    ? 'shadow-2xl border-white/40'
                     : (currentPunch.isLate && settings.lateVisualEnabled
-                        ? 'shadow-xl'
-                        : 'bg-white shadow-xl')
+                        ? 'shadow-xl border-destructive/50'
+                        : 'bg-white shadow-xl border-card ring-4 ring-gray-200/80 dark:ring-border/80')
                 ]"
               >
                 <!-- Real photo if available and not errored -->
@@ -1397,14 +1397,14 @@ onUnmounted(() => {
                   v-else
                   class="size-full flex items-center justify-center bg-primary/10 text-primary"
                 >
-                  <User class="size-14 sm:size-16 text-muted-foreground/70" />
+                  <User class="size-14 sm:size-18 md:size-20 lg:size-24 text-muted-foreground/70" />
                 </div>
               </div>
 
               <!-- Direction Badge Pin anchored to the circular avatar -->
-              <div class="absolute -bottom-2.5 left-0 right-0 flex justify-center">
+              <div class="absolute -bottom-2.5 sm:-bottom-3 left-0 right-0 flex justify-center">
                 <span
-                  class="px-3 py-0.5 rounded-full text-[10px] sm:text-[11px] font-mono font-black uppercase tracking-wider border text-center"
+                  class="px-3.5 sm:px-5 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs md:text-sm lg:text-base font-mono font-black uppercase tracking-wider border text-center shadow-md"
                   :class="[
                     currentPunch.direction === 'OUT'
                       ? 'bg-rose-500 text-white border-rose-600'
@@ -1422,11 +1422,11 @@ onUnmounted(() => {
           </div>
 
           <!-- 3. Profile Content Area (Identity + Punch Card + Schedule) -->
-          <div class="flex-1 flex flex-col justify-between px-4 sm:px-6 md:px-8 pt-4 pb-2 min-h-0 relative z-10">
+          <div class="flex-1 flex flex-col justify-between px-4 sm:px-8 md:px-10 lg:px-12 pt-3 sm:pt-4 pb-2 min-h-0 relative z-10">
             <!-- A. Employee Identity -->
-            <div class="text-center space-y-1">
+            <div class="text-center space-y-1 sm:space-y-1.5">
               <h2
-                class="text-2xl sm:text-3xl font-extrabold tracking-tight truncate leading-tight"
+                class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black tracking-tight truncate leading-tight"
                 :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
               >
                 {{ currentPunch.employeeName }}
@@ -1434,18 +1434,18 @@ onUnmounted(() => {
 
               <!-- BIO ID and Department -->
               <div
-                class="flex items-center justify-center gap-2 text-xs sm:text-sm font-medium flex-wrap"
+                class="flex items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm md:text-base font-medium flex-wrap pt-0.5"
                 :class="hasCustomLateGraphic ? 'text-zinc-200' : 'text-muted-foreground'"
               >
                 <span
-                  class="font-mono text-[11px] font-bold px-2 py-0.5 rounded border"
-                  :class="hasCustomLateGraphic ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/70 border-border/70 text-foreground'"
+                  class="font-mono text-sm sm:text-base md:text-lg lg:text-xl font-black px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg border shadow-xs tracking-wider"
+                  :class="hasCustomLateGraphic ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/80 border-border text-foreground'"
                 >
                   BIO ID: {{ currentPunch.userId || currentPunch.bioId }}
                 </span>
                 <span
-                  class="font-mono text-[11px] font-bold px-2 py-0.5 rounded border"
-                  :class="hasCustomLateGraphic ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/70 border-border/70 text-foreground'"
+                  class="font-mono text-xs sm:text-sm md:text-base lg:text-lg font-bold px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg border shadow-xs"
+                  :class="hasCustomLateGraphic ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/80 border-border text-foreground'"
                 >
                   {{ currentPunch.department || 'Operations' }}
                 </span>
@@ -1453,10 +1453,10 @@ onUnmounted(() => {
 
               <!-- Work Group and Location -->
               <div
-                class="flex items-center justify-center gap-2 text-[11px] font-medium font-mono uppercase tracking-widest"
+                class="flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold font-mono uppercase tracking-widest pt-0.5"
                 :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground/90'"
               >
-                <span class="uppercase font-semibold">{{ currentPunch.workGroup || 'Group C' }}</span>
+                <span class="uppercase">{{ currentPunch.workGroup || 'Group C' }}</span>
                 <span :class="hasCustomLateGraphic ? 'text-zinc-400' : 'text-border'">•</span>
                 <span>{{ currentPunch.locationName || 'DBB CEBU' }}</span>
               </div>
@@ -1464,17 +1464,17 @@ onUnmounted(() => {
 
             <!-- B. Punch Information Card -->
             <div
-              class="w-full max-w-lg mx-auto rounded-2xl border p-4 sm:p-5 flex flex-col items-center text-center shadow-xs transition-all my-2"
+              class="w-full max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto rounded-2xl sm:rounded-3xl border p-3 sm:p-5 lg:p-6 flex flex-col items-center text-center shadow-xs transition-all my-1.5 sm:my-2.5"
               :class="[
                 hasCustomLateGraphic
-                  ? 'text-white shadow-xl border-none'
+                  ? 'text-white shadow-xl border-none bg-black/40 backdrop-blur-xs'
                   : (currentPunch.isLate && settings.lateVisualEnabled
                       ? 'bg-rose-500/10 dark:bg-rose-950/20 border-rose-500/30 text-foreground'
                       : 'bg-muted/35 dark:bg-muted/20 border-border/70 text-foreground')
               ]"
             >
               <div
-                class="text-[11px] font-mono uppercase tracking-widest font-bold mb-1"
+                class="text-xs sm:text-sm lg:text-base font-mono uppercase tracking-widest font-black mb-0.5 sm:mb-1"
                 :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
               >
                 {{ currentPunch.direction === 'OUT' ? 'Departure Time' : 'Arrival Time' }}
@@ -1482,7 +1482,7 @@ onUnmounted(() => {
 
               <!-- Exact Punch Time -->
               <div
-                class="text-4xl sm:text-5xl font-mono font-black tracking-tight leading-none my-1"
+                class="text-4xl sm:text-5xl md:text-6xl lg:text-7xl xl:text-8xl font-mono font-black tracking-tight leading-none my-1 sm:my-2"
                 :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
               >
                 {{ formatPunchTime(currentPunch.timestamp) }}
@@ -1490,16 +1490,16 @@ onUnmounted(() => {
 
               <!-- Punch Date -->
               <div
-                class="text-xs sm:text-sm font-medium mt-1 mb-3.5 flex items-center gap-1.5"
+                class="text-xs sm:text-sm md:text-base font-medium mt-0.5 mb-2.5 sm:mb-3 flex items-center gap-1.5"
                 :class="hasCustomLateGraphic ? 'text-zinc-300' : 'text-muted-foreground'"
               >
-                <CalendarIcon class="size-3.5" />
+                <CalendarIcon class="size-3.5 sm:size-4" />
                 <span>{{ formatPunchDate(currentPunch.timestamp) }}</span>
               </div>
 
               <!-- Attendance Result Strip -->
               <div
-                class="w-1/2 rounded-xl py-2 px-3 flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold border shadow-2xs"
+                class="w-full max-w-xs sm:max-w-md lg:max-w-lg rounded-xl sm:rounded-2xl py-2 sm:py-3 px-4 sm:px-6 flex items-center justify-center gap-2 text-sm sm:text-base lg:text-lg xl:text-xl font-black uppercase tracking-wide border shadow-sm"
                 :class="[
                   currentPunch.isLate && settings.lateVisualEnabled
                     ? 'bg-rose-600 text-white border-rose-700'
@@ -1508,7 +1508,7 @@ onUnmounted(() => {
                       : 'bg-emerald-600 text-white border-emerald-700'
                 ]"
               >
-                <span class="font-medium truncate">
+                <span class="truncate">
                   {{ currentPunch.statusDetail }}
                 </span>
               </div>
@@ -1518,33 +1518,33 @@ onUnmounted(() => {
             <!-- C1. TODAY'S PUNCH RECAP (When Direction is OUT) -->
             <div
               v-if="currentPunch.direction === 'OUT'"
-              class="w-full max-w-lg mx-auto grid grid-cols-3 gap-2 sm:gap-3 text-center text-xs"
+              class="w-full max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto grid grid-cols-3 gap-2 sm:gap-3 lg:gap-4 text-center"
             >
               <div
-                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                class="p-2 sm:p-3 lg:p-3.5 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs bg-black/30' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Time In</span>
-                <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
+                <span class="text-[10px] sm:text-xs lg:text-sm font-mono uppercase tracking-wider font-semibold opacity-80">Time In</span>
+                <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'">
                   {{ recapTimeIn }}
                 </span>
               </div>
 
               <div
-                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                class="p-2 sm:p-3 lg:p-3.5 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs bg-black/30' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Time Out</span>
-                <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
+                <span class="text-[10px] sm:text-xs lg:text-sm font-mono uppercase tracking-wider font-semibold opacity-80">Time Out</span>
+                <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'">
                   {{ formatPunchTime(currentPunch.timestamp) }}
                 </span>
               </div>
 
               <div
-                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                class="p-2 sm:p-3 lg:p-3.5 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs bg-black/30' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Remarks</span>
+                <span class="text-[10px] sm:text-xs lg:text-sm font-mono uppercase tracking-wider font-semibold opacity-80">Remarks</span>
                 <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
                   <Badge
                     :variant="
@@ -1552,7 +1552,7 @@ onUnmounted(() => {
                         ? 'destructive'
                         : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
                     "
-                    class="px-3.5 py-1 text-xs font-mono font-black uppercase tracking-wider"
+                    class="px-2.5 sm:px-4 py-0.5 sm:py-1 text-xs sm:text-sm lg:text-base font-mono font-black uppercase tracking-wider shadow-xs"
                     :class="(currentPunch.firstInLate || currentPunch.isLate) ? 'text-white' : ''"
                   >
                     {{ recapResultText }}
@@ -1563,15 +1563,15 @@ onUnmounted(() => {
             <!-- C2. Supporting Schedule Context (When Direction is NOT OUT) -->
             <div
               v-else-if="currentSchedule"
-              class="w-full max-w-lg mx-auto grid grid-cols-3 gap-2 sm:gap-3 text-center text-xs"
+              class="w-full max-w-xl md:max-w-2xl lg:max-w-3xl mx-auto grid grid-cols-3 gap-2 sm:gap-3 lg:gap-4 text-center"
             >
               <div
-                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                class="p-2 sm:p-3 lg:p-3.5 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs bg-black/30' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Scheduled In</span>
+                <span class="text-[10px] sm:text-xs lg:text-sm font-mono uppercase tracking-wider font-semibold opacity-80">Scheduled In</span>
                 <span
-                  class="font-mono font-bold text-xs sm:text-sm mt-0.5"
+                  class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5"
                   :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
                 >
                   {{ currentSchedule.standardIn }}
@@ -1579,12 +1579,12 @@ onUnmounted(() => {
               </div>
 
               <div
-                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                class="p-2 sm:p-3 lg:p-3.5 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs bg-black/30' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Expected Out</span>
+                <span class="text-[10px] sm:text-xs lg:text-sm font-mono uppercase tracking-wider font-semibold opacity-80">Expected Out</span>
                 <span
-                  class="font-mono font-bold text-xs sm:text-sm mt-0.5"
+                  class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5"
                   :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
                 >
                   {{ currentSchedule.expectedOut }}
@@ -1592,12 +1592,12 @@ onUnmounted(() => {
               </div>
 
               <div
-                class="p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                class="p-2 sm:p-3 lg:p-3.5 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center shadow-2xs"
+                :class="hasCustomLateGraphic ? 'border-white/15 text-zinc-200 backdrop-blur-xs bg-black/30' : 'bg-muted/25 border-border/60 text-muted-foreground'"
               >
-                <span class="text-[10px] font-mono uppercase tracking-wider font-medium opacity-80">Grace Period</span>
+                <span class="text-[10px] sm:text-xs lg:text-sm font-mono uppercase tracking-wider font-semibold opacity-80">Grace Period</span>
                 <span
-                  class="font-mono font-bold text-xs sm:text-sm mt-0.5"
+                  class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5"
                   :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
                 >
                   {{ currentSchedule.gracePeriod }} mins
@@ -1618,40 +1618,40 @@ onUnmounted(() => {
         <!-- IDLE / WAITING STATE CARD (Profile-Style Kiosk Design) -->
         <div
           v-else
-          class="relative text-card-foreground border rounded-2xl shadow-sm overflow-hidden flex flex-col bg-card h-full justify-between"
+          class="relative text-card-foreground border rounded-2xl lg:rounded-3xl shadow-sm overflow-hidden flex flex-col bg-card h-full justify-between"
         >
           <!-- Idle Cover Banner -->
           <div
-            class="h-28 sm:h-36 md:h-40 w-full bg-cover bg-center shrink-0 flex items-start justify-between p-3.5 sm:p-4 relative"
+            class="h-28 sm:h-36 md:h-40 lg:h-44 xl:h-48 w-full bg-cover bg-center shrink-0 flex items-start justify-between p-3.5 sm:p-5 lg:p-6 relative"
             style="background-image: url('/dbbbuildinganimated.jpg');"
           >
-            <div class="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-mono font-semibold tracking-wider uppercase bg-card/80 border text-foreground shadow-2xs backdrop-blur-xs">
-              <Fingerprint class="size-3.5 text-primary" />
+            <div class="flex items-center gap-2 px-3 sm:px-4 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-mono font-bold tracking-wider uppercase bg-card/85 border text-foreground shadow-2xs backdrop-blur-xs">
+              <Fingerprint class="size-4 sm:size-5 text-primary" />
               <span>Terminal Standby</span>
             </div>
-            <div class="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-mono font-semibold tracking-wider uppercase bg-card/80 border text-foreground shadow-2xs backdrop-blur-xs">
-              <span class="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <div class="flex items-center gap-2 px-3 sm:px-4 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-mono font-bold tracking-wider uppercase bg-card/85 border text-foreground shadow-2xs backdrop-blur-xs">
+              <span class="size-2 sm:size-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span>READY</span>
             </div>
           </div>
 
           <!-- Idle Avatar Centered Overlapping Cover -->
-          <div class="flex justify-center -mt-14 sm:-mt-16 md:-mt-18 relative z-20 shrink-0">
-            <div class="size-28 sm:size-32 md:size-36 rounded-full border-4 border-card ring-4 ring-gray-300/80 dark:ring-background/80 bg-primary/20 bg-white text-primary flex items-center justify-center">
-              <Fingerprint class="size-14 sm:size-16 text-primary animate-pulse" />
+          <div class="flex justify-center -mt-14 sm:-mt-18 md:-mt-20 lg:-mt-22 xl:-mt-24 relative z-20 shrink-0">
+            <div class="size-28 sm:size-36 md:size-40 lg:size-44 xl:size-48 2xl:size-52 rounded-full border-4 sm:border-[5px] border-card ring-4 ring-gray-300/80 dark:ring-background/80 bg-primary/20 bg-white text-primary flex items-center justify-center shadow-2xl">
+              <Fingerprint class="size-14 sm:size-18 md:size-20 lg:size-24 text-primary animate-pulse" />
             </div>
           </div>
 
           <!-- Idle Instructions Body -->
-          <div class="-mt-14 flex-1 flex flex-col justify-center items-center text-center px-6 py-4 space-y-2 min-h-0">
-            <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+          <div class="-mt-14 sm:-mt-16 md:-mt-18 flex-1 flex flex-col justify-center items-center text-center px-6 sm:px-8 py-4 space-y-2 sm:space-y-3 min-h-0">
+            <h2 class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black tracking-tight text-foreground">
               Ready for Biometric Scan
             </h2>
-            <p class="text-xs sm:text-sm text-muted-foreground max-w-sm leading-relaxed">
+            <p class="text-xs sm:text-sm md:text-base lg:text-lg text-muted-foreground max-w-md sm:max-w-lg leading-relaxed font-medium">
               Place your registered finger on the optical sensor to record your attendance punch.
             </p>
-            <div class="pt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground font-mono">
-              <Server class="size-3 text-muted-foreground" />
+            <div class="pt-2 sm:pt-3 flex items-center justify-center gap-2 text-xs sm:text-sm text-muted-foreground font-mono">
+              <Server class="size-3.5 sm:size-4 text-muted-foreground" />
               <span>BISMAC BISBIO B-29b • Port 4370</span>
             </div>
           </div>
@@ -1662,45 +1662,45 @@ onUnmounted(() => {
       </section>
 
       <!-- Right / Session Stream: Recent Punches List (Maximum 7 Recent Punches) -->
-      <aside class="w-full lg:w-80 xl:w-96 bg-card text-card-foreground border rounded-2xl shadow-sm p-3.5 sm:p-4 shrink-0 flex flex-col min-h-0 max-h-full">
-        <div class="flex items-center justify-between pb-2.5 border-b shrink-0">
-          <div class="flex items-center gap-2">
-            <History class="size-4 text-primary" />
-            <h4 class="text-sm font-semibold text-foreground">
+      <aside class="w-full lg:w-84 xl:w-96 2xl:w-[420px] bg-card text-card-foreground border rounded-2xl lg:rounded-3xl shadow-sm p-3.5 sm:p-5 shrink-0 flex flex-col min-h-0 max-h-full">
+        <div class="flex items-center justify-between pb-2.5 sm:pb-3 border-b shrink-0">
+          <div class="flex items-center gap-2 sm:gap-2.5">
+            <History class="size-4 sm:size-5 text-primary" />
+            <h4 class="text-sm sm:text-base lg:text-lg font-bold text-foreground">
               Recent Punches
             </h4>
           </div>
-          <Badge variant="outline" class="text-[10px] font-mono font-bold">
+          <Badge variant="outline" class="text-xs sm:text-sm font-mono font-bold px-2 py-0.5">
             {{ recentPunches.length }} / 7
           </Badge>
         </div>
 
-        <div v-if="recentPunches.length === 0" class="py-10 text-center text-muted-foreground space-y-1">
-          <Clock class="size-6 mx-auto stroke-1 text-muted-foreground/60" />
-          <p class="text-xs">No recent punches yet.</p>
+        <div v-if="recentPunches.length === 0" class="py-12 text-center text-muted-foreground space-y-1.5">
+          <Clock class="size-7 mx-auto stroke-1 text-muted-foreground/60" />
+          <p class="text-xs sm:text-sm">No recent punches yet.</p>
         </div>
 
-        <div v-else class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pt-2 pr-0.5">
+        <div v-else class="flex-1 min-h-0 overflow-y-auto space-y-1.5 sm:space-y-2 pt-2.5 pr-0.5">
           <div
             v-for="punch in recentPunches"
             :key="punch.eventId || punch.id"
-            class="p-2 sm:p-2.5 rounded-xl border bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between gap-2.5 text-xs"
+            class="p-2 sm:p-3 rounded-xl sm:rounded-2xl border bg-muted/20 hover:bg-muted/30 transition-colors flex items-center justify-between gap-3 text-xs sm:text-sm"
           >
             <div class="min-w-0">
-              <div class="font-semibold text-foreground truncate">
+              <div class="font-bold text-foreground text-xs sm:text-sm md:text-base truncate">
                 {{ punch.employeeName }}
               </div>
-              <div class="text-[11px] text-muted-foreground flex items-center gap-1.5 font-mono mt-0.5">
-                <span>Bio ID: {{ punch.bioId }}</span>
+              <div class="text-[11px] sm:text-xs md:text-sm text-muted-foreground flex items-center gap-1.5 font-mono mt-0.5">
+                <span class="font-bold">Bio ID: {{ punch.bioId }}</span>
                 <span>•</span>
-                <span class="text-foreground font-medium">{{ punch.time }}</span>
+                <span class="text-foreground font-semibold">{{ punch.time }}</span>
               </div>
             </div>
 
             <div class="text-right shrink-0">
               <Badge
                 :variant="punch.statusVariant === 'destructive' && settings.lateVisualEnabled ? 'destructive' : (punch.statusVariant === 'warning' ? 'warning' : 'success')"
-                class="text-[10px] uppercase font-mono px-2 py-0.5 font-bold"
+                class="text-[11px] sm:text-xs uppercase font-mono px-2 sm:px-2.5 py-0.5 sm:py-1 font-bold"
               >
                 {{ punch.status }}
               </Badge>
