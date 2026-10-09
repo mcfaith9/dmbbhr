@@ -816,9 +816,17 @@ async function triggerTestPunch(
 
   switch (scenario) {
     case 'same_employee':
-      // Dynamic advancing seconds: 8:05:01, 8:05:08, 8:05:15...
-      mockDate.setHours(8, 5, (testSeq * 7) % 60, 0)
-      direction = 'IN'
+      // Progresses employee across workday sequence: 8:00 AM (IN), 12:05 PM (LUNCH OUT), 12:55 PM (LUNCH IN), 5:00 PM (OUT)
+      if (testSeq % 4 === 1) {
+        mockDate.setHours(8, 0, (testSeq * 7) % 60, 0)
+      } else if (testSeq % 4 === 2) {
+        mockDate.setHours(12, 5, (testSeq * 7) % 60, 0)
+      } else if (testSeq % 4 === 3) {
+        mockDate.setHours(12, 55, (testSeq * 7) % 60, 0)
+      } else {
+        mockDate.setHours(17, 0, (testSeq * 7) % 60, 0)
+      }
+      direction = undefined as any
       break
     case 'late_in':
       mockDate.setHours(8, 1, 23, 0) // 8:01:23 AM -> LATE IN (1m late)

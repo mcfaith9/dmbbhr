@@ -717,4 +717,455 @@ clockMgr.updateDeviceTimeOffset(newDevicePunchTime, mockPcTimeAtReconnect)
 const navbarClockReconnected = clockMgr.getDisplayTime(mockPcTimeAtReconnect)
 assert.strictEqual(clockMgr.formatTime(navbarClockReconnected), '10:07:20 AM', 'Test D: Reconnected navbar matches new punch time')
 
+// ============================================================================
+// 18. Phase 5 Real-Time Punch Direction Detection — Isolated Test Suite
+// ============================================================================
+console.log('\n--- Running Phase 5 Isolated Punch Direction Resolver Tests ---')
+
+class IsolatedDirectionResolver {
+  constructor() {
+    this.states = new Map()
+  }
+
+  clearAll() {
+    this.states.clear()
+  }
+
+  resolve(params) {
+    const cleanBioId = String(params.bioId || '').replace(/\D/g, '') || String(params.bioId)
+    const punchDate = new Date(params.timestamp)
+    const year = punchDate.getFullYear()
+    const month = String(punchDate.getMonth() + 1).padStart(2, '0')
+    const day = String(punchDate.getDate()).padStart(2, '0')
+    const todayStr = `${year}-${month}-${day}`
+
+    // Compute Manila minutes from midnight
+    let hours = punchDate.getHours()
+    let minutes = punchDate.getMinutes()
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        hourCycle: 'h23'
+      }).formatToParts(punchDate)
+      const hP = parts.find(p => p.type === 'hour')?.value
+      const mP = parts.find(p => p.type === 'minute')?.value
+      if (hP && mP) {
+        hours = parseInt(hP, 10)
+        minutes = parseInt(mP, 10)
+      }
+    } catch {}
+    if (hours === 24) hours = 0
+    const punchMinutes = hours * 60 + minutes
+    const currentMs = punchDate.getTime()
+
+    const standardIn = params.standardIn || '08:00'
+    const expectedOut = params.expectedOut || '17:00'
+    const lunchStart = params.lunchStart || '12:00'
+    const lunchEnd = params.lunchEnd || '13:00'
+
+    const [stdH, stdM] = standardIn.split(':').map(Number)
+    const standardInMinutes = (stdH || 8) * 60 + (stdM || 0)
+    const [expH, expM] = expectedOut.split(':').map(Number)
+    const expectedOutMinutes = (expH || 17) * 60 + (expM || 0)
+    const [lStartH, lStartM] = lunchStart.split(':').map(Number)
+    const lunchStartMinutes = (lStartH || 12) * 60 + (lStartM || 0)
+    const [lEndH, lEndM] = lunchEnd.split(':').map(Number)
+    const lunchEndMinutes = (lEndH || 13) * 60 + (lEndM || 0)
+
+    let state = this.states.get(cleanBioId)
+    if (!state || state.date !== todayStr) {
+      state = {
+        date: todayStr,
+        lastEventId: '',
+        lastPunchMs: 0,
+        lastDirection: 'IN',
+        lastStateLabel: 'TIME IN',
+        lastStatusCategory: 'regular',
+        lastStatusLabel: 'ON TIME',
+        lastStatusDetail: 'Biometric verified',
+        lastIsLate: false,
+        lastIsEarly: false,
+        lastDiffMinutes: 0,
+        punchCountToday: 0
+      }
+      this.states.set(cleanBioId, state)
+    }
+
+    // Exact event ID or millisecond duplicate check
+    const isExactEventDuplicate = Boolean(params.eventId && state.lastEventId === params.eventId)
+    const isExactTimestampDuplicate = Boolean(
+      state.punchCountToday > 0 &&
+      state.lastPunchMs > 0 &&
+      Math.abs(currentMs - state.lastPunchMs) < 1000
+    )
+
+    if (isExactEventDuplicate || isExactTimestampDuplicate) {
+      return {
+        direction: state.lastDirection,
+        stateLabel: state.lastStateLabel,
+        statusCategory: state.lastStatusCategory,
+        statusLabel: state.lastStatusLabel,
+        statusDetail: state.lastStatusDetail,
+        isLate: state.lastIsLate,
+        isEarly: state.lastIsEarly,
+        diffMinutes: state.lastDiffMinutes
+      }
+    }
+
+    let resolvedDir = 'IN'
+    let resolvedLabel = 'TIME IN'
+    let resolvedCategory = 'regular'
+    let resolvedStatus = 'ON TIME'
+    let resolvedDetail = 'On schedule'
+    let isLate = false
+    let isEarly = false
+    let diffMinutes = 0
+
+    const explicitDir = params.explicitDirection
+    const explicitState = params.explicitState
+
+    if (explicitDir === 'OUT' || explicitState === 4) {
+      resolvedDir = 'OUT'
+      resolvedLabel = 'TIME OUT'
+    } else if (explicitDir === 'BREAK_OUT' || explicitState === 2) {
+      resolvedDir = 'BREAK_OUT'
+      resolvedLabel = 'BREAK OUT'
+    } else if (explicitDir === 'BREAK_IN' || explicitState === 3) {
+      resolvedDir = 'BREAK_IN'
+      resolvedLabel = 'BREAK IN'
+    } else if (explicitDir === 'IN') {
+      resolvedDir = 'IN'
+      resolvedLabel = 'TIME IN'
+    } else {
+      // Unflagged sequence transition
+      if (state.punchCountToday === 0) {
+        resolvedDir = 'IN'
+        resolvedLabel = 'TIME IN'
+      } else if (state.lastDirection === 'IN') {
+        if (punchMinutes >= lunchStartMinutes - 60 && punchMinutes <= lunchEndMinutes + 15) {
+          resolvedDir = 'BREAK_OUT'
+          resolvedLabel = 'BREAK OUT'
+        } else if (punchMinutes >= expectedOutMinutes - 60 || punchMinutes >= 15 * 60) {
+          resolvedDir = 'OUT'
+          resolvedLabel = 'TIME OUT'
+        } else {
+          resolvedDir = 'IN'
+          resolvedLabel = 'TIME IN'
+        }
+      } else if (state.lastDirection === 'BREAK_OUT') {
+        resolvedDir = 'IN'
+        resolvedLabel = 'TIME IN'
+      } else if (state.lastDirection === 'BREAK_IN') {
+        resolvedDir = 'OUT'
+        resolvedLabel = 'TIME OUT'
+      } else if (state.lastDirection === 'OUT') {
+        if (state.punchCountToday <= 2 || punchMinutes < expectedOutMinutes - 60) {
+          resolvedDir = 'IN'
+          resolvedLabel = 'TIME IN'
+        } else {
+          resolvedDir = 'OUT'
+          resolvedLabel = 'TIME OUT'
+        }
+      } else {
+        resolvedDir = 'IN'
+        resolvedLabel = 'TIME IN'
+      }
+    }
+
+    if (resolvedDir === 'IN') {
+      if (state.punchCountToday === 0) {
+        if (punchMinutes < standardInMinutes) {
+          diffMinutes = standardInMinutes - punchMinutes
+          resolvedCategory = 'early'
+          resolvedStatus = 'EARLY'
+          resolvedDetail = `${diffMinutes}m early`
+          isEarly = true
+          isLate = false
+        } else if (punchMinutes === standardInMinutes) {
+          diffMinutes = 0
+          resolvedCategory = 'on_time'
+          resolvedStatus = 'ON TIME'
+          resolvedDetail = 'On schedule'
+          isEarly = false
+          isLate = false
+        } else {
+          diffMinutes = punchMinutes - standardInMinutes
+          resolvedCategory = 'late'
+          resolvedStatus = 'LATE'
+          resolvedDetail = `Late by ${diffMinutes}m`
+          isEarly = false
+          isLate = true
+        }
+      } else {
+        resolvedCategory = 'regular'
+        resolvedStatus = 'ON TIME'
+        resolvedDetail = 'Returned from break'
+        isEarly = false
+        isLate = false
+        diffMinutes = 0
+      }
+    } else if (resolvedDir === 'BREAK_OUT') {
+      resolvedCategory = 'regular'
+      resolvedStatus = 'BREAK OUT'
+      resolvedDetail = 'Lunch / break period started'
+      isEarly = false
+      isLate = false
+      diffMinutes = 0
+    } else if (resolvedDir === 'BREAK_IN') {
+      resolvedCategory = 'regular'
+      resolvedStatus = 'BREAK IN'
+      resolvedDetail = 'Returned from break'
+      isEarly = false
+      isLate = false
+      diffMinutes = 0
+    } else if (resolvedDir === 'OUT') {
+      if (punchMinutes >= expectedOutMinutes) {
+        resolvedCategory = 'time_out'
+        resolvedStatus = 'TIME OUT'
+        resolvedDetail = 'Shift completed'
+        isEarly = false
+        isLate = false
+        diffMinutes = 0
+      } else {
+        if (state.punchCountToday <= 1 && punchMinutes <= lunchEndMinutes + 15) {
+          resolvedCategory = 'regular'
+          resolvedStatus = 'TIME OUT'
+          resolvedDetail = 'Lunch break started'
+          isEarly = false
+          isLate = false
+          diffMinutes = 0
+        } else {
+          diffMinutes = expectedOutMinutes - punchMinutes
+          resolvedCategory = 'undertime'
+          resolvedStatus = 'EARLY OUT'
+          resolvedDetail = `${diffMinutes}m before scheduled exit`
+          isEarly = false
+          isLate = false
+        }
+      }
+    }
+
+    const isStateRepeating = state.punchCountToday > 0 && state.lastDirection === resolvedDir
+    if (!isStateRepeating) {
+      state.punchCountToday += 1
+    }
+
+    state.lastEventId = params.eventId
+    state.lastPunchMs = currentMs
+    state.lastDirection = resolvedDir
+    state.lastStateLabel = resolvedLabel
+    state.lastStatusCategory = resolvedCategory
+    state.lastStatusLabel = resolvedStatus
+    state.lastStatusDetail = resolvedDetail
+    state.lastIsLate = isLate
+    state.lastIsEarly = isEarly
+    state.lastDiffMinutes = diffMinutes
+
+    return {
+      direction: resolvedDir,
+      stateLabel: resolvedLabel,
+      statusCategory: resolvedCategory,
+      statusLabel: resolvedStatus,
+      statusDetail: resolvedDetail,
+      isLate,
+      isEarly,
+      diffMinutes
+    }
+  }
+}
+
+const resolver = new IsolatedDirectionResolver()
+
+// Case 1: 7:59:59 AM -> TIME IN, EARLY
+resolver.clearAll()
+const c1 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c1',
+  timestamp: '2026-10-09T07:59:59+08:00',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(c1.stateLabel, 'TIME IN', 'Case 1: Must be TIME IN')
+assert.strictEqual(c1.statusLabel, 'EARLY', 'Case 1: Must be EARLY')
+assert.strictEqual(c1.isEarly, true, 'Case 1: isEarly true')
+assert.strictEqual(c1.isLate, false, 'Case 1: isLate false')
+console.log('✔ Case 1 Passed: 7:59:59 AM -> TIME IN, EARLY')
+
+// Case 2: 8:00:00 AM -> TIME IN, ON TIME
+resolver.clearAll()
+const c2 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c2',
+  timestamp: '2026-10-09T08:00:00+08:00',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(c2.stateLabel, 'TIME IN', 'Case 2: Must be TIME IN')
+assert.strictEqual(c2.statusLabel, 'ON TIME', 'Case 2: Must be ON TIME')
+assert.strictEqual(c2.isLate, false, 'Case 2: isLate false')
+console.log('✔ Case 2 Passed: 8:00:00 AM -> TIME IN, ON TIME')
+
+// Case 3: 8:00:49 AM -> TIME IN, ON TIME
+resolver.clearAll()
+const c3 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c3',
+  timestamp: '2026-10-09T08:00:49+08:00',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(c3.stateLabel, 'TIME IN', 'Case 3: Must be TIME IN')
+assert.strictEqual(c3.statusLabel, 'ON TIME', 'Case 3: Must be ON TIME')
+assert.strictEqual(c3.isLate, false, 'Case 3: isLate false')
+console.log('✔ Case 3 Passed: 8:00:49 AM -> TIME IN, ON TIME')
+
+// Case 4: 8:01:00 AM -> TIME IN, LATE
+resolver.clearAll()
+const c4 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c4',
+  timestamp: '2026-10-09T08:01:00+08:00',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(c4.stateLabel, 'TIME IN', 'Case 4: Must be TIME IN')
+assert.strictEqual(c4.statusLabel, 'LATE', 'Case 4: Must be LATE')
+assert.strictEqual(c4.isLate, true, 'Case 4: isLate true')
+assert.strictEqual(c4.diffMinutes, 1, 'Case 4: Late by 1 minute')
+console.log('✔ Case 4 Passed: 8:01:00 AM -> TIME IN, LATE')
+
+// Case 5: Morning TIME IN followed by a valid 11:00 AM TIME OUT -> TIME OUT
+resolver.clearAll()
+const c5_1 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c5-1',
+  timestamp: '2026-10-09T08:00:00+08:00'
+})
+assert.strictEqual(c5_1.stateLabel, 'TIME IN')
+const c5_2 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c5-2',
+  timestamp: '2026-10-09T11:00:00+08:00',
+  explicitDirection: 'OUT'
+})
+assert.strictEqual(c5_2.stateLabel, 'TIME OUT', 'Case 5: Must display TIME OUT')
+assert.strictEqual(c5_2.direction, 'OUT')
+console.log('✔ Case 5 Passed: Morning TIME IN followed by 11:00 AM TIME OUT -> TIME OUT')
+
+// Case 6: Lunch TIME OUT followed by a 12:30 PM punch -> TIME IN
+const c6 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c6',
+  timestamp: '2026-10-09T12:30:00+08:00'
+})
+assert.strictEqual(c6.stateLabel, 'TIME IN', 'Case 6: Return from lunch must display TIME IN')
+assert.strictEqual(c6.direction, 'IN')
+assert.strictEqual(c6.isLate, false, 'Case 6: Return from lunch must NEVER be marked late')
+console.log('✔ Case 6 Passed: Lunch TIME OUT followed by 12:30 PM punch -> TIME IN')
+
+// Case 7: Afternoon TIME IN followed by a valid end-of-day punch -> TIME OUT
+const c7 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c7',
+  timestamp: '2026-10-09T17:00:00+08:00'
+})
+assert.strictEqual(c7.stateLabel, 'TIME OUT', 'Case 7: End of day must display TIME OUT')
+assert.strictEqual(c7.direction, 'OUT')
+assert.strictEqual(c7.statusLabel, 'TIME OUT')
+console.log('✔ Case 7 Passed: Afternoon TIME IN followed by end-of-day punch -> TIME OUT')
+
+// Case 8: Repeated delivery of the same event -> no double state transition
+const c8_dup = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-c7', // Same eventId as Case 7
+  timestamp: '2026-10-09T17:00:00+08:00'
+})
+assert.strictEqual(c8_dup.stateLabel, 'TIME OUT', 'Case 8: Duplicate event maintains TIME OUT')
+assert.strictEqual(c8_dup.direction, 'OUT')
+console.log('✔ Case 8 Passed: Repeated delivery of the same event -> no double state transition')
+
+// Case 9: Two different employees punching close together -> independent sequences
+resolver.clearAll()
+const empA1 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-empA-1',
+  timestamp: '2026-10-09T08:00:00+08:00'
+})
+const empB1 = resolver.resolve({
+  bioId: '25069',
+  eventId: 'ev-empB-1',
+  timestamp: '2026-10-09T08:00:05+08:00'
+})
+assert.strictEqual(empA1.stateLabel, 'TIME IN')
+assert.strictEqual(empB1.stateLabel, 'TIME IN')
+// Employee A punches OUT for lunch at 11:00 AM
+const empA2 = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-empA-2',
+  timestamp: '2026-10-09T11:00:00+08:00',
+  explicitDirection: 'OUT'
+})
+assert.strictEqual(empA2.stateLabel, 'TIME OUT')
+// Employee B re-confirms at 8:05 AM -> remains TIME IN
+const empB2 = resolver.resolve({
+  bioId: '25069',
+  eventId: 'ev-empB-2',
+  timestamp: '2026-10-09T08:05:00+08:00'
+})
+assert.strictEqual(empB2.stateLabel, 'TIME IN', 'Case 9: Employee B is still TIME IN')
+console.log('✔ Case 9 Passed: Two different employees punching close together -> independent sequences')
+
+// Case 10: First punch of a new workday -> does not inherit yesterday's direction
+const yesterdayPunch = resolver.resolve({
+  bioId: '50350',
+  eventId: 'ev-yday',
+  timestamp: '2026-10-08T17:00:00+08:00',
+  explicitDirection: 'OUT'
+})
+assert.strictEqual(yesterdayPunch.stateLabel, 'TIME OUT')
+// Today's first punch on 2026-10-09:
+const todayFirstPunch = resolver.resolve({
+  bioId: '50350',
+  eventId: 'ev-today-first',
+  timestamp: '2026-10-09T07:55:00+08:00'
+})
+assert.strictEqual(todayFirstPunch.stateLabel, 'TIME IN', 'Case 10: First punch of new day must be TIME IN')
+assert.strictEqual(todayFirstPunch.direction, 'IN')
+console.log("✔ Case 10 Passed: First punch of new workday -> does not inherit yesterday's direction")
+
+// Case 11: A repeated or ambiguous punch -> does not blindly alternate into an incorrect direction
+resolver.clearAll()
+const morningIn11 = resolver.resolve({
+  bioId: '58337',
+  eventId: 'ev-c11-1',
+  timestamp: '2026-10-09T08:00:00+08:00'
+})
+assert.strictEqual(morningIn11.stateLabel, 'TIME IN')
+// Repeat scan within morning window (e.g. 8:00:08 AM)
+const morningRepeat11 = resolver.resolve({
+  bioId: '58337',
+  eventId: 'ev-c11-2',
+  timestamp: '2026-10-09T08:00:08+08:00'
+})
+assert.strictEqual(morningRepeat11.stateLabel, 'TIME IN', 'Case 11: Repeat morning scan remains TIME IN')
+assert.strictEqual(morningRepeat11.direction, 'IN')
+console.log('✔ Case 11 Passed: Repeated or ambiguous punch -> does not blindly alternate')
+
+// Case 12: Missing history or an unknown event direction -> safe fallback without inventing attendance data
+resolver.clearAll()
+const unknownHistoryPunch = resolver.resolve({
+  bioId: '99999',
+  eventId: 'ev-unknown',
+  timestamp: '2026-10-09T10:15:00+08:00'
+})
+assert.strictEqual(unknownHistoryPunch.stateLabel, 'TIME IN', 'Case 12: Missing history starts safely at TIME IN')
+assert.strictEqual(unknownHistoryPunch.direction, 'IN')
+assert.ok(unknownHistoryPunch.statusLabel, 'Case 12: Has clean valid status label')
+console.log('✔ Case 12 Passed: Missing history -> safe fallback without inventing attendance data')
+
+console.log('\n✅ ALL 12 PHASE 5 PUNCH DISPLAY DIRECTION RESOLUTION CASES PASSED!\n')
+
 console.log('✅ ALL PUNCH DISPLAY, VOICE ANNOUNCEMENT & DEVICE CLOCK TESTS PASSED SUCCESSFULLY! 🎉')
