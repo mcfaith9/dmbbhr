@@ -193,6 +193,8 @@ export class PunchDisplayDirectionResolver {
     firstInTime?: string
     firstInLate?: boolean
     firstInLateMinutes?: number
+    isSimulation?: boolean
+    resetSequence?: boolean
   }): {
     direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT'
     stateNumber: number
@@ -258,9 +260,18 @@ export class PunchDisplayDirectionResolver {
       this.states.set(cleanBioId, state)
     }
 
+    // Reset sequence state when requested or when running an independent simulation
+    if (params.resetSequence || (params.isSimulation && (params.explicitDirection === 'IN' || params.firstInLate !== undefined))) {
+      state.punchCountToday = 0
+      state.lastPunchMs = 0
+      state.lastEventId = ''
+      state.lastDirection = 'IN'
+    }
+
     // 1. Exact Event ID or Exact Millisecond Timestamp Deduplication Check
     const isExactEventDuplicate = Boolean(params.eventId && state.lastEventId === params.eventId)
     const isExactTimestampDuplicate = Boolean(
+      !params.isSimulation &&
       state.punchCountToday > 0 &&
       state.lastPunchMs > 0 &&
       Math.abs(currentMs - state.lastPunchMs) < 1000
@@ -393,33 +404,9 @@ export class PunchDisplayDirectionResolver {
 
     // 3. Status Evaluation for Resolved Direction
     if (resolvedDir === 'IN') {
-      const isMorningFirstArrival = state.punchCountToday === 0
-      if (isMorningFirstArrival) {
-        // Strict minute precision morning punctuality against standardIn (e.g. 8:00 AM)
-        if (punchMinutes < standardInMinutes) {
-          diffMinutes = standardInMinutes - punchMinutes
-          resolvedCategory = 'early'
-          resolvedStatus = 'EARLY'
-          resolvedDetail = `${formatDuration(diffMinutes)} early`
-          resolvedVariant = 'success'
-          isEarly = true
-          isLate = false
-          state.firstInLate = false
-          state.firstInLateMinutes = 0
-        } else if (punchMinutes === standardInMinutes) {
-          // 8:00:00 through 8:00:59 AM is ON TIME
-          diffMinutes = 0
-          resolvedCategory = 'on_time'
-          resolvedStatus = 'ON TIME'
-          resolvedDetail = 'On schedule'
-          resolvedVariant = 'success'
-          isEarly = false
-          isLate = false
-          state.firstInLate = false
-          state.firstInLateMinutes = 0
-        } else {
-          // 8:01 AM or later is LATE
-          diffMinutes = punchMinutes - standardInMinutes
+      if (params.firstInLate !== undefined) {
+        if (params.firstInLate) {
+          diffMinutes = params.firstInLateMinutes || (punchMinutes > standardInMinutes ? punchMinutes - standardInMinutes : 1)
           resolvedCategory = 'late'
           resolvedStatus = 'LATE'
           resolvedDetail = `Late by ${formatDuration(diffMinutes)}`
@@ -428,8 +415,27 @@ export class PunchDisplayDirectionResolver {
           isLate = true
           state.firstInLate = true
           state.firstInLateMinutes = diffMinutes
+        } else {
+          isLate = false
+          if (punchMinutes < standardInMinutes) {
+            diffMinutes = standardInMinutes - punchMinutes
+            resolvedCategory = 'early'
+            resolvedStatus = 'EARLY'
+            resolvedDetail = `${formatDuration(diffMinutes)} early`
+            resolvedVariant = 'success'
+            isEarly = true
+          } else {
+            diffMinutes = 0
+            resolvedCategory = 'on_time'
+            resolvedStatus = 'ON TIME'
+            resolvedDetail = 'On schedule'
+            resolvedVariant = 'success'
+            isEarly = false
+          }
+          state.firstInLate = false
+          state.firstInLateMinutes = 0
         }
-        state.firstInTime = new Intl.DateTimeFormat('en-PH', {
+        state.firstInTime = params.firstInTime || new Intl.DateTimeFormat('en-PH', {
           timeZone: 'Asia/Manila',
           hour: 'numeric',
           minute: '2-digit',
@@ -437,14 +443,59 @@ export class PunchDisplayDirectionResolver {
           hour12: true
         }).format(punchDate)
       } else {
-        // Subsequent IN (e.g. return from break or repeated confirmation)
-        resolvedCategory = 'regular'
-        resolvedStatus = 'ON TIME'
-        resolvedDetail = 'Returned from break'
-        resolvedVariant = 'success'
-        isEarly = false
-        isLate = false
-        diffMinutes = 0
+        const isMorningArrival = state.punchCountToday === 0 || punchMinutes < lunchStartMinutes - 30
+        if (isMorningArrival) {
+          // Strict minute precision morning punctuality against standardIn (e.g. 8:00 AM)
+          if (punchMinutes < standardInMinutes) {
+            diffMinutes = standardInMinutes - punchMinutes
+            resolvedCategory = 'early'
+            resolvedStatus = 'EARLY'
+            resolvedDetail = `${formatDuration(diffMinutes)} early`
+            resolvedVariant = 'success'
+            isEarly = true
+            isLate = false
+            state.firstInLate = false
+            state.firstInLateMinutes = 0
+          } else if (punchMinutes === standardInMinutes) {
+            // 8:00:00 through 8:00:59 AM is ON TIME
+            diffMinutes = 0
+            resolvedCategory = 'on_time'
+            resolvedStatus = 'ON TIME'
+            resolvedDetail = 'On schedule'
+            resolvedVariant = 'success'
+            isEarly = false
+            isLate = false
+            state.firstInLate = false
+            state.firstInLateMinutes = 0
+          } else {
+            // 8:01 AM or later is LATE
+            diffMinutes = punchMinutes - standardInMinutes
+            resolvedCategory = 'late'
+            resolvedStatus = 'LATE'
+            resolvedDetail = `Late by ${formatDuration(diffMinutes)}`
+            resolvedVariant = 'destructive'
+            isEarly = false
+            isLate = true
+            state.firstInLate = true
+            state.firstInLateMinutes = diffMinutes
+          }
+          state.firstInTime = new Intl.DateTimeFormat('en-PH', {
+            timeZone: 'Asia/Manila',
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          }).format(punchDate)
+        } else {
+          // Subsequent IN (e.g. return from break or repeated confirmation)
+          resolvedCategory = 'regular'
+          resolvedStatus = 'ON TIME'
+          resolvedDetail = 'Returned from break'
+          resolvedVariant = 'success'
+          isEarly = false
+          isLate = false
+          diffMinutes = 0
+        }
       }
     } else if (resolvedDir === 'BREAK_OUT') {
       resolvedCategory = 'regular'
@@ -1086,6 +1137,16 @@ class PunchDisplayService {
   }
 
   /**
+   * Resets the resolver session state for a specific employee (used for clean simulation tests).
+   */
+  public resetResolverEmployee = (bioId: string): void => {
+    punchDirectionResolver.resetEmployee(bioId)
+    const todayStr = getManilaDateString(new Date())
+    const normalizedBioId = normalizeBioId(bioId)
+    this.sessionPunchHistory.delete(`${todayStr}_${normalizedBioId}`)
+  }
+
+  /**
    * Returns the current display clock offset in milliseconds (-300,000 ms).
    */
   public getDeviceTimeOffset = (): number => {
@@ -1153,6 +1214,8 @@ class PunchDisplayService {
       firstInTime?: string
       firstInLate?: boolean
       firstInLateMinutes?: number
+      isSimulation?: boolean
+      resetSequence?: boolean
     }
   ) => {
     // If Punch Display is disabled in settings, do not broadcast
@@ -1255,8 +1318,8 @@ class PunchDisplayService {
       }
     }
 
-    // Record this incoming log into session punch history
-    if (!inMemLogs.some(x => x.id === log.id || (Math.abs(new Date(x.attendance_time).getTime() - currentMs) < 1000))) {
+    // Record this incoming log into session punch history (real biometric events only, not simulations)
+    if (!extra?.isSimulation && !inMemLogs.some(x => x.id === log.id || (Math.abs(new Date(x.attendance_time).getTime() - currentMs) < 1000))) {
       this.sessionPunchHistory.set(sessionKey, [...inMemLogs, log])
     }
 
@@ -1265,8 +1328,8 @@ class PunchDisplayService {
     let resolvedFirstInLate: boolean | undefined = extra?.firstInLate
     let resolvedFirstInLateMinutes: number | undefined = extra?.firstInLateMinutes
 
-    // Check recent punches in memory if morning arrival was already established
-    if (resolvedFirstInLate === undefined) {
+    // Check recent punches in memory if morning arrival was already established (for non-simulation punches)
+    if (!extra?.isSimulation && resolvedFirstInLate === undefined) {
       const prevRecent = this.recentPunches.value.find(p => p.bioId === normalizedBioId && p.firstInLate !== undefined)
       if (prevRecent) {
         resolvedFirstInLate = prevRecent.firstInLate
@@ -1275,7 +1338,7 @@ class PunchDisplayService {
       }
     }
 
-    if (primaryPrior.length > 0 && (!resolvedFirstInTime || resolvedFirstInLate === undefined)) {
+    if (!extra?.isSimulation && primaryPrior.length > 0 && (!resolvedFirstInTime || resolvedFirstInLate === undefined)) {
       const firstPrimaryIn = primaryPrior.find(p => {
         const mins = getManilaMinutesFromMidnight(p.attendance_time)
         const st = Number(p.state ?? 0)
@@ -1313,7 +1376,9 @@ class PunchDisplayService {
       lunchEnd,
       firstInTime: resolvedFirstInTime,
       firstInLate: resolvedFirstInLate,
-      firstInLateMinutes: resolvedFirstInLateMinutes
+      firstInLateMinutes: resolvedFirstInLateMinutes,
+      isSimulation: extra?.isSimulation,
+      resetSequence: extra?.resetSequence
     })
 
     const direction = resolved.direction

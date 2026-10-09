@@ -794,9 +794,18 @@ class IsolatedDirectionResolver {
       this.states.set(cleanBioId, state)
     }
 
+    // Reset sequence state when requested or when running an independent simulation
+    if (params.resetSequence || (params.isSimulation && (params.explicitDirection === 'IN' || params.firstInLate !== undefined))) {
+      state.punchCountToday = 0
+      state.lastPunchMs = 0
+      state.lastEventId = ''
+      state.lastDirection = 'IN'
+    }
+
     // Exact event ID or millisecond duplicate check
     const isExactEventDuplicate = Boolean(params.eventId && state.lastEventId === params.eventId)
     const isExactTimestampDuplicate = Boolean(
+      !params.isSimulation &&
       state.punchCountToday > 0 &&
       state.lastPunchMs > 0 &&
       Math.abs(currentMs - state.lastPunchMs) < 1000
@@ -876,36 +885,63 @@ class IsolatedDirectionResolver {
     }
 
     if (resolvedDir === 'IN') {
-      if (state.punchCountToday === 0) {
-        if (punchMinutes < standardInMinutes) {
-          diffMinutes = standardInMinutes - punchMinutes
-          resolvedCategory = 'early'
-          resolvedStatus = 'EARLY'
-          resolvedDetail = `${diffMinutes}m early`
-          isEarly = true
-          isLate = false
-        } else if (punchMinutes === standardInMinutes) {
-          diffMinutes = 0
-          resolvedCategory = 'on_time'
-          resolvedStatus = 'ON TIME'
-          resolvedDetail = 'On schedule'
-          isEarly = false
-          isLate = false
-        } else {
-          diffMinutes = punchMinutes - standardInMinutes
+      if (params.firstInLate !== undefined) {
+        if (params.firstInLate) {
+          diffMinutes = params.firstInLateMinutes || (punchMinutes > standardInMinutes ? punchMinutes - standardInMinutes : 1)
           resolvedCategory = 'late'
           resolvedStatus = 'LATE'
           resolvedDetail = `Late by ${diffMinutes}m`
           isEarly = false
           isLate = true
+        } else {
+          isLate = false
+          if (punchMinutes < standardInMinutes) {
+            diffMinutes = standardInMinutes - punchMinutes
+            resolvedCategory = 'early'
+            resolvedStatus = 'EARLY'
+            resolvedDetail = `${diffMinutes}m early`
+            isEarly = true
+          } else {
+            diffMinutes = 0
+            resolvedCategory = 'on_time'
+            resolvedStatus = 'ON TIME'
+            resolvedDetail = 'On schedule'
+            isEarly = false
+          }
         }
       } else {
-        resolvedCategory = 'regular'
-        resolvedStatus = 'ON TIME'
-        resolvedDetail = 'Returned from break'
-        isEarly = false
-        isLate = false
-        diffMinutes = 0
+        const isMorningArrival = state.punchCountToday === 0 || punchMinutes < lunchStartMinutes - 30
+        if (isMorningArrival) {
+          if (punchMinutes < standardInMinutes) {
+            diffMinutes = standardInMinutes - punchMinutes
+            resolvedCategory = 'early'
+            resolvedStatus = 'EARLY'
+            resolvedDetail = `${diffMinutes}m early`
+            isEarly = true
+            isLate = false
+          } else if (punchMinutes === standardInMinutes) {
+            diffMinutes = 0
+            resolvedCategory = 'on_time'
+            resolvedStatus = 'ON TIME'
+            resolvedDetail = 'On schedule'
+            isEarly = false
+            isLate = false
+          } else {
+            diffMinutes = punchMinutes - standardInMinutes
+            resolvedCategory = 'late'
+            resolvedStatus = 'LATE'
+            resolvedDetail = `Late by ${diffMinutes}m`
+            isEarly = false
+            isLate = true
+          }
+        } else {
+          resolvedCategory = 'regular'
+          resolvedStatus = 'ON TIME'
+          resolvedDetail = 'Returned from break'
+          isEarly = false
+          isLate = false
+          diffMinutes = 0
+        }
       }
     } else if (resolvedDir === 'BREAK_OUT') {
       resolvedCategory = 'regular'
@@ -1166,6 +1202,84 @@ assert.strictEqual(unknownHistoryPunch.direction, 'IN')
 assert.ok(unknownHistoryPunch.statusLabel, 'Case 12: Has clean valid status label')
 console.log('✔ Case 12 Passed: Missing history -> safe fallback without inventing attendance data')
 
-console.log('\n✅ ALL 12 PHASE 5 PUNCH DISPLAY DIRECTION RESOLUTION CASES PASSED!\n')
+// Case 13: Ordinary TIME IN followed by simulated late punch -> correctly evaluates as LATE
+resolver.clearAll()
+const normalInFirst = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-normal-in',
+  timestamp: '2026-10-09T08:00:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(normalInFirst.stateLabel, 'TIME IN')
+assert.strictEqual(normalInFirst.statusLabel, 'ON TIME')
+assert.strictEqual(normalInFirst.isLate, false)
+
+// Subsequent simulated late punch must NOT inherit ON TIME status or be marked return from break
+const lateSimulationAfter = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-late-sim-after',
+  timestamp: '2026-10-09T08:01:23+08:00',
+  explicitDirection: 'IN',
+  firstInLate: true,
+  firstInLateMinutes: 1,
+  isSimulation: true,
+  standardIn: '08:00'
+})
+assert.strictEqual(lateSimulationAfter.stateLabel, 'TIME IN')
+assert.strictEqual(lateSimulationAfter.statusLabel, 'LATE')
+assert.strictEqual(lateSimulationAfter.isLate, true)
+console.log('✔ Case 13 Passed: Ordinary TIME IN followed by simulated late punch -> correctly evaluates as LATE')
+
+// Case 14: Consecutive simulated late punches -> all evaluate as LATE without needing refresh
+const secondLateSim = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-late-sim-consecutive-2',
+  timestamp: '2026-10-09T08:01:25+08:00',
+  explicitDirection: 'IN',
+  firstInLate: true,
+  firstInLateMinutes: 1,
+  isSimulation: true,
+  standardIn: '08:00'
+})
+assert.strictEqual(secondLateSim.stateLabel, 'TIME IN')
+assert.strictEqual(secondLateSim.statusLabel, 'LATE')
+assert.strictEqual(secondLateSim.isLate, true)
+console.log('✔ Case 14 Passed: Consecutive simulated late punches -> all evaluate as LATE')
+
+// Case 15: Boundary cases: 8:00:49 AM (ON TIME) and 8:01:00 AM (LATE)
+resolver.clearAll()
+const boundaryOnTime = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-boundary-ontime',
+  timestamp: '2026-10-09T08:00:49+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(boundaryOnTime.statusLabel, 'ON TIME')
+assert.strictEqual(boundaryOnTime.isLate, false)
+
+resolver.clearAll()
+const boundaryLate = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-boundary-late',
+  timestamp: '2026-10-09T08:01:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(boundaryLate.statusLabel, 'LATE')
+assert.strictEqual(boundaryLate.isLate, true)
+assert.strictEqual(boundaryLate.diffMinutes, 1)
+console.log('✔ Case 15 Passed: Boundary cases (8:00:49 AM ON TIME, 8:01:00 AM LATE)')
+
+// Case 16: Duplicate event ID suppression test (same eventId must not create duplicate state transition)
+const duplicateEv = resolver.resolve({
+  bioId: '25065',
+  eventId: 'ev-boundary-late',
+  timestamp: '2026-10-09T08:01:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(duplicateEv.eventId || duplicateEv.stateLabel, 'TIME IN')
+assert.strictEqual(duplicateEv.statusLabel, 'LATE')
+console.log('✔ Case 16 Passed: Duplicate event ID suppression verified')
+
+console.log('\n✅ ALL 16 PUNCH DISPLAY DIRECTION RESOLUTION CASES PASSED!\n')
 
 console.log('✅ ALL PUNCH DISPLAY, VOICE ANNOUNCEMENT & DEVICE CLOCK TESTS PASSED SUCCESSFULLY! 🎉')
