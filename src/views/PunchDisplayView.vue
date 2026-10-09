@@ -967,10 +967,10 @@ onUnmounted(() => {
 
         <!-- Main Modal Container Card (Z-index 40 so it stays above floating balloons) -->
         <div
-          class="relative z-40 w-[94%] sm:w-[86%] md:w-[76%] lg:w-[68%] max-w-5xl mx-auto rounded-3xl border shadow-2xl p-8 sm:p-12 md:p-14 backdrop-blur-md overflow-hidden transition-all text-card-foreground bg-card/95 border-border/80"
+          class="relative z-40 w-[94%] sm:w-[86%] md:w-[76%] lg:w-[68%] max-w-5xl mx-auto rounded-3xl border shadow-2xl p-6 sm:p-10 md:p-12 backdrop-blur-md overflow-hidden text-card-foreground bg-card/95 border-border/80 transition-colors duration-200"
           :class="[
             currentAnnouncement.type === 'birthday'
-              ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/25'
+              ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/25 h-[580px] sm:h-[620px] md:h-[660px] max-h-[calc(100vh-2rem)] flex flex-col justify-between'
               : currentAnnouncement.type === 'reminder'
                 ? 'border-amber-500/40 bg-gradient-to-b from-card via-card to-amber-500/10 shadow-amber-950/25'
                 : 'border-primary/40 bg-gradient-to-b from-card via-card to-primary/10 shadow-primary/15'
@@ -999,7 +999,7 @@ onUnmounted(() => {
           </button>
 
           <!-- Type Header Badge (Large TV Scale) -->
-          <div class="flex items-center justify-center mb-6 sm:mb-8">
+          <div class="flex items-center justify-center mb-4 sm:mb-6 shrink-0">
             <span
               class="px-5 sm:px-6 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm md:text-base font-mono font-black uppercase tracking-widest flex items-center gap-2 sm:gap-2.5 border shadow-sm"
               :class="[
@@ -1018,23 +1018,26 @@ onUnmounted(() => {
           </div>
 
           <!-- Birthday Specific Presentation: Animation Sequence Plays First -> Information Modal Appears After -->
-          <div v-if="currentAnnouncement.type === 'birthday'">
+          <div
+            v-if="currentAnnouncement.type === 'birthday'"
+            class="relative w-full flex-1 min-h-0 overflow-hidden grid grid-cols-1 grid-rows-1 place-items-center"
+          >
             <Transition name="fade-stage" mode="out-in">
               <!-- Step 1: Celebratory Birthday Animation (plays first) -->
               <div
                 v-if="birthdayPhase === 'anim'"
                 key="birthday-anim-stage"
-                class="flex flex-col items-center text-center space-y-5 sm:space-y-6 py-2"
+                class="col-start-1 row-start-1 w-full h-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 px-2"
               >
                 <!-- Animated Celebration Badge -->
-                <div class="inline-flex items-center gap-2.5 px-5 py-2 rounded-full bg-rose-500/20 border border-rose-500/40 shadow-lg text-rose-500 dark:text-rose-400 font-mono font-bold text-xs sm:text-sm tracking-widest uppercase animate-bounce-subtle">
-                  <Cake class="size-5 text-rose-500 animate-spin-slow" />
+                <div class="inline-flex items-center gap-2 px-4 py-1.5 sm:px-5 sm:py-2 rounded-full bg-rose-500/20 border border-rose-500/40 shadow-md text-rose-500 dark:text-rose-400 font-mono font-bold text-xs sm:text-sm tracking-widest uppercase animate-bounce-subtle shrink-0">
+                  <Cake class="size-4 sm:size-5 text-rose-500 animate-spin-slow" />
                   <span>Celebration Time!</span>
-                  <Sparkles class="size-4 text-amber-400" />
+                  <Sparkles class="size-3.5 sm:size-4 text-amber-400" />
                 </div>
 
                 <!-- Animated Spotlight Ring -->
-                <div class="relative py-2">
+                <div class="relative py-1 shrink-0">
                   <Avatar class="size-32 sm:size-40 md:size-44 border-4 sm:border-8 border-rose-400/50 shadow-2xl ring-8 ring-rose-500/20 animate-pulse-gentle">
                     <AvatarImage
                       v-if="currentAnnouncement.photoUrl"
@@ -1045,19 +1048,19 @@ onUnmounted(() => {
                       {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
                     </AvatarFallback>
                   </Avatar>
-                  <div class="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-2.5 rounded-full shadow-lg">
-                    <Sparkles class="size-6 text-slate-950" />
+                  <div class="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-2 sm:p-2.5 rounded-full shadow-lg">
+                    <Sparkles class="size-5 sm:size-6 text-slate-950" />
                   </div>
                 </div>
 
-                <div class="space-y-2 max-w-2xl">
+                <div class="space-y-1 sm:space-y-1.5 max-w-2xl shrink-0">
                   <div class="text-xs sm:text-sm font-mono uppercase tracking-widest text-muted-foreground font-semibold">
                     Warmest Birthday Wishes to
                   </div>
-                  <h3 class="text-3xl sm:text-5xl font-black tracking-tight text-foreground leading-tight">
+                  <h3 class="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-foreground leading-tight">
                     {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
                   </h3>
-                  <div v-if="currentAnnouncement.department" class="text-sm sm:text-base font-mono text-rose-500 font-bold uppercase tracking-wider">
+                  <div v-if="currentAnnouncement.department" class="text-sm sm:text-base font-mono text-rose-500 dark:text-rose-400 font-bold uppercase tracking-wider">
                     {{ currentAnnouncement.department }}
                   </div>
                 </div>
@@ -1067,37 +1070,37 @@ onUnmounted(() => {
               <div
                 v-else
                 key="birthday-info-stage"
-                class="flex flex-col items-center text-center space-y-4 sm:space-y-6"
+                class="col-start-1 row-start-1 w-full h-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 px-2"
               >
-                <!-- Circular Celebrant Photo -->
-                <div class="relative">
-                  <Avatar class="size-28 sm:size-36 md:size-44 border-4 sm:border-8 border-card shadow-2xl ring-4 sm:ring-8 ring-rose-400/30">
+                <!-- Circular Celebrant Photo (Identical sizing and centering as Stage 1) -->
+                <div class="relative py-1 shrink-0">
+                  <Avatar class="size-32 sm:size-40 md:size-44 border-4 sm:border-8 border-rose-400/50 shadow-2xl ring-8 ring-rose-500/20">
                     <AvatarImage
                       v-if="currentAnnouncement.photoUrl"
                       :src="currentAnnouncement.photoUrl"
                       :alt="currentAnnouncement.employeeName"
                     />
-                    <AvatarFallback class="bg-rose-500/10 text-rose-600 text-3xl sm:text-5xl font-black">
+                    <AvatarFallback class="bg-rose-500/20 text-rose-500 text-4xl sm:text-5xl font-black">
                       {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
                     </AvatarFallback>
                   </Avatar>
-                  <div class="absolute -bottom-2 -right-2 bg-amber-400 text-slate-950 p-2 sm:p-2.5 rounded-full shadow-lg">
-                    <Sparkles class="size-5 sm:size-6" />
+                  <div class="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-2 sm:p-2.5 rounded-full shadow-lg">
+                    <Sparkles class="size-5 sm:size-6 text-slate-950" />
                   </div>
                 </div>
 
-                <!-- Celebrant Name & Dept -->
-                <div class="space-y-1 sm:space-y-1.5">
-                  <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight">
+                <!-- Celebrant Name & Dept (Identical typography as Stage 1) -->
+                <div class="space-y-1 sm:space-y-1.5 max-w-2xl shrink-0">
+                  <h3 class="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-foreground leading-tight">
                     {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
                   </h3>
-                  <div v-if="currentAnnouncement.department" class="text-sm sm:text-base md:text-lg font-mono text-muted-foreground uppercase tracking-widest font-semibold">
+                  <div v-if="currentAnnouncement.department" class="text-sm sm:text-base font-mono text-rose-500 dark:text-rose-400 font-bold uppercase tracking-wider">
                     {{ currentAnnouncement.department }}
                   </div>
                 </div>
 
                 <!-- Birthday Greeting Message -->
-                <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl leading-relaxed font-medium">
+                <p class="text-base sm:text-xl md:text-2xl text-muted-foreground max-w-2xl leading-relaxed font-medium line-clamp-3 sm:line-clamp-4">
                   {{ currentAnnouncement.message }}
                 </p>
               </div>
@@ -1105,7 +1108,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Standard Announcement / Reminder Layout -->
-          <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4">
+          <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4 flex-1 flex flex-col items-center justify-center">
             <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
               {{ currentAnnouncement.title }}
             </h3>
@@ -1115,7 +1118,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Subtle Footer Priority Notice -->
-          <div class="mt-8 sm:mt-12 pt-4 sm:pt-5 border-t text-center text-xs sm:text-sm font-mono text-muted-foreground/75 flex items-center justify-center gap-2">
+          <div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t text-center text-xs sm:text-sm font-mono text-muted-foreground/75 flex items-center justify-center gap-2 shrink-0">
             <Fingerprint class="size-4 sm:size-5 text-primary animate-pulse" />
             <span>Biometric scan immediately takes priority</span>
           </div>
@@ -1788,17 +1791,18 @@ onUnmounted(() => {
 /* Birthday Stage Transition (Intro Animation -> Information Modal) */
 .fade-stage-enter-active,
 .fade-stage-leave-active {
-  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
 }
 
 .fade-stage-enter-from {
   opacity: 0;
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 
 .fade-stage-leave-to {
   opacity: 0;
-  transform: scale(1.02);
+  transform: scale(1.01);
 }
 
 /* Flying Balloons: Upward translation with gentle horizontal sway */
