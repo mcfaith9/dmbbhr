@@ -240,15 +240,85 @@ const recapResultText = computed(() => {
   return 'ON TIME'
 })
 
+// Static immutable configurations for birthday visual effects (allocated once, zero garbage collection)
+const BIRTHDAY_BALLOONS = [
+  { id: 'bb-1', left: '6%', color: '#f43f5e', duration: '6.5s', delay: '0s', sway: '18px' },
+  { id: 'bb-2', left: '19%', color: '#f59e0b', duration: '7.2s', delay: '0.4s', sway: '-22px' },
+  { id: 'bb-3', left: '32%', color: '#0ea5e9', duration: '6.8s', delay: '0.1s', sway: '14px' },
+  { id: 'bb-4', left: '50%', color: '#10b981', duration: '7.4s', delay: '0.7s', sway: '-18px' },
+  { id: 'bb-5', left: '67%', color: '#a855f7', duration: '6.6s', delay: '0.3s', sway: '20px' },
+  { id: 'bb-6', left: '81%', color: '#ec4899', duration: '7.0s', delay: '0.5s', sway: '-16px' },
+  { id: 'bb-7', left: '93%', color: '#eab308', duration: '6.4s', delay: '0.2s', sway: '15px' },
+] as const
+
+const BIRTHDAY_CONFETTI = [
+  { id: 'bc-1', left: '10%', size: '8px', color: '#f43f5e', duration: '4.0s', delay: '0.1s', shape: 'rect', rotation: '420deg', drift: '25px' },
+  { id: 'bc-2', left: '22%', size: '6px', color: '#f59e0b', duration: '4.5s', delay: '0.3s', shape: 'strip', rotation: '360deg', drift: '-28px' },
+  { id: 'bc-3', left: '35%', size: '9px', color: '#0ea5e9', duration: '3.8s', delay: '0.2s', shape: 'rect', rotation: '540deg', drift: '22px' },
+  { id: 'bc-4', left: '48%', size: '7px', color: '#10b981', duration: '4.2s', delay: '0.5s', shape: 'strip', rotation: '480deg', drift: '-24px' },
+  { id: 'bc-5', left: '59%', size: '8px', color: '#a855f7', duration: '3.9s', delay: '0.3s', shape: 'rect', rotation: '390deg', drift: '28px' },
+  { id: 'bc-6', left: '72%', size: '6px', color: '#ec4899', duration: '4.3s', delay: '0.4s', shape: 'strip', rotation: '450deg', drift: '-20px' },
+  { id: 'bc-7', left: '84%', size: '9px', color: '#eab308', duration: '3.7s', delay: '0.2s', shape: 'rect', rotation: '510deg', drift: '20px' },
+  { id: 'bc-8', left: '16%', size: '7px', color: '#3b82f6', duration: '4.4s', delay: '0.6s', shape: 'strip', rotation: '380deg', drift: '-16px' },
+  { id: 'bc-9', left: '42%', size: '8px', color: '#f43f5e', duration: '3.6s', delay: '0.4s', shape: 'rect', rotation: '460deg', drift: '18px' },
+  { id: 'bc-10', left: '68%', size: '7px', color: '#f59e0b', duration: '4.1s', delay: '0.7s', shape: 'strip', rotation: '420deg', drift: '-26px' },
+  { id: 'bc-11', left: '79%', size: '8px', color: '#10b981', duration: '4.0s', delay: '0.5s', shape: 'rect', rotation: '500deg', drift: '24px' },
+  { id: 'bc-12', left: '28%', size: '6px', color: '#a855f7', duration: '4.3s', delay: '0.8s', shape: 'strip', rotation: '360deg', drift: '-22px' },
+  { id: 'bc-13', left: '54%', size: '9px', color: '#ec4899', duration: '3.8s', delay: '0.3s', shape: 'rect', rotation: '480deg', drift: '16px' },
+  { id: 'bc-14', left: '91%', size: '7px', color: '#0ea5e9', duration: '4.2s', delay: '0.5s', shape: 'strip', rotation: '400deg', drift: '-18px' },
+  { id: 'bc-15', left: '7%', size: '8px', color: '#eab308', duration: '3.6s', delay: '0.7s', shape: 'rect', rotation: '440deg', drift: '24px' },
+  { id: 'bc-16', left: '76%', size: '7px', color: '#f43f5e', duration: '4.5s', delay: '0.9s', shape: 'strip', rotation: '520deg', drift: '-22px' }
+] as const
+
 // Announcement / Reminder / Birthday Overlay State & Sequential Engine
 const isAnnouncementVisible = ref(false)
 const currentAnnouncement = ref<AnnouncementItem | null>(null)
+const birthdayPhase = ref<'anim' | 'modal'>('modal')
+let birthdayStageTimer: any = null
 let announcementIndex = 0
 let idleTimer: any = null
 let announcementDismissTimer: any = null
 let announcementDelayTimer: any = null
 let isPlayingSequence = false
 let previewUnsubscribe: (() => void) | null = null
+
+// Exact calculation: Base configured duration from settings, extended by exactly 3 additional seconds for birthdays
+function getAnnouncementDurationMs(item?: AnnouncementItem | null): number {
+  const durationSeconds = settings.value.displayDurationSeconds || 5
+  const baseDurationMs = Math.max(1, durationSeconds) * 1000
+  // Birthday modal gets exactly 3 additional seconds (+3000ms) added to the existing duration
+  const isBirthday = item?.type === 'birthday'
+  return baseDurationMs + (isBirthday ? 3000 : 0)
+}
+
+function setupAnnouncementPresentation(item?: AnnouncementItem | null) {
+  if (birthdayStageTimer) {
+    clearTimeout(birthdayStageTimer)
+    birthdayStageTimer = null
+  }
+
+  if (item?.type === 'birthday') {
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    if (prefersReducedMotion) {
+      birthdayPhase.value = 'modal'
+    } else {
+      // Step 1: Birthday animation plays first for 2.5 seconds
+      birthdayPhase.value = 'anim'
+      // Step 2: Birthday information modal appears as overlay after animation
+      birthdayStageTimer = setTimeout(() => {
+        birthdayStageTimer = null
+        if (isAnnouncementVisible.value && currentAnnouncement.value?.type === 'birthday') {
+          birthdayPhase.value = 'modal'
+        }
+      }, 2500)
+    }
+  } else {
+    birthdayPhase.value = 'modal'
+  }
+}
 
 const activeAnnouncements = computed(() => {
   return announcementService.announcements.value.filter(a => a.enabled)
@@ -258,6 +328,11 @@ function stopAnnouncementSequence() {
   isPlayingSequence = false
   isAnnouncementVisible.value = false
   currentAnnouncement.value = null
+  birthdayPhase.value = 'modal'
+  if (birthdayStageTimer) {
+    clearTimeout(birthdayStageTimer)
+    birthdayStageTimer = null
+  }
   if (announcementDismissTimer) {
     clearTimeout(announcementDismissTimer)
     announcementDismissTimer = null
@@ -336,9 +411,9 @@ function startAnnouncementSequence(startingItem?: AnnouncementItem | null) {
       currentAnnouncement.value = singleItem
       isAnnouncementVisible.value = true
       isPlayingSequence = true
+      setupAnnouncementPresentation(singleItem)
 
-      const durationSeconds = settings.value.displayDurationSeconds || 5
-      const displayDurationMs = Math.max(1, durationSeconds) * 1000
+      const displayDurationMs = getAnnouncementDurationMs(singleItem)
 
       announcementDismissTimer = setTimeout(() => {
         stopAnnouncementSequence()
@@ -365,9 +440,9 @@ function startAnnouncementSequence(startingItem?: AnnouncementItem | null) {
       currentAnnouncement.value = customItem
       isAnnouncementVisible.value = true
       isPlayingSequence = true
+      setupAnnouncementPresentation(customItem)
 
-      const durationSeconds = settings.value.displayDurationSeconds || 5
-      const displayDurationMs = Math.max(1, durationSeconds) * 1000
+      const displayDurationMs = getAnnouncementDurationMs(customItem)
 
       announcementDismissTimer = setTimeout(() => {
         isAnnouncementVisible.value = false
@@ -409,10 +484,10 @@ function playSequentialStep() {
 
   currentAnnouncement.value = item
   isAnnouncementVisible.value = true
+  setupAnnouncementPresentation(item)
 
-  // Use configured display duration from existing Punch Display settings
-  const durationSeconds = settings.value.displayDurationSeconds || 5
-  const displayDurationMs = Math.max(1, durationSeconds) * 1000
+  // Use configured display duration from existing Punch Display settings (+3s for birthdays)
+  const displayDurationMs = getAnnouncementDurationMs(item)
 
   if (announcementDismissTimer) clearTimeout(announcementDismissTimer)
   announcementDismissTimer = setTimeout(() => {
@@ -426,6 +501,12 @@ function onAnnouncementStepFinished() {
     stopAnnouncementSequence()
     return
   }
+
+  if (birthdayStageTimer) {
+    clearTimeout(birthdayStageTimer)
+    birthdayStageTimer = null
+  }
+  birthdayPhase.value = 'modal'
 
   // Slide announcement out
   isAnnouncementVisible.value = false
@@ -463,6 +544,21 @@ function showAnnouncementPreview(item?: AnnouncementItem | null) {
   }
 
   startAnnouncementSequence(item)
+}
+
+function triggerBirthdayPreview() {
+  const bdayItem = announcementService.announcements.value.find(a => a.type === 'birthday') || {
+    id: 'bday-test-preview',
+    type: 'birthday' as const,
+    title: 'HAPPY BIRTHDAY!',
+    employeeName: 'Juan Dela Cruz',
+    bioId: '25065',
+    department: 'Operations',
+    photoUrl: '/employee-photos/25065.jpg',
+    message: 'Wishing you a wonderful birthday and continued success with the DMBB family!',
+    enabled: true
+  }
+  showAnnouncementPreview(bdayItem)
 }
 
 // Lightweight, graceful confetti burst for qualifying on-time/early IN punches
@@ -796,6 +892,7 @@ onUnmounted(() => {
   cancelDisplayTimer()
   if (idleTimer) clearTimeout(idleTimer)
   hideAnnouncement()
+  if (birthdayStageTimer) clearTimeout(birthdayStageTimer)
   if (previewUnsubscribe) previewUnsubscribe()
   window.removeEventListener('keydown', handleDisplayKeyboard)
   if (confettiAnimationId) cancelAnimationFrame(confettiAnimationId)
@@ -813,8 +910,64 @@ onUnmounted(() => {
         v-if="isAnnouncementVisible && currentAnnouncement && !currentPunch"
         class="fixed inset-0 z-40 flex items-center justify-center p-4 sm:p-8 md:p-12 bg-black/55 backdrop-blur-xs select-none"
       >
+        <!-- Celebratory Flying Balloons and Lightweight Confetti Layer (Celebration for Birthday) -->
         <div
-          class="relative w-[94%] sm:w-[86%] md:w-[76%] lg:w-[68%] max-w-5xl mx-auto rounded-3xl border shadow-2xl p-8 sm:p-12 md:p-14 backdrop-blur-md overflow-hidden transition-all text-card-foreground bg-card/95 border-border/80"
+          v-if="currentAnnouncement.type === 'birthday'"
+          class="pointer-events-none fixed inset-0 z-30 overflow-hidden"
+          aria-hidden="true"
+        >
+          <!-- Flying Balloons: Float gently upward from bottom of screen beyond top -->
+          <div
+            v-for="balloon in BIRTHDAY_BALLOONS"
+            :key="balloon.id"
+            class="birthday-balloon"
+            :style="{
+              left: balloon.left,
+              bottom: '-140px',
+              animationDuration: balloon.duration,
+              animationDelay: balloon.delay,
+              '--balloon-sway': balloon.sway
+            }"
+          >
+            <svg
+              class="w-10 sm:w-12 md:w-14 h-16 sm:h-20 drop-shadow-lg opacity-90"
+              viewBox="0 0 44 64"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <!-- Balloon body -->
+              <ellipse cx="22" cy="22" rx="20" ry="22" :fill="balloon.color" />
+              <!-- Highlight gloss -->
+              <ellipse cx="15" cy="14" rx="5" ry="7" fill="#ffffff" fill-opacity="0.32" transform="rotate(-25 15 14)" />
+              <!-- Knot -->
+              <polygon points="19,43 25,43 22,46" :fill="balloon.color" />
+              <!-- String -->
+              <path d="M22 46 Q19 54, 23 60 T21 64" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round" fill="none" />
+            </svg>
+          </div>
+
+          <!-- Confetti: Lightweight festive pieces fluttering around celebratory scene -->
+          <div
+            v-for="confetto in BIRTHDAY_CONFETTI"
+            :key="confetto.id"
+            class="birthday-confetti"
+            :style="{
+              left: confetto.left,
+              top: '-24px',
+              width: confetto.size,
+              height: confetto.shape === 'strip' ? (parseInt(confetto.size) * 1.8) + 'px' : confetto.size,
+              backgroundColor: confetto.color,
+              animationDuration: confetto.duration,
+              animationDelay: confetto.delay,
+              '--confetti-rot': confetto.rotation,
+              '--confetti-drift': confetto.drift
+            }"
+          ></div>
+        </div>
+
+        <!-- Main Modal Container Card (Z-index 40 so it stays above floating balloons) -->
+        <div
+          class="relative z-40 w-[94%] sm:w-[86%] md:w-[76%] lg:w-[68%] max-w-5xl mx-auto rounded-3xl border shadow-2xl p-8 sm:p-12 md:p-14 backdrop-blur-md overflow-hidden transition-all text-card-foreground bg-card/95 border-border/80"
           :class="[
             currentAnnouncement.type === 'birthday'
               ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/25'
@@ -838,7 +991,7 @@ onUnmounted(() => {
           <!-- Close button -->
           <button
             type="button"
-            class="absolute top-4 right-4 sm:top-5 sm:right-5 size-9 sm:size-10 rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors cursor-pointer shadow-xs"
+            class="absolute top-4 right-4 sm:top-5 sm:right-5 size-9 sm:size-10 rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors cursor-pointer shadow-xs z-50"
             title="Dismiss Announcement"
             @click="hideAnnouncement"
           >
@@ -864,39 +1017,91 @@ onUnmounted(() => {
             </span>
           </div>
 
-          <!-- Birthday Specific Profile Layout -->
-          <div v-if="currentAnnouncement.type === 'birthday'" class="flex flex-col items-center text-center space-y-4 sm:space-y-6">
-            <!-- Circular Celebrant Photo -->
-            <div class="relative">
-              <Avatar class="size-28 sm:size-36 md:size-44 border-4 sm:border-8 border-card shadow-2xl ring-4 sm:ring-8 ring-rose-400/30">
-                <AvatarImage
-                  v-if="currentAnnouncement.photoUrl"
-                  :src="currentAnnouncement.photoUrl"
-                  :alt="currentAnnouncement.employeeName"
-                />
-                <AvatarFallback class="bg-rose-500/10 text-rose-600 text-3xl sm:text-5xl font-black">
-                  {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
-                </AvatarFallback>
-              </Avatar>
-              <div class="absolute -bottom-2 -right-2 bg-amber-400 text-slate-950 p-2 sm:p-2.5 rounded-full shadow-lg">
-                <Sparkles class="size-5 sm:size-6" />
-              </div>
-            </div>
+          <!-- Birthday Specific Presentation: Animation Sequence Plays First -> Information Modal Appears After -->
+          <div v-if="currentAnnouncement.type === 'birthday'">
+            <Transition name="fade-stage" mode="out-in">
+              <!-- Step 1: Celebratory Birthday Animation (plays first) -->
+              <div
+                v-if="birthdayPhase === 'anim'"
+                key="birthday-anim-stage"
+                class="flex flex-col items-center text-center space-y-5 sm:space-y-6 py-2"
+              >
+                <!-- Animated Celebration Badge -->
+                <div class="inline-flex items-center gap-2.5 px-5 py-2 rounded-full bg-rose-500/20 border border-rose-500/40 shadow-lg text-rose-500 dark:text-rose-400 font-mono font-bold text-xs sm:text-sm tracking-widest uppercase animate-bounce-subtle">
+                  <Cake class="size-5 text-rose-500 animate-spin-slow" />
+                  <span>Celebration Time!</span>
+                  <Sparkles class="size-4 text-amber-400" />
+                </div>
 
-            <!-- Celebrant Name & Dept -->
-            <div class="space-y-1 sm:space-y-1.5">
-              <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight">
-                {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
-              </h3>
-              <div v-if="currentAnnouncement.department" class="text-sm sm:text-base md:text-lg font-mono text-muted-foreground uppercase tracking-widest font-semibold">
-                {{ currentAnnouncement.department }}
-              </div>
-            </div>
+                <!-- Animated Spotlight Ring -->
+                <div class="relative py-2">
+                  <Avatar class="size-32 sm:size-40 md:size-44 border-4 sm:border-8 border-rose-400/50 shadow-2xl ring-8 ring-rose-500/20 animate-pulse-gentle">
+                    <AvatarImage
+                      v-if="currentAnnouncement.photoUrl"
+                      :src="currentAnnouncement.photoUrl"
+                      :alt="currentAnnouncement.employeeName"
+                    />
+                    <AvatarFallback class="bg-rose-500/20 text-rose-500 text-4xl sm:text-5xl font-black">
+                      {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div class="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-2.5 rounded-full shadow-lg">
+                    <Sparkles class="size-6 text-slate-950" />
+                  </div>
+                </div>
 
-            <!-- Birthday Greeting Message -->
-            <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl leading-relaxed font-medium">
-              {{ currentAnnouncement.message }}
-            </p>
+                <div class="space-y-2 max-w-2xl">
+                  <div class="text-xs sm:text-sm font-mono uppercase tracking-widest text-muted-foreground font-semibold">
+                    Warmest Birthday Wishes to
+                  </div>
+                  <h3 class="text-3xl sm:text-5xl font-black tracking-tight text-foreground leading-tight">
+                    {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
+                  </h3>
+                  <div v-if="currentAnnouncement.department" class="text-sm sm:text-base font-mono text-rose-500 font-bold uppercase tracking-wider">
+                    {{ currentAnnouncement.department }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Step 2: Birthday Information Modal Overlay (appears after animation) -->
+              <div
+                v-else
+                key="birthday-info-stage"
+                class="flex flex-col items-center text-center space-y-4 sm:space-y-6"
+              >
+                <!-- Circular Celebrant Photo -->
+                <div class="relative">
+                  <Avatar class="size-28 sm:size-36 md:size-44 border-4 sm:border-8 border-card shadow-2xl ring-4 sm:ring-8 ring-rose-400/30">
+                    <AvatarImage
+                      v-if="currentAnnouncement.photoUrl"
+                      :src="currentAnnouncement.photoUrl"
+                      :alt="currentAnnouncement.employeeName"
+                    />
+                    <AvatarFallback class="bg-rose-500/10 text-rose-600 text-3xl sm:text-5xl font-black">
+                      {{ (currentAnnouncement.employeeName || 'B').charAt(0) }}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div class="absolute -bottom-2 -right-2 bg-amber-400 text-slate-950 p-2 sm:p-2.5 rounded-full shadow-lg">
+                    <Sparkles class="size-5 sm:size-6" />
+                  </div>
+                </div>
+
+                <!-- Celebrant Name & Dept -->
+                <div class="space-y-1 sm:space-y-1.5">
+                  <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight">
+                    {{ currentAnnouncement.employeeName || currentAnnouncement.title }}
+                  </h3>
+                  <div v-if="currentAnnouncement.department" class="text-sm sm:text-base md:text-lg font-mono text-muted-foreground uppercase tracking-widest font-semibold">
+                    {{ currentAnnouncement.department }}
+                  </div>
+                </div>
+
+                <!-- Birthday Greeting Message -->
+                <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl leading-relaxed font-medium">
+                  {{ currentAnnouncement.message }}
+                </p>
+              </div>
+            </Transition>
           </div>
 
           <!-- Standard Announcement / Reminder Layout -->
@@ -1542,6 +1747,16 @@ onUnmounted(() => {
         <Button
           variant="ghost"
           size="sm"
+          class="h-6 px-2 text-[11px] font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer font-bold"
+          title="Preview the enhanced Birthday animation, balloons, confetti, and information modal"
+          @click="triggerBirthdayPreview()"
+        >
+          <Cake class="size-2.5 mr-1 text-rose-600" />
+          <span>Preview Birthday</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           class="h-6 px-2 text-[11px] font-mono text-primary hover:bg-primary/10 cursor-pointer font-bold"
           title="Show preview overlay of the next announcement / reminder / birthday"
           @click="showAnnouncementPreview()"
@@ -1568,5 +1783,129 @@ onUnmounted(() => {
 .announcement-slide-leave-to {
   opacity: 0;
   transform: translateY(-20px) scale(0.98);
+}
+
+/* Birthday Stage Transition (Intro Animation -> Information Modal) */
+.fade-stage-enter-active,
+.fade-stage-leave-active {
+  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fade-stage-enter-from {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+.fade-stage-leave-to {
+  opacity: 0;
+  transform: scale(1.02);
+}
+
+/* Flying Balloons: Upward translation with gentle horizontal sway */
+@keyframes balloon-float-up {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.95;
+  }
+  85% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate3d(var(--balloon-sway, 20px), -125vh, 0);
+    opacity: 0;
+  }
+}
+
+/* Lightweight Confetti: Gentle downward drift with rotation */
+@keyframes confetti-flutter {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  75% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(var(--confetti-drift, 25px), 115vh, 0) rotate(var(--confetti-rot, 360deg));
+    opacity: 0;
+  }
+}
+
+@keyframes spin-slow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-gentle {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+@keyframes bounce-subtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.birthday-balloon {
+  position: absolute;
+  will-change: transform, opacity;
+  animation-name: balloon-float-up;
+  animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+
+.birthday-confetti {
+  position: absolute;
+  border-radius: 2px;
+  will-change: transform, opacity;
+  animation-name: confetti-flutter;
+  animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 12s linear infinite;
+}
+
+.animate-pulse-gentle {
+  animation: pulse-gentle 2.2s ease-in-out infinite;
+}
+
+.animate-bounce-subtle {
+  animation: bounce-subtle 2s ease-in-out infinite;
+}
+
+/* Accessibility: Full fallback for reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .birthday-balloon,
+  .birthday-confetti {
+    display: none !important;
+  }
+  .animate-spin-slow,
+  .animate-pulse-gentle,
+  .animate-bounce-subtle {
+    animation: none !important;
+  }
+  .fade-stage-enter-active,
+  .fade-stage-leave-active {
+    transition: none !important;
+  }
 }
 </style>
