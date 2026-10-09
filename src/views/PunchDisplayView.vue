@@ -772,6 +772,9 @@ onMounted(async () => {
     // ignore
   }
 
+  // Hydrate session recent punches from IndexedDB for today's date if empty
+  await punchDisplayService.hydrateRecentPunches()
+
   // Auto-connect to agent if available
   liveAttendanceService.connect()
 

@@ -472,44 +472,37 @@ class PunchDisplayService {
   }
 
   /**
-   * Core rule: Every real biometric event is a NEW punch event.
-   * Do NOT deduplicate by employee/Bio ID.
-   * Same employee punching again creates a distinct event and pushes previous punch to recent history.
+   * Core rule: Every real biometric event is immediately recorded as a recent punch.
+   * Do NOT deduplicate by employee/Bio ID — consecutive punches from the same employee
+   * or different employees must immediately appear at index 0 (top of Recent Punches).
+   * Exact event duplicates (e.g. multi-channel broadcasts) are deduplicated by eventId/id.
    */
   public handleIncomingPunch = (event: PunchDisplayEvent) => {
     // If Punch Display is turned OFF in preferences, do not accept punches
     if (!this.settings.value.enabled) return
 
-    // When a new punch arrives, convert previous current punch to compact recent punch (max 7)
-    // Even if it's the exact same employee, the previous punch is archived into recent punches!
-    if (this.currentPunch.value) {
-      const prev = this.currentPunch.value
-      // Check if previous event is different from incoming event
-      if (prev.id !== event.id && prev.eventId !== event.eventId) {
-        const compactPrev: CompactRecentPunch = {
-          id: prev.id,
-          eventId: prev.eventId || prev.id,
-          employeeName: prev.employeeName,
-          bioId: prev.bioId || prev.userId,
-          direction: prev.stateLabel,
-          time: prev.time || this.formatTimeDisplay(prev.timestamp),
-          date: prev.date || this.formatDateDisplay(prev.timestamp),
-          status: prev.statusLabel,
-          statusVariant: prev.statusVariant,
-          isLate: prev.isLate
-        }
-
-        // Insert newest at the top. DO NOT deduplicate by Bio ID!
-        // Consecutive punches from the same employee must both be kept in recent punches.
-        // Limited strictly to 7 entries maximum; dropping the oldest when an 8th arrives.
-        this.recentPunches.value = [
-          compactPrev,
-          ...this.recentPunches.value.filter(p => p.id !== compactPrev.id && p.eventId !== compactPrev.eventId)
-        ].slice(0, 7) // Maximum 7 entries
-      }
+    // Build compact recent punch representation directly from the incoming punch event
+    const compactIncoming: CompactRecentPunch = {
+      id: event.id,
+      eventId: event.eventId || event.id,
+      employeeName: event.employeeName,
+      bioId: event.bioId || event.userId,
+      direction: event.stateLabel,
+      time: event.time || this.formatTimeDisplay(event.timestamp),
+      date: event.date || this.formatDateDisplay(event.timestamp),
+      status: event.statusLabel,
+      statusVariant: event.statusVariant,
+      isLate: event.isLate
     }
 
-    // Always replace current punch with a fresh object reference
+    // Immediately prepend incoming punch to Recent Punches (capped strictly at 7 entries)
+    // Filter out any matching eventId / id to prevent double-counting across multi-channel broadcasts
+    this.recentPunches.value = [
+      compactIncoming,
+      ...this.recentPunches.value.filter(p => p.id !== compactIncoming.id && p.eventId !== compactIncoming.eventId)
+    ].slice(0, 7)
+
+    // Always replace current punch with a fresh object reference for the hero display
     this.currentPunch.value = { ...event }
     this.punchHistory.value = this.recentPunches.value
 
@@ -520,6 +513,57 @@ class PunchDisplayService {
 
     if (this.settings.value.soundEnabled) {
       this.playChime()
+    }
+  }
+
+  /**
+   * Hydrates recent punches from IndexedDB for today's date if recentPunches is currently empty.
+   * Uses O(log N) indexed single-date query, avoiding any full-database scans.
+   */
+  public hydrateRecentPunches = async (): Promise<void> => {
+    if (this.recentPunches.value.length > 0) return
+    try {
+      const todayStr = getManilaDateString(new Date())
+      const punchesToday = await punchRepository.getPunchesByDate(todayStr)
+      if (punchesToday.length === 0) return
+
+      // Sort descending (newest first) and take the latest up to 7
+      const sorted = [...punchesToday].sort(
+        (a, b) => new Date(b.attendance_time).getTime() - new Date(a.attendance_time).getTime()
+      )
+      const latest = sorted.slice(0, 7)
+
+      const compactList: CompactRecentPunch[] = latest.map(p => {
+        const stateNum = Number(p.state ?? 1)
+        const dir = stateNum === 4 ? 'OUT' : 'IN'
+        const status = this.evaluateAttendanceStatus(
+          p.attendance_time,
+          dir as any,
+          '08:00',
+          15,
+          '17:00'
+        )
+        const stateInfo = this.getStateLabelAndColor(stateNum)
+        return {
+          id: p.id,
+          eventId: p.id,
+          employeeName: p.employee_name || `User ${p.user_id}`,
+          bioId: normalizeBioId(p.user_id),
+          direction: stateInfo.label,
+          time: this.formatTimeDisplay(p.attendance_time),
+          date: this.formatDateDisplay(p.attendance_time),
+          status: status.statusLabel,
+          statusVariant: status.statusVariant,
+          isLate: status.isLate
+        }
+      })
+
+      if (this.recentPunches.value.length === 0) {
+        this.recentPunches.value = compactList
+        this.punchHistory.value = compactList
+      }
+    } catch (err) {
+      console.warn('[PunchDisplayService] Failed to hydrate recent punches:', err)
     }
   }
 

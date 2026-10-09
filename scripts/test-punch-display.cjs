@@ -143,9 +143,15 @@ let currentDisplay = null
 let recentList = []
 
 function handlePunch(event) {
-  if (currentDisplay && currentDisplay.eventId !== event.eventId) {
-    recentList = [currentDisplay, ...recentList.filter(p => p.eventId !== currentDisplay.eventId)].slice(0, 7)
+  const compact = {
+    id: event.id,
+    eventId: event.eventId || event.id,
+    bioId: event.bioId,
+    employeeName: event.employeeName,
+    time: event.time,
+    statusLabel: event.statusLabel
   }
+  recentList = [compact, ...recentList.filter(p => p.id !== compact.id && p.eventId !== compact.eventId)].slice(0, 7)
   currentDisplay = { ...event }
 }
 
@@ -160,7 +166,10 @@ const punchA1 = {
 handlePunch(punchA1)
 assert.strictEqual(currentDisplay.eventId, '25065-80501-1')
 assert.strictEqual(currentDisplay.time, '8:05:01 AM')
-assert.strictEqual(recentList.length, 0)
+// First punch must IMMEDIATELY appear in recentList without requiring another punch!
+assert.strictEqual(recentList.length, 1, 'First punch must immediately appear in Recent Punches')
+assert.strictEqual(recentList[0].eventId, '25065-80501-1')
+assert.strictEqual(recentList[0].employeeName, 'Cantillas, Ronald')
 
 const punchA2 = {
   id: 'ev-2',
@@ -174,10 +183,12 @@ handlePunch(punchA2)
 // Display must IMMEDIATELY refresh to the new event
 assert.strictEqual(currentDisplay.eventId, '25065-80508-2')
 assert.strictEqual(currentDisplay.time, '8:05:08 AM')
-// Previous punch from same employee must be kept in recentList!
-assert.strictEqual(recentList.length, 1)
-assert.strictEqual(recentList[0].eventId, '25065-80501-1')
-assert.strictEqual(recentList[0].time, '8:05:01 AM')
+// Both punches from the employee are kept in recentList (newest first)!
+assert.strictEqual(recentList.length, 2)
+assert.strictEqual(recentList[0].eventId, '25065-80508-2')
+assert.strictEqual(recentList[0].time, '8:05:08 AM')
+assert.strictEqual(recentList[1].eventId, '25065-80501-1')
+assert.strictEqual(recentList[1].time, '8:05:01 AM')
 
 // 10. Different employee punching immediately after (Person B 25069)
 const punchB1 = {
@@ -191,9 +202,13 @@ const punchB1 = {
 handlePunch(punchB1)
 assert.strictEqual(currentDisplay.eventId, '25069-80510-3')
 assert.strictEqual(currentDisplay.employeeName, 'Alfanta, Cristine')
-assert.strictEqual(recentList.length, 2)
-assert.strictEqual(recentList[0].eventId, '25065-80508-2')
-assert.strictEqual(recentList[1].eventId, '25065-80501-1')
+// Person B must IMMEDIATELY appear at index 0 of recentList with correct name!
+assert.strictEqual(recentList.length, 3)
+assert.strictEqual(recentList[0].eventId, '25069-80510-3')
+assert.strictEqual(recentList[0].employeeName, 'Alfanta, Cristine')
+assert.strictEqual(recentList[0].bioId, '25069')
+assert.strictEqual(recentList[1].eventId, '25065-80508-2')
+assert.strictEqual(recentList[2].eventId, '25065-80501-1')
 
 // 11. Person B punches again
 const punchB2 = {
@@ -207,10 +222,12 @@ const punchB2 = {
 handlePunch(punchB2)
 assert.strictEqual(currentDisplay.eventId, '25069-80515-4')
 assert.strictEqual(currentDisplay.time, '8:05:15 AM')
-assert.strictEqual(recentList.length, 3)
-assert.strictEqual(recentList[0].eventId, '25069-80510-3')
-assert.strictEqual(recentList[1].eventId, '25065-80508-2')
-assert.strictEqual(recentList[2].eventId, '25065-80501-1')
+assert.strictEqual(recentList.length, 4)
+assert.strictEqual(recentList[0].eventId, '25069-80515-4')
+assert.strictEqual(recentList[0].employeeName, 'Alfanta, Cristine')
+assert.strictEqual(recentList[1].eventId, '25069-80510-3')
+assert.strictEqual(recentList[2].eventId, '25065-80508-2')
+assert.strictEqual(recentList[3].eventId, '25065-80501-1')
 
 // 12. Display Duration supported options (including 2s)
 const supportedDurations = [2, 3, 5, 8, 10]
