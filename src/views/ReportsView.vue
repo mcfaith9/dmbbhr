@@ -678,7 +678,7 @@ function formatShortDate(dateStr: string): string {
               <span>Repeated Lateness (Top Frequency)</span>
             </h3>
             <p class="text-[11px] text-muted-foreground mt-0.5">
-              Employees with the highest number of late arrivals exceeding shift grace periods.
+              Employees with the highest number of late arrivals after scheduled shift start.
             </p>
           </div>
 
@@ -747,7 +747,7 @@ function formatShortDate(dateStr: string): string {
             <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5 opacity-80" />
             <div class="font-medium text-foreground">Zero Lateness Recorded</div>
             <p class="text-[11px] text-muted-foreground mt-0.5">
-              All employees arrived within the standard shift grace period for this selection.
+              All employees arrived on time for this selection.
             </p>
           </div>
         </div>

@@ -88,7 +88,7 @@ export const DEFAULT_WORK_GROUPS: WorkGroupRecord[] = [
     lunchStart: '12:00',
     lunchEnd: '13:00',
     expectedOut: calculateExpectedOutMinutes('06:00', 480, '12:00', '13:00').outHHMM, // "15:00"
-    gracePeriodMinutes: 15,
+    gracePeriodMinutes: 0,
     isDefault: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -102,7 +102,7 @@ export const DEFAULT_WORK_GROUPS: WorkGroupRecord[] = [
     lunchStart: '12:00',
     lunchEnd: '13:00',
     expectedOut: calculateExpectedOutMinutes('07:00', 480, '12:00', '13:00').outHHMM, // "16:00"
-    gracePeriodMinutes: 15,
+    gracePeriodMinutes: 0,
     isDefault: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -116,7 +116,7 @@ export const DEFAULT_WORK_GROUPS: WorkGroupRecord[] = [
     lunchStart: '12:00',
     lunchEnd: '13:00',
     expectedOut: calculateExpectedOutMinutes('08:00', 480, '12:00', '13:00').outHHMM, // "17:00"
-    gracePeriodMinutes: 15,
+    gracePeriodMinutes: 0,
     isDefault: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -136,6 +136,11 @@ async function ensureWorkGroupsInitialized() {
   const all = await db.workGroups.toArray()
   workGroupCache = new Map<string, WorkGroupRecord>()
   for (const wg of all) {
+    // Strip legacy 15-minute grace period override
+    if (wg.gracePeriodMinutes === 15) {
+      wg.gracePeriodMinutes = 0
+      db.workGroups.update(wg.id, { gracePeriodMinutes: 0 }).catch(() => {})
+    }
     // Ensure code field exists on legacy cached records
     if (!wg.code) {
       if (wg.id.includes('group-a') || wg.name.toLowerCase().includes('a')) wg.code = 'A'
@@ -322,7 +327,7 @@ export const workGroupRepository = {
       lunchStart,
       lunchEnd,
       expectedOut: calculatedOut,
-      gracePeriodMinutes: wg.grace_period_minutes ?? 15,
+      gracePeriodMinutes: wg.grace_period_minutes ?? 0,
       isDefault: Boolean(wg.is_default),
       createdAt: wg.created_at || new Date().toISOString(),
       updatedAt: new Date().toISOString()

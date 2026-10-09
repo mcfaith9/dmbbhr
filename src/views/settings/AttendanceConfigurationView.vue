@@ -251,7 +251,7 @@ interface AttendanceRulesConfig {
 }
 
 const defaultRules: AttendanceRulesConfig = {
-  gracePeriodMinutes: 15,
+  gracePeriodMinutes: 0,
   lateCalculationMethod: 'exact',
   earlyOutCalculationMethod: 'exact',
   singlePunchHandling: 'awaiting_out',
@@ -476,7 +476,7 @@ onMounted(() => {
 
           <!-- Bottom Footer -->
           <div class="mt-3 pt-2.5 border-t flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>Grace Period: {{ wg.grace_period_minutes || 15 }}m</span>
+            <span>Grace Period: {{ wg.grace_period_minutes ?? 0 }}m</span>
             <Button
               variant="outline"
               size="sm"
@@ -541,7 +541,7 @@ onMounted(() => {
                 class="h-8 text-xs font-mono"
               />
               <p class="text-[10px] text-muted-foreground">
-                Clock-ins within this grace period are recorded as on-time without late penalty.
+                Clock-ins within the scheduled start minute are recorded as on-time. No grace period.
               </p>
             </div>
 

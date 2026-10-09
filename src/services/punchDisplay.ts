@@ -54,6 +54,8 @@ export interface PunchDisplayEvent {
   isLate: boolean
   isEarly: boolean
   diffMinutes?: number
+  late_minutes?: number
+  lateMinutes?: number
   firstInTime?: string
 }
 
@@ -313,7 +315,7 @@ class PunchDisplayService {
     timestampStr: string,
     direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT',
     standardIn: string = '08:00',
-    gracePeriod: number = 15,
+    _gracePeriod: number = 0,
     expectedOut: string = '17:00'
   ): {
     statusCategory: PunchDisplayEvent['statusCategory']
@@ -323,6 +325,8 @@ class PunchDisplayService {
     isLate: boolean
     isEarly: boolean
     diffMinutes: number
+    late_minutes: number
+    lateMinutes: number
   } => {
     const punchDate = new Date(timestampStr)
     let hours = punchDate.getHours()
@@ -344,6 +348,7 @@ class PunchDisplayService {
     } catch {
       // fallback to local
     }
+    if (hours === 24) hours = 0
 
     const punchMinutes = hours * 60 + minutes
 
@@ -361,7 +366,9 @@ class PunchDisplayService {
           statusVariant: 'success',
           isEarly: false,
           isLate: false, // Never late on OUT
-          diffMinutes: 0
+          diffMinutes: 0,
+          late_minutes: 0,
+          lateMinutes: 0
         }
       } else {
         // If employee leaves earlier than required OUT time: EARLY OUT
@@ -373,12 +380,14 @@ class PunchDisplayService {
           statusVariant: 'warning',
           isEarly: false,
           isLate: false, // Never late on OUT
-          diffMinutes: undertime
+          diffMinutes: undertime,
+          late_minutes: 0,
+          lateMinutes: 0
         }
       }
     }
 
-    // 2. TIME IN EVALUATION
+    // 2. TIME IN EVALUATION (Minute precision: seconds ignored; no grace period)
     if (direction === 'IN') {
       const [stdH, stdM] = standardIn.split(':').map(Number)
       const standardInMinutes = (stdH || 8) * 60 + (stdM || 0)
@@ -392,17 +401,21 @@ class PunchDisplayService {
           statusVariant: 'success',
           isEarly: true,
           isLate: false,
-          diffMinutes: earlyDiff
+          diffMinutes: earlyDiff,
+          late_minutes: 0,
+          lateMinutes: 0
         }
-      } else if (punchMinutes <= standardInMinutes + gracePeriod) {
+      } else if (punchMinutes === standardInMinutes) {
         return {
           statusCategory: 'on_time',
           statusLabel: 'ON TIME',
-          statusDetail: 'Within shift grace period',
+          statusDetail: 'On schedule',
           statusVariant: 'success',
           isEarly: false,
           isLate: false,
-          diffMinutes: 0
+          diffMinutes: 0,
+          late_minutes: 0,
+          lateMinutes: 0
         }
       } else {
         const lateDiff = punchMinutes - standardInMinutes
@@ -413,7 +426,9 @@ class PunchDisplayService {
           statusVariant: 'destructive',
           isEarly: false,
           isLate: true,
-          diffMinutes: lateDiff
+          diffMinutes: lateDiff,
+          late_minutes: lateDiff,
+          lateMinutes: lateDiff
         }
       }
     }
@@ -426,7 +441,9 @@ class PunchDisplayService {
         statusVariant: 'secondary',
         isEarly: false,
         isLate: false,
-        diffMinutes: 0
+        diffMinutes: 0,
+        late_minutes: 0,
+        lateMinutes: 0
       }
     }
 
@@ -438,7 +455,9 @@ class PunchDisplayService {
         statusVariant: 'secondary',
         isEarly: false,
         isLate: false,
-        diffMinutes: 0
+        diffMinutes: 0,
+        late_minutes: 0,
+        lateMinutes: 0
       }
     }
 
@@ -450,7 +469,9 @@ class PunchDisplayService {
         statusVariant: 'secondary',
         isEarly: false,
         isLate: false,
-        diffMinutes: 0
+        diffMinutes: 0,
+        late_minutes: 0,
+        lateMinutes: 0
       }
     }
 
@@ -462,7 +483,9 @@ class PunchDisplayService {
         statusVariant: 'secondary',
         isEarly: false,
         isLate: false,
-        diffMinutes: 0
+        diffMinutes: 0,
+        late_minutes: 0,
+        lateMinutes: 0
       }
     }
 
@@ -473,7 +496,9 @@ class PunchDisplayService {
       statusVariant: 'secondary',
       isEarly: false,
       isLate: false,
-      diffMinutes: 0
+      diffMinutes: 0,
+      late_minutes: 0,
+      lateMinutes: 0
     }
   }
 
@@ -547,7 +572,7 @@ class PunchDisplayService {
           p.attendance_time,
           dir as any,
           '08:00',
-          15,
+          0,
           '17:00'
         )
         const stateInfo = this.getStateLabelAndColor(stateNum)
@@ -742,7 +767,7 @@ class PunchDisplayService {
     }
 
     const stdIn = wg?.standard_in || wg?.standardIn || extra?.standardIn || '08:00'
-    const grace = wg?.grace_period_minutes ?? wg?.gracePeriodMinutes ?? extra?.gracePeriod ?? 15
+    const grace = wg?.grace_period_minutes ?? wg?.gracePeriodMinutes ?? extra?.gracePeriod ?? 0
     const wgName = wg?.name || employee?.work_group_name || extra?.workGroup || 'Group C'
     const wgCode = wg?.code || employee?.work_group_code || extra?.workGroupCode || 'C'
     
@@ -872,6 +897,8 @@ class PunchDisplayService {
       isLate: status.isLate,
       isEarly: status.isEarly,
       diffMinutes: status.diffMinutes,
+      late_minutes: status.late_minutes,
+      lateMinutes: status.lateMinutes,
       firstInTime: resolvedFirstInTime
     }
 

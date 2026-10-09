@@ -197,7 +197,7 @@ const currentSchedule = computed(() => {
   if (wg) {
     const stdIn = wg.standard_in || wg.standardIn || '08:00'
     const expOut = wg.expected_out || wg.expectedOut || '17:00'
-    const grace = wg.grace_period_minutes ?? wg.gracePeriodMinutes ?? 15
+    const grace = wg.grace_period_minutes ?? wg.gracePeriodMinutes ?? 0
     return {
       standardIn: stdIn ? formatHHMM(stdIn) : '8:00 AM',
       expectedOut: expOut ? formatHHMM(expOut) : '5:00 PM',
@@ -207,7 +207,7 @@ const currentSchedule = computed(() => {
   return {
     standardIn: '8:00 AM',
     expectedOut: '5:00 PM',
-    gracePeriod: 15
+    gracePeriod: 0
   }
 })
 
@@ -800,7 +800,7 @@ async function triggerTestPunch(
       direction = 'IN'
       break
     case 'ontime_in':
-      mockDate.setHours(8, 5, (testSeq * 4) % 60, 0) // 8:05 AM -> ON TIME IN
+      mockDate.setHours(8, 0, (testSeq * 4) % 60, 0) // 8:00 AM -> ON TIME IN (Minute precision: 8:00:xx AM is ON TIME)
       direction = 'IN'
       break
     case 'early_in':
@@ -852,7 +852,7 @@ async function triggerTestPunch(
     workGroupCode: empWorkGroupCode,
     department: empDept,
     standardIn: '08:00',
-    gracePeriod: 15,
+    gracePeriod: 0,
     expectedOut: '17:00',
     firstInTime: testFirstInTime
   })

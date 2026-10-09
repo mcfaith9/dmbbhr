@@ -254,7 +254,7 @@ class LiveAttendanceService {
                 }
               }
               const stdIn = wg?.standard_in || wg?.standardIn || '08:00'
-              const grace = wg?.grace_period_minutes ?? wg?.gracePeriodMinutes ?? 15
+              const grace = wg?.grace_period_minutes ?? wg?.gracePeriodMinutes ?? 0
               const expOut = wg?.expected_out || wg?.expectedOut || '17:00'
               const wgName = wg?.name || emp?.work_group_name || emp?.work_group_id || 'Group C'
               const wgCode = wg?.code || emp?.work_group_code || 'C'

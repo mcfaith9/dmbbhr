@@ -488,7 +488,7 @@ onMounted(() => {
               />
             </div>
             <p class="text-[11px] text-muted-foreground leading-relaxed">
-              Show distinct visual warning styling when an employee clocks in after their standard work group shift and grace period.
+              Show distinct visual warning styling when an employee clocks in late after their scheduled work group shift.
             </p>
           </div>
         </div>

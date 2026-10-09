@@ -111,7 +111,7 @@ export const attendanceRepository = {
         requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
         lunchStart: wg?.lunchStart || '12:00',
         lunchEnd: wg?.lunchEnd || '13:00',
-        gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 0,
         manualAdjustment: manualAdj,
         approvedLeave: leaveRec,
         employeeStatus: emp?.status || 'active',
@@ -154,7 +154,7 @@ export const attendanceRepository = {
         requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
         lunchStart: wg?.lunchStart || '12:00',
         lunchEnd: wg?.lunchEnd || '13:00',
-        gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 0,
         approvedLeave: leaveRec
       }
 
@@ -333,7 +333,7 @@ export const attendanceRepository = {
         requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
         lunchStart: wg?.lunchStart || '12:00',
         lunchEnd: wg?.lunchEnd || '13:00',
-        gracePeriodMinutes: wg?.gracePeriodMinutes || 15,
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 0,
         manualAdjustment: adjustmentsByDate.get(dateStr),
         approvedLeave: leavesByDate.get(dateStr),
         employeeStatus: emp?.status || 'active',

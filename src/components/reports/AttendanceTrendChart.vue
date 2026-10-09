@@ -343,7 +343,7 @@ const hoveredItem = computed(() => {
         </div>
         <div class="flex items-center gap-1.5">
           <span class="size-2.5 rounded-full bg-amber-500" />
-          <span class="text-muted-foreground">Late (> grace period)</span>
+          <span class="text-muted-foreground">Late (After Shift Start)</span>
         </div>
         <div class="flex items-center gap-1.5">
           <span class="size-2.5 rounded-full bg-red-500" />
