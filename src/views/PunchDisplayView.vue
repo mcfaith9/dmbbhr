@@ -913,7 +913,7 @@ onUnmounted(() => {
         <!-- Celebratory Flying Balloons and Lightweight Confetti Layer (Celebration for Birthday) -->
         <div
           v-if="currentAnnouncement.type === 'birthday'"
-          class="pointer-events-none fixed inset-0 z-30 overflow-hidden"
+          class="pointer-events-none fixed inset-0 z-[999] overflow-hidden"
           aria-hidden="true"
         >
           <!-- Flying Balloons: Float gently upward from bottom of screen beyond top -->
@@ -1029,13 +1029,6 @@ onUnmounted(() => {
                 key="birthday-anim-stage"
                 class="col-start-1 row-start-1 w-full h-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 px-2"
               >
-                <!-- Animated Celebration Badge -->
-                <div class="inline-flex items-center gap-2 px-4 py-1.5 sm:px-5 sm:py-2 rounded-full bg-rose-500/20 border border-rose-500/40 shadow-md text-rose-500 dark:text-rose-400 font-mono font-bold text-xs sm:text-sm tracking-widest uppercase animate-bounce-subtle shrink-0">
-                  <Cake class="size-4 sm:size-5 text-rose-500 animate-spin-slow" />
-                  <span>Celebration Time!</span>
-                  <Sparkles class="size-3.5 sm:size-4 text-amber-400" />
-                </div>
-
                 <!-- Animated Spotlight Ring -->
                 <div class="relative py-1 shrink-0">
                   <Avatar class="size-32 sm:size-40 md:size-44 border-4 sm:border-8 border-rose-400/50 shadow-2xl ring-8 ring-rose-500/20 animate-pulse-gentle">
