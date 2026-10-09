@@ -102,7 +102,11 @@ function loadInitialOffset(): number | null {
     const stored = localStorage.getItem(OFFSET_STORAGE_KEY)
     if (stored !== null && stored !== '') {
       const val = Number(stored)
-      return isNaN(val) ? null : val
+      // Discard corrupted or unreasonably large offsets (> 60 seconds)
+      if (!isNaN(val) && Math.abs(val) <= 60000) {
+        return val
+      }
+      localStorage.removeItem(OFFSET_STORAGE_KEY)
     }
   } catch {
     // ignore
@@ -324,16 +328,18 @@ class PunchDisplayService {
     let hours = punchDate.getHours()
     let minutes = punchDate.getMinutes()
     try {
-      const phTimeStr = new Intl.DateTimeFormat('en-US', {
+      const parts = new Intl.DateTimeFormat('en-US', {
         timeZone: 'Asia/Manila',
-        hour: 'numeric',
-        minute: 'numeric',
-        hour12: false
-      }).format(punchDate)
-      const parts = phTimeStr.split(':')
-      if (parts.length === 2) {
-        hours = parseInt(parts[0], 10)
-        minutes = parseInt(parts[1], 10)
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        hourCycle: 'h23'
+      }).formatToParts(punchDate)
+      const hPart = parts.find(p => p.type === 'hour')?.value
+      const mPart = parts.find(p => p.type === 'minute')?.value
+      if (hPart && mPart) {
+        hours = parseInt(hPart, 10)
+        minutes = parseInt(mPart, 10)
       }
     } catch {
       // fallback to local
@@ -506,8 +512,9 @@ class PunchDisplayService {
     this.currentPunch.value = { ...event }
     this.punchHistory.value = this.recentPunches.value
 
-    // Refresh navbar clock offset directly from the incoming biometric punch timestamp
-    if (event.timestamp) {
+    // Refresh navbar clock offset directly from the incoming biometric punch timestamp ONLY if live biometric event
+    const isTestPunch = String(event.eventId || event.id || '').startsWith('test-')
+    if (event.timestamp && !isTestPunch) {
       this.updateDeviceTimeOffset(event.timestamp)
     }
 
@@ -568,11 +575,14 @@ class PunchDisplayService {
   }
 
   /**
-   * Refreshes the display clock offset from a valid biometric punch timestamp.
-   * Preserves the device's clock exactly without adjusting or fixing the hardware time.
+   * Refreshes the display clock offset from a valid live biometric punch timestamp.
+   * Preserves the device's clock drift against the browser clock if within sanity limits.
    *
-   * deviceTimeOffset = devicePunchTimestampMs - browserNowMs
-   * Punch Display Clock = Date.now() + deviceTimeOffset
+   * CRITICAL SANITY GUARD:
+   * A punch timestamp is an attendance event record time. If an event is historical,
+   * replayed from a batch/sync, queued during agent reconnection, or simulated, the difference
+   * against browser Date.now() can be minutes or hours (e.g. 35-40 minutes).
+   * We strictly discard offsets > 60 seconds to prevent corrupting the live kiosk wall clock.
    */
   public updateDeviceTimeOffset = (deviceTimestampStr: string): void => {
     if (!deviceTimestampStr) return
@@ -583,6 +593,12 @@ class PunchDisplayService {
 
       const now = Date.now()
       const offset = deviceMs - now
+
+      // Discard any offset exceeding 60 seconds (historical/delayed/synced/mock punch)
+      if (Math.abs(offset) > 60000) {
+        return
+      }
+
       this.deviceTimeOffset.value = offset
       this.clockSource.value = 'device'
       this.lastDeviceTimestamp.value = deviceTimestampStr
@@ -608,6 +624,16 @@ class PunchDisplayService {
       } catch {
         // ignore
       }
+    } catch {
+      // ignore
+    }
+  }
+
+  public resetDeviceTimeOffset = (): void => {
+    this.deviceTimeOffset.value = null
+    this.clockSource.value = 'local'
+    try {
+      localStorage.removeItem(OFFSET_STORAGE_KEY)
     } catch {
       // ignore
     }
@@ -706,26 +732,29 @@ class PunchDisplayService {
     }
 
     // Resolve Work Group schedule parameters from authoritative repository
-    let stdIn = extra?.standardIn || '08:00'
-    let grace = extra?.gracePeriod ?? 15
-    let expOut = extra?.expectedOut || '17:00'
-    let wgName = employee?.work_group_name || extra?.workGroup || employee?.work_group_id || 'Standard Crew'
-    let wgCode = employee?.work_group_code || extra?.workGroupCode || 'C'
-
+    let wg: any = undefined
     if (employee?.work_group_id) {
       try {
-        const wg = await workGroupRepository.getById(employee.work_group_id)
-        if (wg) {
-          stdIn = wg.standard_in || '08:00'
-          grace = wg.grace_period_minutes ?? 15
-          wgName = wg.name || wgName
-          wgCode = wg.code || wgCode
-          const outCalc = calculateExpectedOutMinutes(stdIn, wg.required_work_minutes || 480, wg.lunch_start || '12:00', wg.lunch_end || '13:00')
-          expOut = outCalc.outHHMM || '17:00'
-        }
+        wg = await workGroupRepository.getById(employee.work_group_id)
       } catch {
-        // fallback to defaults
+        // fallback
       }
+    }
+
+    const stdIn = wg?.standard_in || wg?.standardIn || extra?.standardIn || '08:00'
+    const grace = wg?.grace_period_minutes ?? wg?.gracePeriodMinutes ?? extra?.gracePeriod ?? 15
+    const wgName = wg?.name || employee?.work_group_name || extra?.workGroup || 'Group C'
+    const wgCode = wg?.code || employee?.work_group_code || extra?.workGroupCode || 'C'
+    
+    let expOut = wg?.expected_out || wg?.expectedOut || extra?.expectedOut || '17:00'
+    if (wg && !wg.expected_out && !wg.expectedOut) {
+      const outCalc = calculateExpectedOutMinutes(
+        stdIn,
+        wg.required_work_minutes || wg.requiredWorkMinutes || 480,
+        wg.lunch_start || wg.lunchStart || '12:00',
+        wg.lunch_end || wg.lunchEnd || '13:00'
+      )
+      expOut = outCalc.outHHMM || '17:00'
     }
 
     // Determine Direction: IN vs OUT

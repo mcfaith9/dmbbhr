@@ -191,14 +191,17 @@ const currentSchedule = computed(() => {
   if (!currentPunch.value) return null
   const punchWg = currentPunch.value.workGroup
   const punchWgCode = currentPunch.value.workGroupCode
-  const wg = workGroups.value.find(
+  const wg: any = workGroups.value.find(
     g => g.name === punchWg || g.code === punchWgCode || g.id === punchWg
   )
   if (wg) {
+    const stdIn = wg.standard_in || wg.standardIn || '08:00'
+    const expOut = wg.expected_out || wg.expectedOut || '17:00'
+    const grace = wg.grace_period_minutes ?? wg.gracePeriodMinutes ?? 15
     return {
-      standardIn: wg.standard_in ? formatHHMM(wg.standard_in) : '8:00 AM',
-      expectedOut: wg.expected_out ? formatHHMM(wg.expected_out) : '5:00 PM',
-      gracePeriod: wg.grace_period_minutes ?? 15
+      standardIn: stdIn ? formatHHMM(stdIn) : '8:00 AM',
+      expectedOut: expOut ? formatHHMM(expOut) : '5:00 PM',
+      gracePeriod: grace
     }
   }
   return {
@@ -734,8 +737,9 @@ watch(
 
     const punch = currentPunch.value
 
-    // Synchronize navbar clock offset directly with the biometric punch timestamp
-    if (punch.timestamp) {
+    // Synchronize navbar clock offset directly with the biometric punch timestamp ONLY if live biometric event
+    const isTestPunch = String(punch.eventId || punch.id || '').startsWith('test-')
+    if (punch.timestamp && !isTestPunch) {
       punchDisplayService.updateDeviceTimeOffset(punch.timestamp)
       updateClock()
     }
@@ -855,6 +859,10 @@ async function triggerTestPunch(
 }
 
 onMounted(async () => {
+  // If stored device time offset is invalid (> 60s), immediately reset to local time
+  if (Math.abs(punchDisplayService.getDeviceTimeOffset()) > 60000) {
+    punchDisplayService.resetDeviceTimeOffset()
+  }
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
   try {

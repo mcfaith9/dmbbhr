@@ -8,6 +8,7 @@ import type { AttendanceLog } from '@/types'
 import { attendanceService } from './attendance'
 import { punchDisplayService, normalizeBioId } from './punchDisplay'
 import { employeeService } from './employees'
+import { workGroupRepository } from '@/repositories/workGroupRepository'
 
 export interface RealDeviceStatus {
   model: string
@@ -240,8 +241,23 @@ class LiveAttendanceService {
             const normalizedBioId = normalizeBioId(rawUserId)
 
             // Resolve employee asynchronously from directory
-            employeeService.getEmployeeByBioId(normalizedBioId).then((emp) => {
+            employeeService.getEmployeeByBioId(normalizedBioId).then(async (emp) => {
               const resolvedName = emp?.full_name || (raw.employee_name && !/^user\d+$/i.test(String(raw.employee_name).trim()) ? String(raw.employee_name).trim() : 'Unknown Employee')
+
+              // Resolve employee's assigned work group schedule
+              let wg: any = undefined
+              if (emp?.work_group_id) {
+                try {
+                  wg = await workGroupRepository.getById(emp.work_group_id)
+                } catch {
+                  // ignore
+                }
+              }
+              const stdIn = wg?.standard_in || wg?.standardIn || '08:00'
+              const grace = wg?.grace_period_minutes ?? wg?.gracePeriodMinutes ?? 15
+              const expOut = wg?.expected_out || wg?.expectedOut || '17:00'
+              const wgName = wg?.name || emp?.work_group_name || emp?.work_group_id || 'Group C'
+              const wgCode = wg?.code || emp?.work_group_code || 'C'
 
               const scanLog: AttendanceLog = {
                 id: raw.id || `real-${normalizedBioId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -249,8 +265,8 @@ class LiveAttendanceService {
                 employee_id: normalizedBioId,
                 employee_name: resolvedName,
                 department: emp?.department || raw.department,
-                work_group_id: emp?.work_group_id,
-                work_group_name: emp?.work_group_name,
+                work_group_id: emp?.work_group_id || wg?.id || 'wg-group-c',
+                work_group_name: wgName,
                 attendance_time: raw.attendance_time || raw.timestamp || new Date().toISOString(),
                 type: Number(raw.type ?? raw.verificationMethod ?? 1),
                 state: Number(raw.state ?? raw.status ?? 1),
@@ -267,12 +283,12 @@ class LiveAttendanceService {
               this.lastReceivedScan.value = scanLog
               attendanceService.addRealScan(scanLog)
               punchDisplayService.broadcastPunchFromLog(scanLog, {
-                workGroup: emp?.work_group_name || emp?.work_group_id,
-                workGroupCode: emp?.work_group_code,
+                workGroup: wgName,
+                workGroupCode: wgCode,
                 department: emp?.department,
-                standardIn: '08:00',
-                gracePeriod: 15,
-                expectedOut: '17:00'
+                standardIn: stdIn,
+                gracePeriod: grace,
+                expectedOut: expOut
               })
 
               for (const listener of this.scanListeners) {
