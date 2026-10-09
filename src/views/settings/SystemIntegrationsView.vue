@@ -780,7 +780,7 @@ onMounted(() => {
                 </Badge>
               </div>
               <p class="text-xs text-muted-foreground mt-0.5">
-                Manage notifications that slide onto the Punch Display after <strong>3 minutes of idle</strong>. Biometric punches immediately take highest priority.
+                Manage notifications that slide onto the Punch Display after <strong>1 minute of idle</strong>. Biometric punches immediately take highest priority.
               </p>
             </div>
             <div class="flex items-center gap-2 flex-wrap shrink-0">

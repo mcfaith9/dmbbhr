@@ -273,7 +273,7 @@ function hideAnnouncement() {
   resetIdleTimer()
 }
 
-const IDLE_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes idle time
+const IDLE_TIMEOUT_MS = 1 * 60 * 1000 // 1 minutes idle time
 
 function resetIdleTimer() {
   if (idleTimer) {
