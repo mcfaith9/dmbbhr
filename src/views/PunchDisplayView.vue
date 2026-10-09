@@ -36,7 +36,6 @@ import {
 const currentPunch = punchDisplayService.currentPunch
 const recentPunches = punchDisplayService.recentPunches
 const settings = punchDisplayService.settings
-const clockSource = punchDisplayService.clockSource
 const isFullscreen = ref(false)
 
 const employees = ref<Employee[]>([])
@@ -737,13 +736,6 @@ watch(
 
     const punch = currentPunch.value
 
-    // Synchronize navbar clock offset directly with the biometric punch timestamp ONLY if live biometric event
-    const isTestPunch = String(punch.eventId || punch.id || '').startsWith('test-')
-    if (punch.timestamp && !isTestPunch) {
-      punchDisplayService.updateDeviceTimeOffset(punch.timestamp)
-      updateClock()
-    }
-
     // Trigger celebration only for qualifying positive IN (early / on-time)
     if (
       settings.value.confettiEnabled &&
@@ -859,10 +851,7 @@ async function triggerTestPunch(
 }
 
 onMounted(async () => {
-  // If stored device time offset is invalid (> 60s), immediately reset to local time
-  if (Math.abs(punchDisplayService.getDeviceTimeOffset()) > 60000) {
-    punchDisplayService.resetDeviceTimeOffset()
-  }
+  punchDisplayService.resetDeviceTimeOffset()
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
   try {
@@ -1159,17 +1148,16 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Live Clock Display (Matches BISMAC BISBIO B-29b Biometric Hardware Time) -->
+      <!-- Live Clock Display (PC Time Minus 5 Minutes in Asia/Manila) -->
       <div class="flex flex-col items-center justify-center px-3.5 py-1">
         <div class="flex items-center gap-1.5 leading-none">
           <span class="font-mono text-xl sm:text-xl font-bold tracking-tight text-foreground leading-none">
             {{ currentTimeStr }}
           </span>
           <span
-            class="text-[9px] font-mono px-1 py-0.5 rounded font-bold uppercase tracking-wider"
-            :class="clockSource === 'device' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30' : 'bg-muted text-muted-foreground border border-border/60'"
+            class="text-[9px] font-mono px-1 py-0.5 rounded font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
           >
-            {{ clockSource === 'device' ? 'DEVICE TIME' : 'LOCAL TIME' }}
+            DISPLAY TIME
           </span>
         </div>
         <div class="text-[12px] text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">

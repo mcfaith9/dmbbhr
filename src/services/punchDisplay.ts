@@ -98,30 +98,21 @@ const SETTINGS_KEY = 'dmbbhr_punch_display_settings'
 const OFFSET_STORAGE_KEY = 'dmbbhr_device_time_offset'
 const LAST_DEVICE_TIME_KEY = 'dmbbhr_last_device_timestamp'
 
-function loadInitialOffset(): number | null {
-  if (typeof window === 'undefined') return null
+/**
+ * Display clock offset: Exactly 5 minutes (300,000 milliseconds) behind the computer system clock.
+ * As per specification:
+ * - PC time 11:37 AM -> Punch Display 11:32 AM
+ * - PC time 3:00 PM -> Punch Display 2:55 PM
+ */
+export const PUNCH_DISPLAY_CLOCK_OFFSET_MS = -5 * 60 * 1000 // -300,000 ms
+
+function cleanLegacyStoredOffset(): void {
+  if (typeof window === 'undefined') return
   try {
-    const stored = localStorage.getItem(OFFSET_STORAGE_KEY)
-    if (stored !== null && stored !== '') {
-      const val = Number(stored)
-      // Discard corrupted or unreasonably large offsets (> 60 seconds)
-      if (!isNaN(val) && Math.abs(val) <= 60000) {
-        return val
-      }
-      localStorage.removeItem(OFFSET_STORAGE_KEY)
-    }
+    localStorage.removeItem(OFFSET_STORAGE_KEY)
+    localStorage.removeItem(LAST_DEVICE_TIME_KEY)
   } catch {
     // ignore
-  }
-  return null
-}
-
-function loadInitialDeviceTimestamp(): string | null {
-  if (typeof window === 'undefined') return null
-  try {
-    return localStorage.getItem(LAST_DEVICE_TIME_KEY)
-  } catch {
-    return null
   }
 }
 
@@ -158,14 +149,15 @@ class PunchDisplayService {
   // Persistent Settings
   public settings = ref<PunchDisplaySettings>(this.loadSettings())
 
-  // Device Wall-Clock Synchronization State
-  // Calculates: deviceTimeOffset = devicePunchTimestampMs - browserNowMs
-  // Visual clock = Date.now() + deviceTimeOffset
-  public deviceTimeOffset = ref<number | null>(loadInitialOffset())
-  public clockSource = ref<'device' | 'local'>(loadInitialOffset() !== null ? 'device' : 'local')
-  public lastDeviceTimestamp = ref<string | null>(loadInitialDeviceTimestamp())
+  // Display Wall-Clock Synchronization State
+  // Uses computer clock (Date.now()) minus exactly 5 minutes (300,000 ms).
+  // Does not depend on the biometric device clock, device offsets, or localStorage.
+  public deviceTimeOffset = ref<number>(PUNCH_DISPLAY_CLOCK_OFFSET_MS)
+  public clockSource = ref<'device' | 'local'>('device')
+  public lastDeviceTimestamp = ref<string | null>(null)
 
   constructor() {
+    cleanLegacyStoredOffset()
     this.initChannels()
     this.initStorageListener()
   }
@@ -256,13 +248,8 @@ class PunchDisplayService {
         return
       }
 
-      if (event.data.type === 'DEVICE_CLOCK_OFFSET' && event.data.payload) {
-        const offset = Number(event.data.payload.offset)
-        if (!isNaN(offset)) {
-          this.deviceTimeOffset.value = offset
-          this.clockSource.value = 'device'
-          this.lastDeviceTimestamp.value = event.data.payload.deviceTimestamp || null
-        }
+      if (event.data.type === 'DEVICE_CLOCK_OFFSET') {
+        // Obsolete: Display clock is permanently locked to PC time minus 5 minutes
         return
       }
 
@@ -537,12 +524,6 @@ class PunchDisplayService {
     this.currentPunch.value = { ...event }
     this.punchHistory.value = this.recentPunches.value
 
-    // Refresh navbar clock offset directly from the incoming biometric punch timestamp ONLY if live biometric event
-    const isTestPunch = String(event.eventId || event.id || '').startsWith('test-')
-    if (event.timestamp && !isTestPunch) {
-      this.updateDeviceTimeOffset(event.timestamp)
-    }
-
     if (this.settings.value.soundEnabled) {
       this.playChime()
     }
@@ -600,84 +581,39 @@ class PunchDisplayService {
   }
 
   /**
-   * Refreshes the display clock offset from a valid live biometric punch timestamp.
-   * Preserves the device's clock drift against the browser clock if within sanity limits.
-   *
-   * CRITICAL SANITY GUARD:
-   * A punch timestamp is an attendance event record time. If an event is historical,
-   * replayed from a batch/sync, queued during agent reconnection, or simulated, the difference
-   * against browser Date.now() can be minutes or hours (e.g. 35-40 minutes).
-   * We strictly discard offsets > 60 seconds to prevent corrupting the live kiosk wall clock.
+   * Display clock offset: permanently fixed to -300,000 ms (PC time minus 5 minutes).
+   * Does not dynamically learn, calculate, or override from incoming punches.
    */
-  public updateDeviceTimeOffset = (deviceTimestampStr: string): void => {
-    if (!deviceTimestampStr) return
-    try {
-      const deviceDate = new Date(deviceTimestampStr)
-      const deviceMs = deviceDate.getTime()
-      if (isNaN(deviceMs)) return
-
-      const now = Date.now()
-      const offset = deviceMs - now
-
-      // Discard any offset exceeding 60 seconds (historical/delayed/synced/mock punch)
-      if (Math.abs(offset) > 60000) {
-        return
-      }
-
-      this.deviceTimeOffset.value = offset
-      this.clockSource.value = 'device'
-      this.lastDeviceTimestamp.value = deviceTimestampStr
-
-      try {
-        localStorage.setItem(OFFSET_STORAGE_KEY, String(offset))
-        localStorage.setItem(LAST_DEVICE_TIME_KEY, deviceTimestampStr)
-      } catch {
-        // ignore
-      }
-
-      // Broadcast clock offset update to other open tabs / child windows
-      const msg = {
-        type: 'DEVICE_CLOCK_OFFSET',
-        payload: {
-          offset,
-          deviceTimestamp: deviceTimestampStr
-        }
-      }
-      try {
-        this.primaryChannel?.postMessage(msg)
-        this.fallbackChannel?.postMessage(msg)
-      } catch {
-        // ignore
-      }
-    } catch {
-      // ignore
-    }
+  public updateDeviceTimeOffset = (_deviceTimestampStr?: string): void => {
+    // No-op: punch display clock strictly uses PC system time minus 5 minutes.
   }
 
   public resetDeviceTimeOffset = (): void => {
-    this.deviceTimeOffset.value = null
-    this.clockSource.value = 'local'
-    try {
-      localStorage.removeItem(OFFSET_STORAGE_KEY)
-    } catch {
-      // ignore
-    }
+    cleanLegacyStoredOffset()
+    this.deviceTimeOffset.value = PUNCH_DISPLAY_CLOCK_OFFSET_MS
+    this.clockSource.value = 'device'
   }
 
   /**
-   * Returns the current device time offset in milliseconds.
-   * Priority 1: Last known biometric offset (if previously received / stored)
-   * Priority 2: 0 (normal browser local time) if never received
+   * Returns the current display clock offset in milliseconds (-300,000 ms).
    */
   public getDeviceTimeOffset = (): number => {
-    return this.deviceTimeOffset.value ?? 0
+    return PUNCH_DISPLAY_CLOCK_OFFSET_MS
   }
 
   /**
-   * Computes the current wall-clock date matching the BISBIO device time.
+   * Computes the current wall-clock date for the Punch Display:
+   * Normal computer clock (Date.now()) minus exactly 5 minutes (300,000 ms).
    */
   public getDeviceAlignedDate = (): Date => {
-    return new Date(Date.now() + this.getDeviceTimeOffset())
+    return new Date(Date.now() + PUNCH_DISPLAY_CLOCK_OFFSET_MS)
+  }
+
+  /**
+   * Alias for getDeviceAlignedDate for clear semantic intent.
+   */
+  public getDisplayClockDate = (): Date => {
+    return new Date(Date.now() + PUNCH_DISPLAY_CLOCK_OFFSET_MS)
   }
 
   public formatTimeDisplay(isoStr: string): string {
