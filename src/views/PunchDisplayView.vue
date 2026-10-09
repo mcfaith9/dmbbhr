@@ -9,6 +9,8 @@ import {
   Minimize2,
   Calendar as CalendarIcon,
   Play,
+  Pause,
+  ChevronDown,
   Server,
   User,
   History,
@@ -32,6 +34,14 @@ import {
   AvatarFallback,
   AvatarImage,
 } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 const currentPunch = punchDisplayService.currentPunch
 const recentPunches = punchDisplayService.recentPunches
@@ -774,7 +784,7 @@ let testSeq = 0
 
 // Interactive Test Punch simulation for demo & comprehensive test verification
 async function triggerTestPunch(
-  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'lunch_out' | 'lunch_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown' | 'full_day_sequence',
+  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'lunch_out' | 'lunch_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown',
   rawUserId: string = 'user25065'
 ) {
   if (employees.value.length === 0) {
@@ -788,24 +798,6 @@ async function triggerTestPunch(
   const empWorkGroupCode = foundEmp?.work_group_code || 'C'
   const empDept = foundEmp?.department || 'Operations'
   const empLoc = foundEmp?.location || 'DBB CEBU'
-
-  if (scenario === 'full_day_sequence') {
-    // 1. Morning Late IN: 8:01:23 AM (Late by 1m)
-    await triggerTestPunch('late_in', rawUserId)
-    // 2. Lunch OUT: 12:02:12 PM (BREAK OUT)
-    setTimeout(() => {
-      triggerTestPunch('lunch_out', rawUserId)
-    }, 1500)
-    // 3. Lunch IN: 12:57:29 PM (BREAK IN)
-    setTimeout(() => {
-      triggerTestPunch('lunch_in', rawUserId)
-    }, 3000)
-    // 4. Shift Final OUT: 5:00:00 PM (TIME OUT, recap preserves LATE 1m)
-    setTimeout(() => {
-      triggerTestPunch('normal_out', rawUserId)
-    }, 4500)
-    return
-  }
 
   const mockDate = new Date()
   let direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' = 'IN'
@@ -1241,11 +1233,12 @@ onUnmounted(() => {
       </div>
 
       <!-- Actions & Controls -->
-      <div class="flex items-center gap-2 sm:gap-2.5">
-        <!-- Live Status Badge -->
+      <div class="flex items-center gap-1.5 sm:gap-2 xl:gap-2.5">
+        <!-- Live Hardware Status Badge -->
         <div
           v-if="settings.enabled"
           class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-muted/50 border text-xs xl:text-sm"
+          title="Hardware Bridge Active: BISMAC BISBIO B-29b (192.168.1.201:4370)"
         >
           <span class="relative flex size-2 xl:size-2.5">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -1256,12 +1249,13 @@ onUnmounted(() => {
         <div
           v-else
           class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs xl:text-sm text-amber-700 dark:text-amber-300"
+          title="Punch Display Disabled in System Settings"
         >
           <PowerOff class="size-3 xl:size-3.5 text-amber-600" />
           <span class="font-mono text-[10px] xl:text-xs font-medium">DISABLED</span>
         </div>
 
-        <!-- Temporary Development Pause Indicator -->
+        <!-- Development Pause Indicator -->
         <Badge
           v-if="isDisplayPaused"
           variant="outline"
@@ -1271,12 +1265,126 @@ onUnmounted(() => {
           PAUSED
         </Badge>
 
+        <!-- Relocated: Pause / Resume Display Control -->
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-7.5 sm:h-8 xl:h-9 px-2 sm:px-2.5 text-xs xl:text-sm font-mono gap-1 cursor-pointer transition-colors"
+          :class="isDisplayPaused
+            ? 'border-amber-500/50 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20'
+            : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'"
+          :title="isDisplayPaused ? 'Resume automatic punch display (or press P)' : 'Pause automatic punch display (or press P)'"
+          aria-label="Pause or resume punch display"
+          @click="toggleDisplayPause"
+        >
+          <Play v-if="isDisplayPaused" class="size-3 sm:size-3.5 text-amber-500 fill-amber-500" />
+          <Pause v-else class="size-3 sm:size-3.5" />
+          <span class="hidden md:inline">{{ isDisplayPaused ? 'Resume' : 'Pause' }}</span>
+        </Button>
+
+        <!-- Relocated: Test Simulation & Preview Tools Dropdown -->
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7.5 sm:h-8 xl:h-9 px-2 sm:px-2.5 xl:px-3 text-xs xl:text-sm font-mono gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted/80"
+              title="Test punch simulation and overlay preview tools"
+              aria-label="Open test simulation tools"
+            >
+              <Play class="size-3 sm:size-3.5 text-primary" />
+              <span class="hidden md:inline">Simulate</span>
+              <ChevronDown class="size-3 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-64 font-mono text-xs z-50">
+            <DropdownMenuLabel class="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+              Test Punches
+            </DropdownMenuLabel>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('same_employee', 'user25065')">
+              <Play class="size-3.5 text-primary shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Standard Punch</span>
+                <span class="text-[10px] text-muted-foreground">Auto-sequence (Cantillas)</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('early_in', 'user25065')">
+              <Play class="size-3.5 text-emerald-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Early Arrival</span>
+                <span class="text-[10px] text-muted-foreground">7:48 AM TIME IN (Early)</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('late_in', 'user25065')">
+              <Play class="size-3.5 text-rose-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Late Arrival</span>
+                <span class="text-[10px] text-muted-foreground">8:01 AM TIME IN (Late by 1m)</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('lunch_out', 'user25065')">
+              <Play class="size-3.5 text-amber-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Lunch OUT</span>
+                <span class="text-[10px] text-muted-foreground">12:02 PM BREAK OUT</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('lunch_in', 'user25065')">
+              <Play class="size-3.5 text-blue-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Lunch IN</span>
+                <span class="text-[10px] text-muted-foreground">12:57 PM BREAK IN</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('normal_out', 'user25065')">
+              <Play class="size-3.5 text-primary shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Standard OUT</span>
+                <span class="text-[10px] text-muted-foreground">5:00 PM TIME OUT</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('early_out', 'user25065')">
+              <Play class="size-3.5 text-amber-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Early OUT</span>
+                <span class="text-[10px] text-muted-foreground">4:30 PM Early Departure</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('unknown', 'user99999')">
+              <Play class="size-3.5 text-muted-foreground shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Unknown Bio ID</span>
+                <span class="text-[10px] text-muted-foreground">Simulate unregistered scan</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel class="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+              Kiosk Overlays & Previews
+            </DropdownMenuLabel>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerBirthdayPreview()">
+              <Cake class="size-3.5 text-rose-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Preview Birthday</span>
+                <span class="text-[10px] text-muted-foreground">Balloons, confetti & modal</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="showAnnouncementPreview()">
+              <Megaphone class="size-3.5 text-primary shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Preview Notice</span>
+                <span class="text-[10px] text-muted-foreground">Announcement / Reminder</span>
+              </div>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <!-- Audio Toggle -->
         <Button
           variant="outline"
           size="sm"
           class="size-7.5 sm:size-8 xl:size-9 p-0 cursor-pointer"
           :title="settings.soundEnabled ? 'Mute Chime' : 'Unmute Chime'"
+          aria-label="Toggle sound chime"
           @click="toggleSound"
         >
           <Volume2 v-if="settings.soundEnabled" class="size-3.5 sm:size-4 xl:size-4.5 text-primary" />
@@ -1289,6 +1397,7 @@ onUnmounted(() => {
           size="sm"
           class="size-7.5 sm:size-8 xl:size-9 p-0 cursor-pointer"
           :title="isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'"
+          aria-label="Toggle fullscreen"
           @click="toggleFullscreen"
         >
           <Minimize2 v-if="isFullscreen" class="size-3.5 sm:size-4 xl:size-4.5" />
@@ -1717,151 +1826,6 @@ onUnmounted(() => {
         </div>
       </aside>
     </main>
-
-    <!-- Footer Bar with Subtle Development/Testing Controls -->
-    <footer class="border-t bg-card px-4 sm:px-6 lg:px-8 xl:px-10 py-1.5 sm:py-2 text-xs sm:text-sm text-muted-foreground flex flex-col md:flex-row items-center justify-between gap-2 shrink-0 shadow-2xs">
-      <!-- Status Info -->
-      <div class="flex items-center gap-2">
-        <span class="size-2 rounded-full" :class="settings.enabled ? 'bg-emerald-500' : 'bg-amber-500'"></span>
-        <span class="font-mono text-[11px] sm:text-xs">
-          {{ settings.enabled ? 'Hardware Bridge Active' : 'Punch Display Disabled' }}
-        </span>
-        <span class="text-border hidden sm:inline">·</span>
-        <span class="text-[11px] sm:text-xs text-muted-foreground hidden sm:inline">
-          DMBBHR Real-Time Biometric Terminal
-        </span>
-      </div>
-
-      <!-- Secondary Development / Testing Controls -->
-      <div class="flex items-center gap-1.5 flex-wrap justify-center md:justify-end text-[11px]">
-        <span class="text-[10px] font-mono uppercase text-muted-foreground/70 font-semibold mr-1">
-          TEST:
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono cursor-pointer"
-          :class="isDisplayPaused
-            ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
-            : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'"
-          :title="isDisplayPaused ? 'Resume automatic punch display' : 'Pause automatic punch display'"
-          @click="toggleDisplayPause"
-        >
-          <Play class="size-2.5 mr-1" />
-          <span>{{ isDisplayPaused ? 'Resume Display' : 'Pause Display' }}</span>
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-muted-foreground hover:text-foreground hover:bg-muted/80 cursor-pointer"
-          title="Simulate standard punch (Cantillas)"
-          @click="triggerTestPunch('same_employee', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-primary" />
-          <span>Simulate Punch</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
-          title="Simulate early arrival"
-          @click="triggerTestPunch('early_in', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-emerald-600" />
-          <span>Simulate Early</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer"
-          title="Simulate late arrival (triggers late visual and background graphic if configured)"
-          @click="triggerTestPunch('late_in', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-rose-600" />
-          <span>Simulate Late</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 cursor-pointer"
-          title="Simulate lunch departure (12:02 PM BREAK OUT)"
-          @click="triggerTestPunch('lunch_out', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-amber-600" />
-          <span>Lunch OUT</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 cursor-pointer"
-          title="Simulate lunch return (12:57 PM BREAK IN)"
-          @click="triggerTestPunch('lunch_in', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-blue-600" />
-          <span>Lunch IN</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-primary hover:bg-primary/10 cursor-pointer"
-          title="Simulate standard departure"
-          @click="triggerTestPunch('normal_out', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-primary" />
-          <span>Simulate OUT</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 cursor-pointer font-bold"
-          title="Simulate complete day sequence (8:01 AM Late -> 12:02 PM Lunch OUT -> 12:57 PM Lunch IN -> 5:00 PM OUT)"
-          @click="triggerTestPunch('full_day_sequence', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-indigo-600" />
-          <span>Full Day Sequence</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 cursor-pointer"
-          title="Simulate early departure"
-          @click="triggerTestPunch('early_out', 'user25065')"
-        >
-          <Play class="size-2.5 mr-1 text-amber-600" />
-          <span>Simulate Early OUT</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-muted-foreground hover:text-foreground hover:bg-muted/80 cursor-pointer"
-          title="Simulate unrecognized Bio ID"
-          @click="triggerTestPunch('unknown', 'user99999')"
-        >
-          <span>Simulate Unknown</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer font-bold"
-          title="Preview the enhanced Birthday animation, balloons, confetti, and information modal"
-          @click="triggerBirthdayPreview()"
-        >
-          <Cake class="size-2.5 mr-1 text-rose-600" />
-          <span>Preview Birthday</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-6 px-2 text-[11px] font-mono text-primary hover:bg-primary/10 cursor-pointer font-bold"
-          title="Show preview overlay of the next announcement / reminder / birthday"
-          @click="showAnnouncementPreview()"
-        >
-          <Megaphone class="size-2.5 mr-1 text-primary" />
-          <span>Preview Announcement</span>
-        </Button>
-      </div>
-    </footer>
   </div>
 </template>
 
