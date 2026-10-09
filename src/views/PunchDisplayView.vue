@@ -984,7 +984,7 @@ onUnmounted(() => {
         <!-- Celebratory Flying Balloons and Lightweight Confetti Layer (Celebration for Birthday) -->
         <div
           v-if="currentAnnouncement.type === 'birthday'"
-          class="pointer-events-none fixed inset-0 z-30 overflow-hidden"
+          class="pointer-events-none fixed inset-0 z-99 overflow-hidden"
           aria-hidden="true"
         >
           <!-- Flying Balloons: Float gently upward from bottom of screen beyond top -->
