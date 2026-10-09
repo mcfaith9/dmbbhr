@@ -486,7 +486,14 @@ export function processEmployeeDayPunches(
 
   for (const p of validPunches) {
     const mins = getManilaMinutesFromMidnight(p.attendance_time)
-    if (mins < morningArrivalCutoffMins) {
+    const st = Number(p.state ?? 0)
+    const dir = (p as any).direction
+
+    if (st === 2 || dir === 'BREAK_OUT') {
+      lunchOutPunches.push(p)
+    } else if (st === 3 || dir === 'BREAK_IN') {
+      lunchInPunches.push(p)
+    } else if (mins < morningArrivalCutoffMins) {
       morningPunches.push(p)
     } else if (mins >= lunchStartMins - 30 && mins <= lunchStartMins + 30) {
       lunchOutPunches.push(p)
@@ -928,7 +935,14 @@ export function processEmployeeDayPunches(
   // 5. Assign window roles (IN, OUT, BREAK) to scan breakdown items
   for (const scan of scanBreakdown) {
     const scanMins = getManilaMinutesFromMidnight(scan.timestampMs)
-    if (scanMins < morningArrivalCutoffMins) {
+    const st = Number(scan.state ?? 0)
+    if (st === 2) {
+      scan.windowRole = 'BREAK_OUT'
+      scan.windowRoleLabel = 'This is for Lunch (Break OUT)'
+    } else if (st === 3) {
+      scan.windowRole = 'BREAK_IN'
+      scan.windowRoleLabel = 'This is for Lunch (Break IN / Return)'
+    } else if (scanMins < morningArrivalCutoffMins) {
       scan.windowRole = 'IN'
       scan.windowRoleLabel = 'This is for IN (Shift Arrival Window)'
     } else if (scanMins >= afternoonDepartureMinMins) {

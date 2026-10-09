@@ -10,19 +10,22 @@ import { formatDuration } from '@/lib/timeUtils'
 import { employeeService } from '@/services/employees'
 import { punchRepository } from '@/repositories/punchRepository'
 import { workGroupRepository, calculateExpectedOutMinutes } from '@/repositories/workGroupRepository'
-import { getManilaDateString } from '@/services/attendanceEngine'
+import { getManilaDateString, getManilaMinutesFromMidnight } from '@/services/attendanceEngine'
 
 export interface CompactRecentPunch {
   id: string
   eventId: string
   employeeName: string
   bioId: string
-  direction: string // "TIME IN" | "TIME OUT"
+  direction: string // "TIME IN" | "TIME OUT" | "BREAK OUT" | "BREAK IN"
   time: string // "8:03 AM"
   date: string // "October 5, 2026"
-  status: string // "EARLY" | "ON TIME" | "LATE" | "TIME OUT" | "EARLY OUT"
+  status: string // "EARLY" | "ON TIME" | "LATE" | "TIME OUT" | "EARLY OUT" | "BREAK OUT" | "BREAK IN"
   statusVariant: 'success' | 'warning' | 'destructive' | 'secondary' | 'outline' | 'default'
   isLate: boolean
+  firstInTime?: string
+  firstInLate?: boolean
+  firstInLateMinutes?: number
 }
 
 export interface PunchDisplayEvent {
@@ -57,6 +60,8 @@ export interface PunchDisplayEvent {
   late_minutes?: number
   lateMinutes?: number
   firstInTime?: string
+  firstInLate?: boolean
+  firstInLateMinutes?: number
 }
 
 export interface PunchDisplaySettings {
@@ -145,6 +150,9 @@ class PunchDisplayService {
   // Maximum 7 recent punches for visual lineup
   public recentPunches = ref<CompactRecentPunch[]>([])
   public punchHistory = ref<CompactRecentPunch[]>([]) // alias for backward compatibility
+
+  // Session-level punch tracker to ensure instant pairing across fast consecutive events
+  private sessionPunchHistory = new Map<string, AttendanceLog[]>()
   
   // Persistent Settings
   public settings = ref<PunchDisplaySettings>(this.loadSettings())
@@ -303,7 +311,10 @@ class PunchDisplayService {
     direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT',
     standardIn: string = '08:00',
     _gracePeriod: number = 0,
-    expectedOut: string = '17:00'
+    expectedOut: string = '17:00',
+    isFirstIn: boolean = true,
+    lunchStart: string = '12:00',
+    lunchEnd: string = '13:00'
   ): {
     statusCategory: PunchDisplayEvent['statusCategory']
     statusLabel: string
@@ -338,6 +349,11 @@ class PunchDisplayService {
     if (hours === 24) hours = 0
 
     const punchMinutes = hours * 60 + minutes
+
+    const [lStartH, lStartM] = lunchStart.split(':').map(Number)
+    const [lEndH, lEndM] = lunchEnd.split(':').map(Number)
+    const lunchStartMinutes = (lStartH || 12) * 60 + (lStartM || 0)
+    const lunchEndMinutes = (lEndH || 13) * 60 + (lEndM || 0)
 
     // 1. TIME OUT EVALUATION
     if (direction === 'OUT') {
@@ -374,8 +390,38 @@ class PunchDisplayService {
       }
     }
 
-    // 2. TIME IN EVALUATION (Minute precision: seconds ignored; no grace period)
+    // 2. TIME IN EVALUATION
+    // Only the first applicable morning arrival IN punch is evaluated for lateness against standardIn.
+    // Lunch-return / subsequent IN punches are classified as BREAK IN and NEVER evaluated as late arrival.
     if (direction === 'IN') {
+      if (!isFirstIn || (punchMinutes > lunchStartMinutes + 30 && punchMinutes <= lunchEndMinutes + 35)) {
+        return {
+          statusCategory: 'regular',
+          statusLabel: 'BREAK IN',
+          statusDetail: 'Returned from break',
+          statusVariant: 'secondary',
+          isEarly: false,
+          isLate: false,
+          diffMinutes: 0,
+          late_minutes: 0,
+          lateMinutes: 0
+        }
+      }
+
+      if (punchMinutes >= lunchStartMinutes - 30 && punchMinutes <= lunchStartMinutes + 30) {
+        return {
+          statusCategory: 'regular',
+          statusLabel: 'BREAK OUT',
+          statusDetail: 'Lunch / break period started',
+          statusVariant: 'secondary',
+          isEarly: false,
+          isLate: false,
+          diffMinutes: 0,
+          late_minutes: 0,
+          lateMinutes: 0
+        }
+      }
+
       const [stdH, stdM] = standardIn.split(':').map(Number)
       const standardInMinutes = (stdH || 8) * 60 + (stdM || 0)
 
@@ -393,6 +439,7 @@ class PunchDisplayService {
           lateMinutes: 0
         }
       } else if (punchMinutes === standardInMinutes) {
+        // Strict minute precision: 8:00:59 AM has punchMinutes = 480 -> ON TIME
         return {
           statusCategory: 'on_time',
           statusLabel: 'ON TIME',
@@ -405,6 +452,7 @@ class PunchDisplayService {
           lateMinutes: 0
         }
       } else {
+        // Strict minute precision: 8:01:00 AM has punchMinutes = 481 -> LATE by 1m
         const lateDiff = punchMinutes - standardInMinutes
         return {
           statusCategory: 'late',
@@ -510,7 +558,10 @@ class PunchDisplayService {
       date: event.date || this.formatDateDisplay(event.timestamp),
       status: event.statusLabel,
       statusVariant: event.statusVariant,
-      isLate: event.isLate
+      isLate: event.isLate,
+      firstInTime: event.firstInTime,
+      firstInLate: event.firstInLate,
+      firstInLateMinutes: event.firstInLateMinutes
     }
 
     // Immediately prepend incoming punch to Recent Punches (capped strictly at 7 entries)
@@ -548,15 +599,36 @@ class PunchDisplayService {
 
       const compactList: CompactRecentPunch[] = latest.map(p => {
         const stateNum = Number(p.state ?? 1)
-        const dir = stateNum === 4 ? 'OUT' : 'IN'
+        let dir: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT' = 'IN'
+        if (stateNum === 2) dir = 'BREAK_OUT'
+        else if (stateNum === 3) dir = 'BREAK_IN'
+        else if (stateNum === 4) dir = 'OUT'
+        else if (stateNum === 5) dir = 'OT_IN'
+        else if (stateNum === 6) dir = 'OT_OUT'
+        else {
+          const pMins = getManilaMinutesFromMidnight(p.attendance_time)
+          if (pMins >= 13 * 60 + 35) {
+            dir = 'OUT'
+          } else if (pMins >= 11 * 60 + 30 && pMins <= 12 * 60 + 30) {
+            dir = 'BREAK_OUT'
+          } else if (pMins > 12 * 60 + 30 && pMins < 13 * 60 + 35) {
+            dir = 'BREAK_IN'
+          } else {
+            dir = 'IN'
+          }
+        }
+
+        const stateInfo = this.getStateLabelAndColor(
+          dir === 'OUT' ? 4 : (dir === 'BREAK_OUT' ? 2 : (dir === 'BREAK_IN' ? 3 : (dir === 'OT_IN' ? 5 : (dir === 'OT_OUT' ? 6 : 1))))
+        )
         const status = this.evaluateAttendanceStatus(
           p.attendance_time,
           dir as any,
           '08:00',
           0,
-          '17:00'
+          '17:00',
+          dir === 'IN'
         )
-        const stateInfo = this.getStateLabelAndColor(stateNum)
         return {
           id: p.id,
           eventId: p.id,
@@ -660,6 +732,8 @@ class PunchDisplayService {
       expectedOut?: string
       photoUrl?: string
       firstInTime?: string
+      firstInLate?: boolean
+      firstInLateMinutes?: number
     }
   ) => {
     // If Punch Display is disabled in settings, do not broadcast
@@ -718,49 +792,165 @@ class PunchDisplayService {
       expOut = outCalc.outHHMM || '17:00'
     }
 
-    // Determine Direction: IN vs OUT
-    // Priority 1: Explicit caller direction or state
+    const lunchStart = wg?.lunch_start || wg?.lunchStart || '12:00'
+    const lunchEnd = wg?.lunch_end || wg?.lunchEnd || '13:00'
+    const [inH, inM] = stdIn.split(':').map(Number)
+    const [lStartH, lStartM] = lunchStart.split(':').map(Number)
+    const [lEndH, lEndM] = lunchEnd.split(':').map(Number)
+    const [outH, outM] = expOut.split(':').map(Number)
+
+    const standardInMinutes = (inH || 8) * 60 + (inM || 0)
+    const expectedOutMinutes = (outH || 17) * 60 + (outM || 0)
+    const lunchStartMinutes = (lStartH || 12) * 60 + (lStartM || 0)
+    const lunchEndMinutes = (lEndH || 13) * 60 + (lEndM || 0)
+
+    const morningArrivalCutoffMins = lunchStartMinutes - 15 // e.g. 11:45 AM
+    const afternoonDepartureMinMins = Math.max(lunchEndMinutes + 35, standardInMinutes + 210) // e.g. 1:35 PM (815m)
+
+    const punchDate = new Date(log.attendance_time || Date.now())
+    const punchMinutes = getManilaMinutesFromMidnight(punchDate)
+    const currentMs = punchDate.getTime()
+
+    // Retrieve prior primary punches for this employee today
+    const todayStr = getManilaDateString(punchDate)
+    const sessionKey = `${todayStr}_${normalizedBioId}`
+    const inMemLogs = this.sessionPunchHistory.get(sessionKey) || []
+
+    let allCandidatePunches: AttendanceLog[] = [...inMemLogs]
+    try {
+      const todayPunches = await punchRepository.getPunchesByDate(todayStr)
+      const userPunchesToday = todayPunches.filter(p => normalizeBioId(p.user_id) === normalizedBioId)
+      for (const p of userPunchesToday) {
+        if (!allCandidatePunches.some(x => x.id === p.id || (Math.abs(new Date(x.attendance_time).getTime() - new Date(p.attendance_time).getTime()) < 1000))) {
+          allCandidatePunches.push(p)
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // Filter out current log if already present to establish prior punches
+    const userPriorPunches = allCandidatePunches.filter(p => p.id !== log.id)
+    const sortedPrior = [...userPriorPunches].sort((a, b) => new Date(a.attendance_time).getTime() - new Date(b.attendance_time).getTime())
+
+    const primaryPrior: AttendanceLog[] = []
+    let lastPrimaryMs = -Infinity
+    for (const p of sortedPrior) {
+      const pMs = new Date(p.attendance_time).getTime()
+      if (primaryPrior.length === 0 || pMs - lastPrimaryMs > 60000) {
+        primaryPrior.push(p)
+        lastPrimaryMs = pMs
+      }
+    }
+
+    // Record this incoming log into session punch history
+    if (!inMemLogs.some(x => x.id === log.id || (Math.abs(new Date(x.attendance_time).getTime() - currentMs) < 1000))) {
+      this.sessionPunchHistory.set(sessionKey, [...inMemLogs, log])
+    }
+
+    // Resolve morning arrival metadata (for end-of-day recap preservation)
+    let resolvedFirstInTime: string | undefined = extra?.firstInTime
+    let resolvedFirstInLate: boolean | undefined = extra?.firstInLate
+    let resolvedFirstInLateMinutes: number | undefined = extra?.firstInLateMinutes
+
+    // Check recent punches in memory if morning arrival was already established
+    if (resolvedFirstInLate === undefined) {
+      const prevRecent = this.recentPunches.value.find(p => p.bioId === normalizedBioId && p.firstInLate !== undefined)
+      if (prevRecent) {
+        resolvedFirstInLate = prevRecent.firstInLate
+        resolvedFirstInLateMinutes = prevRecent.firstInLateMinutes
+        resolvedFirstInTime = resolvedFirstInTime || prevRecent.firstInTime
+      }
+    }
+
+    if (primaryPrior.length > 0 && (!resolvedFirstInTime || resolvedFirstInLate === undefined)) {
+      const firstPrimaryIn = primaryPrior.find(p => {
+        const mins = getManilaMinutesFromMidnight(p.attendance_time)
+        const st = Number(p.state ?? 0)
+        return mins < morningArrivalCutoffMins || st === 1 || (p as any).direction === 'IN' || (p as any).windowRole === 'IN'
+      }) || primaryPrior[0]
+
+      if (firstPrimaryIn) {
+        if (!resolvedFirstInTime) {
+          resolvedFirstInTime = this.formatTimeDisplay(firstPrimaryIn.attendance_time)
+        }
+        if (resolvedFirstInLate === undefined) {
+          const firstMins = getManilaMinutesFromMidnight(firstPrimaryIn.attendance_time)
+          if (firstMins > standardInMinutes) {
+            resolvedFirstInLate = true
+            resolvedFirstInLateMinutes = firstMins - standardInMinutes
+          } else {
+            resolvedFirstInLate = false
+            resolvedFirstInLateMinutes = 0
+          }
+        }
+      }
+    }
+
+    // Determine Direction: IN, OUT, BREAK_OUT, BREAK_IN
     let direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT' = 'IN'
     const explicitState = Number(log.state ?? 0)
     const explicitDir = extra?.direction || (log as any).direction
 
-    if (explicitDir === 'OUT' || explicitState === 4) {
-      direction = 'OUT'
-    } else if (explicitDir === 'IN') {
-      direction = 'IN'
-    } else if (explicitState === 2) {
-      direction = 'BREAK_OUT'
-    } else if (explicitState === 3) {
-      direction = 'BREAK_IN'
-    } else if (explicitState === 5) {
-      direction = 'OT_IN'
-    } else if (explicitState === 6) {
-      direction = 'OT_OUT'
-    } else {
-      // Priority 2: Use existing attendance sequence and schedule window
-      try {
-        const todayStr = getManilaDateString(new Date(log.attendance_time))
-        const todayPunches = await punchRepository.getPunchesByDate(todayStr)
-        const userPunchesToday = todayPunches.filter(p => p.user_id === normalizedBioId && p.id !== log.id)
+    const lastPrimary = primaryPrior[primaryPrior.length - 1]
+    const isDuplicateOfLast = lastPrimary && Math.abs(currentMs - new Date(lastPrimary.attendance_time).getTime()) <= 60000
 
-        if (userPunchesToday.length > 0) {
-          // Employee already has a punch earlier today -> this is an OUT punch
+    if (isDuplicateOfLast) {
+      const lastSt = Number(lastPrimary.state ?? 0)
+      direction = lastSt === 2 ? 'BREAK_OUT' : (lastSt === 3 ? 'BREAK_IN' : (lastSt === 4 ? 'OUT' : 'IN'))
+    } else if (explicitDir === 'BREAK_OUT' || explicitState === 2) {
+      direction = 'BREAK_OUT'
+    } else if (explicitDir === 'BREAK_IN' || explicitState === 3) {
+      direction = 'BREAK_IN'
+    } else if (explicitDir === 'OT_IN' || explicitState === 5) {
+      direction = 'OT_IN'
+    } else if (explicitDir === 'OT_OUT' || explicitState === 6) {
+      direction = 'OT_OUT'
+    } else if (explicitDir === 'OUT' || explicitState === 4) {
+      if (primaryPrior.length === 1 && punchMinutes < afternoonDepartureMinMins) {
+        direction = 'BREAK_OUT'
+      } else {
+        direction = 'OUT'
+      }
+    } else {
+      // Sequence & Schedule-Aware Pairing
+      const priorCount = primaryPrior.length
+
+      if (priorCount === 0) {
+        if (punchMinutes >= afternoonDepartureMinMins) {
+          direction = 'OUT' // Likely OUT — Missing IN
+        } else if (punchMinutes >= lunchStartMinutes - 30 && punchMinutes <= lunchStartMinutes + 30) {
+          direction = 'BREAK_OUT' // Lunch Departure
+        } else if (punchMinutes > lunchStartMinutes + 30 && punchMinutes <= lunchEndMinutes + 35) {
+          direction = 'BREAK_IN' // Lunch Return
+        } else {
+          direction = 'IN' // First Morning Arrival
+        }
+      } else if (priorCount === 1) {
+        if (punchMinutes >= afternoonDepartureMinMins) {
+          direction = 'OUT' // Shift Departure
+        } else {
+          direction = 'BREAK_OUT' // Lunch Departure
+        }
+      } else if (priorCount === 2) {
+        if (punchMinutes < afternoonDepartureMinMins) {
+          direction = 'BREAK_IN' // Lunch Return
+        } else {
+          direction = 'OUT' // Shift Departure
+        }
+      } else if (priorCount === 3) {
+        if (punchMinutes >= afternoonDepartureMinMins - 30) {
+          direction = 'OUT' // Shift Departure
+        } else {
+          direction = 'BREAK_OUT'
+        }
+      } else {
+        if (punchMinutes >= expectedOutMinutes - 30) {
           direction = 'OUT'
         } else {
-          // First punch of the day: check time of day
-          const punchDate = new Date(log.attendance_time)
-          const h = punchDate.getHours()
-          const m = punchDate.getMinutes()
-          const punchMins = h * 60 + m
-          // If after 1:00 PM (780m), departure window
-          if (punchMins >= 780) {
-            direction = 'OUT'
-          } else {
-            direction = 'IN'
-          }
+          const lastSt = Number(primaryPrior[primaryPrior.length - 1].state ?? 0)
+          direction = (lastSt === 1 || lastSt === 3) ? 'BREAK_OUT' : 'BREAK_IN'
         }
-      } catch {
-        direction = 'IN'
       }
     }
 
@@ -768,41 +958,34 @@ class PunchDisplayService {
     const { label, color } = this.getStateLabelAndColor(stateNumber)
     
     // Evaluate status using the resolved direction
+    // Only genuine morning arrival (before lunch) with no prior punches is evaluated for arrival lateness
+    const isFirstIn = direction === 'IN' && primaryPrior.length === 0 && punchMinutes < morningArrivalCutoffMins
     const status = this.evaluateAttendanceStatus(
       log.attendance_time || new Date().toISOString(),
       direction,
       stdIn,
       grace,
-      expOut
+      expOut,
+      isFirstIn,
+      lunchStart,
+      lunchEnd
     )
+
+    const formattedTime = this.formatTimeDisplay(log.attendance_time || new Date().toISOString())
+    const formattedDate = this.formatDateDisplay(log.attendance_time || new Date().toISOString())
+
+    if (isFirstIn) {
+      resolvedFirstInTime = formattedTime
+      resolvedFirstInLate = status.isLate
+      resolvedFirstInLateMinutes = status.lateMinutes || status.diffMinutes || 0
+    }
 
     // Generate guaranteed unique event identity so repeated punches from same employee are distinct
     const seq = ++eventCounter
     const eventTimestamp = new Date(log.attendance_time || Date.now()).getTime()
     const uniqueEventId = `punch-${normalizedBioId}-${eventTimestamp}-${seq}`
 
-    const formattedTime = this.formatTimeDisplay(log.attendance_time || new Date().toISOString())
-    const formattedDate = this.formatDateDisplay(log.attendance_time || new Date().toISOString())
-
     const resolvedPhoto = employee?.photo || (normalizedBioId ? `/employee-photos/${normalizedBioId}.jpg` : undefined) || extra?.photoUrl
-
-    let resolvedFirstInTime: string | undefined = extra?.firstInTime
-    if (!resolvedFirstInTime && direction === 'OUT') {
-      try {
-        const todayStr = getManilaDateString(new Date(log.attendance_time))
-        const todayPunches = await punchRepository.getPunchesByDate(todayStr)
-        const userPunchesToday = todayPunches.filter(p => p.user_id === normalizedBioId && p.id !== log.id)
-        if (userPunchesToday.length > 0) {
-          const sorted = [...userPunchesToday].sort((a, b) => new Date(a.attendance_time).getTime() - new Date(b.attendance_time).getTime())
-          const earliest = sorted.find(p => p.state === 1 || (p as any).direction === 'IN') || sorted[0]
-          if (earliest?.attendance_time) {
-            resolvedFirstInTime = this.formatTimeDisplay(earliest.attendance_time)
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
 
     const event: PunchDisplayEvent = {
       id: uniqueEventId,
@@ -835,7 +1018,9 @@ class PunchDisplayService {
       diffMinutes: status.diffMinutes,
       late_minutes: status.late_minutes,
       lateMinutes: status.lateMinutes,
-      firstInTime: resolvedFirstInTime
+      firstInTime: resolvedFirstInTime,
+      firstInLate: resolvedFirstInLate,
+      firstInLateMinutes: resolvedFirstInLateMinutes
     }
 
     this.handleIncomingPunch(event)

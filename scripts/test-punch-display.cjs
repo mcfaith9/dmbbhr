@@ -19,12 +19,17 @@ function normalizeBioId(value) {
   return match ? match[0] : raw
 }
 
-function evaluateAttendanceStatus(timestampStr, direction, standardIn = '08:00', gracePeriod = 15, expectedOut = '17:00') {
+function evaluateAttendanceStatus(timestampStr, direction, standardIn = '08:00', gracePeriod = 0, expectedOut = '17:00', isFirstIn = true, lunchStart = '12:00', lunchEnd = '13:00') {
   const punchDate = new Date(timestampStr)
   let hours = punchDate.getHours()
   let minutes = punchDate.getMinutes()
 
   const punchMinutes = hours * 60 + minutes
+
+  const [lStartH, lStartM] = lunchStart.split(':').map(Number)
+  const [lEndH, lEndM] = lunchEnd.split(':').map(Number)
+  const lunchStartMinutes = (lStartH || 12) * 60 + (lStartM || 0)
+  const lunchEndMinutes = (lEndH || 13) * 60 + (lEndM || 0)
 
   if (direction === 'OUT') {
     const [expH, expM] = expectedOut.split(':').map(Number)
@@ -36,7 +41,8 @@ function evaluateAttendanceStatus(timestampStr, direction, standardIn = '08:00',
         statusLabel: 'TIME OUT',
         statusDetail: 'Shift completed',
         isEarly: false,
-        isLate: false
+        isLate: false,
+        diffMinutes: 0
       }
     } else {
       const undertime = expectedOutMinutes - punchMinutes
@@ -45,12 +51,57 @@ function evaluateAttendanceStatus(timestampStr, direction, standardIn = '08:00',
         statusLabel: 'EARLY OUT',
         statusDetail: `${undertime}m before scheduled exit`,
         isEarly: false,
-        isLate: false
+        isLate: false,
+        diffMinutes: undertime
       }
     }
   }
 
+  if (direction === 'BREAK_OUT') {
+    return {
+      statusCategory: 'regular',
+      statusLabel: 'BREAK OUT',
+      statusDetail: 'Lunch / break period started',
+      isEarly: false,
+      isLate: false,
+      diffMinutes: 0
+    }
+  }
+
+  if (direction === 'BREAK_IN') {
+    return {
+      statusCategory: 'regular',
+      statusLabel: 'BREAK IN',
+      statusDetail: 'Returned from break',
+      isEarly: false,
+      isLate: false,
+      diffMinutes: 0
+    }
+  }
+
   if (direction === 'IN') {
+    if (!isFirstIn || (punchMinutes > lunchStartMinutes + 30 && punchMinutes <= lunchEndMinutes + 35)) {
+      return {
+        statusCategory: 'regular',
+        statusLabel: 'BREAK IN',
+        statusDetail: 'Returned from break',
+        isEarly: false,
+        isLate: false,
+        diffMinutes: 0
+      }
+    }
+
+    if (punchMinutes >= lunchStartMinutes - 30 && punchMinutes <= lunchStartMinutes + 30) {
+      return {
+        statusCategory: 'regular',
+        statusLabel: 'BREAK OUT',
+        statusDetail: 'Lunch / break period started',
+        isEarly: false,
+        isLate: false,
+        diffMinutes: 0
+      }
+    }
+
     const [stdH, stdM] = standardIn.split(':').map(Number)
     const standardInMinutes = (stdH || 8) * 60 + (stdM || 0)
 
@@ -61,29 +112,34 @@ function evaluateAttendanceStatus(timestampStr, direction, standardIn = '08:00',
         statusLabel: 'EARLY',
         statusDetail: `${earlyDiff}m early`,
         isEarly: true,
-        isLate: false
+        isLate: false,
+        diffMinutes: earlyDiff
       }
-    } else if (punchMinutes <= standardInMinutes + gracePeriod) {
+    } else if (punchMinutes === standardInMinutes) {
+      // Minute precision: 8:00:59 AM has punchMinutes = 480 -> ON TIME
       return {
         statusCategory: 'on_time',
         statusLabel: 'ON TIME',
-        statusDetail: 'Within shift grace period',
+        statusDetail: 'On schedule',
         isEarly: false,
-        isLate: false
+        isLate: false,
+        diffMinutes: 0
       }
     } else {
+      // Minute precision: 8:01:00 AM has punchMinutes = 481 -> LATE by 1m
       const lateDiff = punchMinutes - standardInMinutes
       return {
         statusCategory: 'late',
         statusLabel: 'LATE',
         statusDetail: `Late by ${lateDiff}m`,
         isEarly: false,
-        isLate: true
+        isLate: true,
+        diffMinutes: lateDiff
       }
     }
   }
 
-  return { statusCategory: 'regular', statusLabel: 'PUNCH RECORDED', isEarly: false, isLate: false }
+  return { statusCategory: 'regular', statusLabel: 'PUNCH RECORDED', isEarly: false, isLate: false, diffMinutes: 0 }
 }
 
 console.log('Running Punch Display Verification Test Suite...')
@@ -94,37 +150,66 @@ assert.strictEqual(normalizeBioId('25065'), '25065', 'normalize 25065')
 assert.strictEqual(normalizeBioId('  user_50044  '), '50044', 'normalize user_50044')
 
 // 2. Test A: Late IN (8:35 AM on 8:00 AM shift)
-const lateIn = evaluateAttendanceStatus('2026-10-05T08:35:00', 'IN', '08:00', 15, '17:00')
+const lateIn = evaluateAttendanceStatus('2026-10-05T08:35:00', 'IN', '08:00', 0, '17:00')
 assert.strictEqual(lateIn.statusLabel, 'LATE', 'Test A: Late IN should be LATE')
 assert.strictEqual(lateIn.isLate, true, 'Test A: isLate must be true')
 
-// 3. Test B: Normal IN / On Time (8:05 AM on 8:00 AM shift)
-const ontimeIn = evaluateAttendanceStatus('2026-10-05T08:05:00', 'IN', '08:00', 15, '17:00')
+// 2.1 Minute Precision Rule: 8:00:59 AM is ON TIME, 8:01:00 AM is LATE, 8:01:23 AM is LATE
+const onTime59 = evaluateAttendanceStatus('2026-10-05T08:00:59', 'IN', '08:00', 0, '17:00')
+assert.strictEqual(onTime59.statusLabel, 'ON TIME', '8:00:59 AM must be ON TIME with minute precision')
+assert.strictEqual(onTime59.isLate, false, '8:00:59 AM must not be late')
+
+const late0100 = evaluateAttendanceStatus('2026-10-05T08:01:00', 'IN', '08:00', 0, '17:00')
+assert.strictEqual(late0100.statusLabel, 'LATE', '8:01:00 AM must be LATE with minute precision')
+assert.strictEqual(late0100.isLate, true, '8:01:00 AM isLate must be true')
+assert.strictEqual(late0100.diffMinutes, 1, '8:01:00 AM late by 1m')
+
+const late0123 = evaluateAttendanceStatus('2026-10-05T08:01:23', 'IN', '08:00', 0, '17:00')
+assert.strictEqual(late0123.statusLabel, 'LATE', '8:01:23 AM must be LATE')
+assert.strictEqual(late0123.isLate, true, '8:01:23 AM isLate must be true')
+assert.strictEqual(late0123.diffMinutes, 1, '8:01:23 AM late by 1m')
+
+// 2.2 Lunch Break Punches must NEVER be classified as LATE
+const lunchOut = evaluateAttendanceStatus('2026-10-05T12:02:12', 'BREAK_OUT', '08:00', 0, '17:00')
+assert.strictEqual(lunchOut.statusLabel, 'BREAK OUT', '12:02:12 PM must be BREAK OUT')
+assert.strictEqual(lunchOut.isLate, false, 'Lunch OUT must NEVER be late')
+
+const lunchIn = evaluateAttendanceStatus('2026-10-05T12:57:29', 'BREAK_IN', '08:00', 0, '17:00')
+assert.strictEqual(lunchIn.statusLabel, 'BREAK IN', '12:57:29 PM must be BREAK IN')
+assert.strictEqual(lunchIn.isLate, false, 'Lunch IN must NEVER be late')
+
+// Even if direction is passed as IN for 12:57:29 PM (lunch return), it must NOT evaluate against 8:00 AM
+const lunchInAsDirectionIn = evaluateAttendanceStatus('2026-10-05T12:57:29', 'IN', '08:00', 0, '17:00', false)
+assert.strictEqual(lunchInAsDirectionIn.statusLabel, 'BREAK IN', 'Subsequent IN during lunch must be BREAK IN')
+assert.strictEqual(lunchInAsDirectionIn.isLate, false, 'Subsequent IN must not be late')
+
+// 3. Test B: Normal IN / On Time (8:00 AM on 8:00 AM shift)
+const ontimeIn = evaluateAttendanceStatus('2026-10-05T08:00:00', 'IN', '08:00', 0, '17:00')
 assert.strictEqual(ontimeIn.statusLabel, 'ON TIME', 'Test B: On Time IN should be ON TIME')
 assert.strictEqual(ontimeIn.isLate, false, 'Test B: isLate must be false')
 
 // 4. Test C: Early IN (7:48 AM on 8:00 AM shift)
-const earlyIn = evaluateAttendanceStatus('2026-10-05T07:48:00', 'IN', '08:00', 15, '17:00')
+const earlyIn = evaluateAttendanceStatus('2026-10-05T07:48:00', 'IN', '08:00', 0, '17:00')
 assert.strictEqual(earlyIn.statusLabel, 'EARLY', 'Test C: Early IN should be EARLY')
 assert.strictEqual(earlyIn.isEarly, true, 'Test C: isEarly must be true')
 assert.strictEqual(earlyIn.isLate, false, 'Test C: isLate must be false')
 
 // 5. Test D: Normal OUT (5:10 PM on 5:00 PM expected exit)
-const normalOut = evaluateAttendanceStatus('2026-10-05T17:10:00', 'OUT', '08:00', 15, '17:00')
+const normalOut = evaluateAttendanceStatus('2026-10-05T17:10:00', 'OUT', '08:00', 0, '17:00')
 assert.strictEqual(normalOut.statusLabel, 'TIME OUT', 'Test D: Normal OUT must display TIME OUT')
 assert.strictEqual(normalOut.isLate, false, 'Test D: isLate MUST BE FALSE on OUT!')
 assert.notStrictEqual(normalOut.statusLabel, 'LATE', 'Test D: OUT must NEVER show LATE')
 
 // 6. Test E: Early OUT (4:30 PM on 5:00 PM expected exit)
-const earlyOut = evaluateAttendanceStatus('2026-10-05T16:30:00', 'OUT', '08:00', 15, '17:00')
+const earlyOut = evaluateAttendanceStatus('2026-10-05T16:30:00', 'OUT', '08:00', 0, '17:00')
 assert.strictEqual(earlyOut.statusLabel, 'EARLY OUT', 'Test E: Early OUT must display EARLY OUT')
 assert.strictEqual(earlyOut.isLate, false, 'Test E: isLate MUST BE FALSE on early OUT!')
 assert.notStrictEqual(earlyOut.statusLabel, 'LATE', 'Test E: Early OUT must NEVER show LATE')
 
 // 7. Test F: Late IN followed by Normal OUT (Late at 8:20 AM, Out at 5:10 PM)
-const morningPunch = evaluateAttendanceStatus('2026-10-05T08:20:00', 'IN', '08:00', 15, '17:00')
+const morningPunch = evaluateAttendanceStatus('2026-10-05T08:20:00', 'IN', '08:00', 0, '17:00')
 assert.strictEqual(morningPunch.statusLabel, 'LATE')
-const eveningPunch = evaluateAttendanceStatus('2026-10-05T17:10:00', 'OUT', '08:00', 15, '17:00')
+const eveningPunch = evaluateAttendanceStatus('2026-10-05T17:10:00', 'OUT', '08:00', 0, '17:00')
 assert.strictEqual(eveningPunch.statusLabel, 'TIME OUT', 'Test F: OUT after late IN must be TIME OUT')
 assert.strictEqual(eveningPunch.isLate, false, 'Test F: OUT must not inherit morning lateness')
 
@@ -236,11 +321,24 @@ assert.strictEqual(supportedDurations[2], 5, 'Default is 5 seconds')
 
 // 13. Today's Punch Recap Logic Verification
 function getRecapResultText(punch) {
+  const morningLate = Boolean(punch.firstInLate)
+  const morningLateMins = punch.firstInLateMinutes ?? 0
+  const isEarlyOut = punch.statusCategory === 'undertime' || punch.statusLabel === 'EARLY OUT'
+  const earlyMins = isEarlyOut ? (punch.diffMinutes || 0) : 0
+
+  if (morningLate && isEarlyOut) {
+    const lateStr = morningLateMins > 0 ? `LATE ${morningLateMins}m` : 'LATE'
+    const earlyStr = earlyMins > 0 ? `EARLY OUT ${earlyMins}m` : 'EARLY OUT'
+    return `${lateStr} • ${earlyStr}`
+  }
+  if (morningLate) {
+    return morningLateMins > 0 ? `LATE ${morningLateMins}m` : 'LATE'
+  }
+  if (isEarlyOut) {
+    return earlyMins > 0 ? `EARLY OUT ${earlyMins}m` : 'EARLY OUT'
+  }
   if (punch.isLate) {
     return punch.diffMinutes ? `LATE ${punch.diffMinutes}m` : 'LATE'
-  }
-  if (punch.statusCategory === 'undertime' || punch.statusLabel === 'EARLY OUT') {
-    return punch.diffMinutes ? `EARLY OUT ${punch.diffMinutes}m` : 'EARLY OUT'
   }
   if (punch.statusCategory === 'early' || punch.statusLabel === 'EARLY' || punch.isEarly) {
     return 'EARLY'
@@ -248,12 +346,14 @@ function getRecapResultText(punch) {
   return 'ON TIME'
 }
 
-// On time exit (7:52 AM -> 5:03 PM)
+// On time exit with on-time morning arrival (7:52 AM -> 5:03 PM)
 const onTimeRecap = getRecapResultText({
   statusCategory: 'time_out',
   statusLabel: 'TIME OUT',
   isLate: false,
-  isEarly: false
+  isEarly: false,
+  firstInLate: false,
+  firstInLateMinutes: 0
 })
 assert.strictEqual(onTimeRecap, 'ON TIME')
 
@@ -262,18 +362,74 @@ const earlyOutRecap = getRecapResultText({
   statusCategory: 'undertime',
   statusLabel: 'EARLY OUT',
   diffMinutes: 30,
-  isLate: false
+  isLate: false,
+  firstInLate: false,
+  firstInLateMinutes: 0
 })
 assert.strictEqual(earlyOutRecap, 'EARLY OUT 30m')
 
-// Late arrival then exit (8:17 AM in, 17m late)
-const lateRecap = getRecapResultText({
-  statusCategory: 'late',
-  statusLabel: 'LATE',
-  diffMinutes: 17,
-  isLate: true
+// Late arrival then exit: 8:01:23 AM morning arrival (1m late), exit at 5:00 PM
+// OUT punch itself has isLate: false, but firstInLate: true (1m) -> Recap MUST show 'LATE 1m'!
+const genemarieRecap = getRecapResultText({
+  statusCategory: 'time_out',
+  statusLabel: 'TIME OUT',
+  isLate: false,
+  firstInLate: true,
+  firstInLateMinutes: 1
 })
-assert.strictEqual(lateRecap, 'LATE 17m')
+assert.strictEqual(genemarieRecap, 'LATE 1m', 'Genemarie Acevedo 5:00 PM OUT must preserve morning LATE 1m in recap!')
+
+// Late arrival then exit: 8:17 AM morning arrival (17m late), exit at 5:02 PM
+const lateRecap = getRecapResultText({
+  statusCategory: 'time_out',
+  statusLabel: 'TIME OUT',
+  firstInLateMinutes: 17,
+  firstInLate: true,
+  isLate: false
+})
+assert.strictEqual(lateRecap, 'LATE 17m', 'Must preserve morning LATE 17m in recap')
+
+// Late arrival then early exit: 8:17 AM in (17m late) + 4:30 PM exit (30m early)
+const lateAndEarlyRecap = getRecapResultText({
+  statusCategory: 'undertime',
+  statusLabel: 'EARLY OUT',
+  diffMinutes: 30,
+  firstInLate: true,
+  firstInLateMinutes: 17,
+  isLate: false
+})
+assert.strictEqual(lateAndEarlyRecap, 'LATE 17m • EARLY OUT 30m', 'Must show both morning late and early exit')
+
+// 13.1 Complete Day Sequence Verification: Genemarie Acevedo
+// Schedule: 8:00 AM - 5:00 PM
+// Punch 1: 8:01:23 AM (First IN) -> LATE (triggers late visual)
+const p1 = evaluateAttendanceStatus('2026-10-05T08:01:23', 'IN', '08:00', 0, '17:00', true)
+assert.strictEqual(p1.statusLabel, 'LATE')
+assert.strictEqual(p1.isLate, true)
+assert.strictEqual(p1.diffMinutes, 1)
+
+// Punch 2: 12:02:12 PM (Lunch OUT) -> BREAK OUT (must NOT trigger late visual)
+const p2 = evaluateAttendanceStatus('2026-10-05T12:02:12', 'BREAK_OUT', '08:00', 0, '17:00', false)
+assert.strictEqual(p2.statusLabel, 'BREAK OUT')
+assert.strictEqual(p2.isLate, false, 'Lunch OUT must NOT trigger late visual')
+
+// Punch 3: 12:57:29 PM (Lunch IN) -> BREAK IN (must NOT trigger late visual)
+const p3 = evaluateAttendanceStatus('2026-10-05T12:57:29', 'BREAK_IN', '08:00', 0, '17:00', false)
+assert.strictEqual(p3.statusLabel, 'BREAK IN')
+assert.strictEqual(p3.isLate, false, 'Lunch IN must NOT trigger late visual')
+
+// Punch 4: 5:00:00 PM (Shift OUT) -> TIME OUT
+const p4 = evaluateAttendanceStatus('2026-10-05T17:00:00', 'OUT', '08:00', 0, '17:00', false)
+assert.strictEqual(p4.statusLabel, 'TIME OUT')
+assert.strictEqual(p4.isLate, false, 'Final OUT must NOT be marked late')
+
+// Final OUT recap preserves morning arrival:
+const p4Recap = getRecapResultText({
+  ...p4,
+  firstInLate: p1.isLate,
+  firstInLateMinutes: p1.diffMinutes
+})
+assert.strictEqual(p4Recap, 'LATE 1m', 'Final OUT recap preserves morning LATE 1m')
 
 // 14. 3-Minute Idle Constant Verification
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000

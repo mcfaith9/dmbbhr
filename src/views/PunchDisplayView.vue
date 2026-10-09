@@ -224,17 +224,30 @@ const recapTimeIn = computed(() => {
     return prevIn.time
   }
   // Fallback realistic actual IN for display if no prior punch in memory
-  return currentPunch.value.isLate ? '8:17 AM' : '7:52 AM'
+  return (currentPunch.value.firstInLate || currentPunch.value.isLate) ? '8:01 AM' : '8:00 AM'
 })
 
 const recapResultText = computed(() => {
   if (!currentPunch.value) return 'ON TIME'
   const p = currentPunch.value
+  const morningLate = Boolean(p.firstInLate)
+  const morningLateMins = p.firstInLateMinutes ?? 0
+  const isEarlyOut = p.statusCategory === 'undertime' || p.statusLabel === 'EARLY OUT'
+  const earlyMins = isEarlyOut ? (p.diffMinutes || 0) : 0
+
+  if (morningLate && isEarlyOut) {
+    const lateStr = morningLateMins > 0 ? `LATE ${morningLateMins}m` : 'LATE'
+    const earlyStr = earlyMins > 0 ? `EARLY OUT ${earlyMins}m` : 'EARLY OUT'
+    return `${lateStr} • ${earlyStr}`
+  }
+  if (morningLate) {
+    return morningLateMins > 0 ? `LATE ${morningLateMins}m` : 'LATE'
+  }
+  if (isEarlyOut) {
+    return earlyMins > 0 ? `EARLY OUT ${earlyMins}m` : 'EARLY OUT'
+  }
   if (p.isLate) {
     return p.diffMinutes ? `LATE ${p.diffMinutes}m` : 'LATE'
-  }
-  if (p.statusCategory === 'undertime' || p.statusLabel === 'EARLY OUT') {
-    return p.diffMinutes ? `EARLY OUT ${p.diffMinutes}m` : 'EARLY OUT'
   }
   if (p.statusCategory === 'early' || p.statusLabel === 'EARLY' || p.isEarly) {
     return 'EARLY'
@@ -761,7 +774,7 @@ let testSeq = 0
 
 // Interactive Test Punch simulation for demo & comprehensive test verification
 async function triggerTestPunch(
-  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown',
+  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'lunch_out' | 'lunch_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown' | 'full_day_sequence',
   rawUserId: string = 'user25065'
 ) {
   if (employees.value.length === 0) {
@@ -776,9 +789,29 @@ async function triggerTestPunch(
   const empDept = foundEmp?.department || 'Operations'
   const empLoc = foundEmp?.location || 'DBB CEBU'
 
+  if (scenario === 'full_day_sequence') {
+    // 1. Morning Late IN: 8:01:23 AM (Late by 1m)
+    await triggerTestPunch('late_in', rawUserId)
+    // 2. Lunch OUT: 12:02:12 PM (BREAK OUT)
+    setTimeout(() => {
+      triggerTestPunch('lunch_out', rawUserId)
+    }, 1500)
+    // 3. Lunch IN: 12:57:29 PM (BREAK IN)
+    setTimeout(() => {
+      triggerTestPunch('lunch_in', rawUserId)
+    }, 3000)
+    // 4. Shift Final OUT: 5:00:00 PM (TIME OUT, recap preserves LATE 1m)
+    setTimeout(() => {
+      triggerTestPunch('normal_out', rawUserId)
+    }, 4500)
+    return
+  }
+
   const mockDate = new Date()
-  let direction: 'IN' | 'OUT' = 'IN'
+  let direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' = 'IN'
   let testFirstInTime: string | undefined = undefined
+  let testFirstInLate: boolean | undefined = undefined
+  let testFirstInLateMinutes: number | undefined = undefined
   testSeq++
 
   switch (scenario) {
@@ -788,38 +821,69 @@ async function triggerTestPunch(
       direction = 'IN'
       break
     case 'late_in':
-      mockDate.setHours(8, 35, (testSeq * 3) % 60, 0) // 8:35 AM -> LATE IN
+      mockDate.setHours(8, 1, 23, 0) // 8:01:23 AM -> LATE IN (1m late)
       direction = 'IN'
+      testFirstInTime = '8:01:23 AM'
+      testFirstInLate = true
+      testFirstInLateMinutes = 1
       break
     case 'ontime_in':
       mockDate.setHours(8, 0, (testSeq * 4) % 60, 0) // 8:00 AM -> ON TIME IN (Minute precision: 8:00:xx AM is ON TIME)
       direction = 'IN'
+      testFirstInTime = '8:00:00 AM'
+      testFirstInLate = false
+      testFirstInLateMinutes = 0
       break
     case 'early_in':
       mockDate.setHours(7, 48, (testSeq * 5) % 60, 0) // 7:48 AM -> EARLY IN
       direction = 'IN'
+      testFirstInTime = '7:48:00 AM'
+      testFirstInLate = false
+      testFirstInLateMinutes = 0
+      break
+    case 'lunch_out':
+      mockDate.setHours(12, 2, 12, 0) // 12:02:12 PM -> BREAK OUT (Lunch OUT)
+      direction = 'BREAK_OUT'
+      testFirstInTime = '8:01:23 AM'
+      testFirstInLate = true
+      testFirstInLateMinutes = 1
+      break
+    case 'lunch_in':
+      mockDate.setHours(12, 57, 29, 0) // 12:57:29 PM -> BREAK IN (Lunch IN)
+      direction = 'BREAK_IN'
+      testFirstInTime = '8:01:23 AM'
+      testFirstInLate = true
+      testFirstInLateMinutes = 1
       break
     case 'normal_out':
-      mockDate.setHours(17, 3, (testSeq * 2) % 60, 0) // 5:03 PM -> TIME OUT (Normal OUT on or after 5pm)
+      mockDate.setHours(17, 0, 0, 0) // 5:00:00 PM -> TIME OUT (Normal OUT on or after 5pm)
       direction = 'OUT'
-      testFirstInTime = '7:52 AM' // Actual morning arrival
+      testFirstInTime = '8:01:23 AM' // Morning arrival preserved
+      testFirstInLate = true
+      testFirstInLateMinutes = 1
       break
     case 'early_out':
       mockDate.setHours(16, 30, (testSeq * 2) % 60, 0) // 4:30 PM -> EARLY OUT (Before 5pm)
       direction = 'OUT'
       testFirstInTime = '7:55 AM' // Actual morning arrival
+      testFirstInLate = false
+      testFirstInLateMinutes = 0
       break
     case 'late_then_out':
       // Test scenario F: employee was late in morning (8:17 AM), now punches OUT at 5:02 PM
       mockDate.setHours(17, 2, (testSeq * 3) % 60, 0)
       direction = 'OUT'
       testFirstInTime = '8:17 AM'
+      testFirstInLate = true
+      testFirstInLateMinutes = 17
       break
     case 'unknown':
       mockDate.setHours(8, 2, (testSeq * 6) % 60, 0)
       direction = 'IN'
       break
   }
+
+  const logState = direction === 'OUT' ? 4 : (direction === 'BREAK_OUT' ? 2 : (direction === 'BREAK_IN' ? 3 : 1))
 
   const log: AttendanceLog = {
     id: `test-punch-${normalizedId}-${Date.now()}-${testSeq}`,
@@ -828,7 +892,7 @@ async function triggerTestPunch(
     employee_id: normalizedId,
     attendance_time: mockDate.toISOString(),
     type: 1,
-    state: direction === 'OUT' ? 4 : 1,
+    state: logState,
     serial_number: '0476141400046',
     device_id: 'dev-1',
     device_name: 'BISMAC BISBIO B-29b',
@@ -846,7 +910,9 @@ async function triggerTestPunch(
     standardIn: '08:00',
     gracePeriod: 0,
     expectedOut: '17:00',
-    firstInTime: testFirstInTime
+    firstInTime: testFirstInTime,
+    firstInLate: testFirstInLate,
+    firstInLateMinutes: testFirstInLateMinutes
   })
 }
 
@@ -1482,12 +1548,12 @@ onUnmounted(() => {
                 <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
                   <Badge
                     :variant="
-                      currentPunch.isLate
+                      (currentPunch.firstInLate || currentPunch.isLate)
                         ? 'destructive'
                         : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
                     "
                     class="px-3.5 py-1 text-xs font-mono font-black uppercase tracking-wider"
-                    :class="currentPunch.isLate ? 'text-white' : ''"
+                    :class="(currentPunch.firstInLate || currentPunch.isLate) ? 'text-white' : ''"
                   >
                     {{ recapResultText }}
                   </Badge>
@@ -1710,12 +1776,42 @@ onUnmounted(() => {
         <Button
           variant="ghost"
           size="sm"
+          class="h-6 px-2 text-[11px] font-mono text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 cursor-pointer"
+          title="Simulate lunch departure (12:02 PM BREAK OUT)"
+          @click="triggerTestPunch('lunch_out', 'user25065')"
+        >
+          <Play class="size-2.5 mr-1 text-amber-600" />
+          <span>Lunch OUT</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-[11px] font-mono text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 cursor-pointer"
+          title="Simulate lunch return (12:57 PM BREAK IN)"
+          @click="triggerTestPunch('lunch_in', 'user25065')"
+        >
+          <Play class="size-2.5 mr-1 text-blue-600" />
+          <span>Lunch IN</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           class="h-6 px-2 text-[11px] font-mono text-primary hover:bg-primary/10 cursor-pointer"
           title="Simulate standard departure"
           @click="triggerTestPunch('normal_out', 'user25065')"
         >
           <Play class="size-2.5 mr-1 text-primary" />
           <span>Simulate OUT</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-[11px] font-mono text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 cursor-pointer font-bold"
+          title="Simulate complete day sequence (8:01 AM Late -> 12:02 PM Lunch OUT -> 12:57 PM Lunch IN -> 5:00 PM OUT)"
+          @click="triggerTestPunch('full_day_sequence', 'user25065')"
+        >
+          <Play class="size-2.5 mr-1 text-indigo-600" />
+          <span>Full Day Sequence</span>
         </Button>
         <Button
           variant="ghost"

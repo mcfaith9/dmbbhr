@@ -278,6 +278,19 @@ const res14 = processPunches(['2026-10-01T07:53:00+08:00'], { ...groupC, manualA
 assert.strictEqual(res14.status, 'Manual Time', 'Scenario 14 failed')
 console.log('✅ Scenario 14: Pending manual adjustment request -> Manual Time')
 
+// 15. GENEMARIE ACEVEDO 4-PUNCH WORKDAY: 8:01:23 AM IN → 12:02:12 PM OUT → 12:57:29 PM IN → 5:00:00 PM OUT
+const res15 = processPunches([
+  '2026-10-01T08:01:23+08:00',
+  '2026-10-01T12:02:12+08:00',
+  '2026-10-01T12:57:29+08:00',
+  '2026-10-01T17:00:00+08:00'
+], groupC)
+assert.strictEqual(res15.status, 'Late', 'Scenario 15: Status must be Late due to 8:01 arrival')
+assert.strictEqual(res15.lateMinutes, 1, 'Scenario 15: Must be late by exactly 1 minute')
+assert.strictEqual(res15.earlyOutMinutes, 0, 'Scenario 15: Must have 0 early out minutes at 5:00 PM')
+assert.strictEqual(res15.hasValidOut, true, 'Scenario 15: Must have valid OUT')
+console.log('✅ Scenario 15: Genemarie Acevedo (8:01:23 IN -> 12:02:12 OUT -> 12:57:29 IN -> 5:00:00 OUT) -> Late 1m, 0m early out')
+
 console.log('\n==================================================')
 console.log('ALL HR SCENARIO TESTS PASSED SUCCESSFULLY! 🎉')
 console.log('==================================================')
