@@ -1191,7 +1191,7 @@ onUnmounted(() => {
     </Transition>
 
     <!-- Top Bar / Kiosk Header (Native DMBBHR Style) -->
-    <header class="border-b bg-card px-4 sm:px-6 lg:px-8 xl:px-10 py-2 sm:py-2.5 lg:py-3 xl:py-3.5 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
+    <header class="px-4 sm:px-6 lg:px-8 xl:px-10 py-2 sm:py-2.5 lg:py-3 xl:py-3.5 flex items-center justify-between gap-3 shrink-0">
       <div class="flex items-center gap-2.5 sm:gap-3.5">
         <div class="flex flex-row flex-wrap items-center gap-12">
           <div class="*:data-[slot=avatar]:ring-background flex -space-x-2 *:data-[slot=avatar]:ring-2">
@@ -1225,13 +1225,8 @@ onUnmounted(() => {
       <!-- Live Clock Display (PC Time Minus 5 Minutes in Asia/Manila) -->
       <div class="flex flex-col items-center justify-center px-3.5 py-0.5 sm:py-1">
         <div class="flex items-center gap-2 leading-none">
-          <span class="font-mono text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-black tracking-tight text-foreground leading-none">
+          <span class="text-3xl font-black tracking-tight text-foreground leading-none">
             {{ currentTimeStr }}
-          </span>
-          <span
-            class="text-[9px] sm:text-[10px] xl:text-xs font-mono px-1.5 sm:px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
-          >
-            DISPLAY TIME
           </span>
         </div>
         <div class="text-xs sm:text-sm xl:text-base text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
@@ -1242,27 +1237,6 @@ onUnmounted(() => {
 
       <!-- Actions & Controls -->
       <div class="flex items-center gap-1.5 sm:gap-2 xl:gap-2.5">
-        <!-- Live Hardware Status Badge -->
-        <div
-          v-if="settings.enabled"
-          class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-muted/50 border text-xs xl:text-sm"
-          title="Hardware Bridge Active: BISMAC BISBIO B-29b (192.168.1.201:4370)"
-        >
-          <span class="relative flex size-2 xl:size-2.5">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span class="relative inline-flex rounded-full size-2 xl:size-2.5 bg-emerald-500"></span>
-          </span>
-          <span class="text-foreground font-mono text-[10px] xl:text-xs font-medium">LISTENING</span>
-        </div>
-        <div
-          v-else
-          class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs xl:text-sm text-amber-700 dark:text-amber-300"
-          title="Punch Display Disabled in System Settings"
-        >
-          <PowerOff class="size-3 xl:size-3.5 text-amber-600" />
-          <span class="font-mono text-[10px] xl:text-xs font-medium">DISABLED</span>
-        </div>
-
         <!-- Development Pause Indicator -->
         <Badge
           v-if="isDisplayPaused"
@@ -1607,7 +1581,7 @@ onUnmounted(() => {
 
               <!-- Exact Punch Time - Bold & Prominent yet Balanced -->
               <div
-                class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-mono font-black tracking-tight leading-none my-0.5 sm:my-1"
+                class="text-5xl font-mono font-black tracking-tight leading-none my-0.5 sm:my-1"
                 :class="hasCustomLateGraphic ? 'text-white' : 'text-foreground'"
               >
                 {{ formatPunchTime(currentPunch.timestamp) }}
