@@ -676,7 +676,7 @@ onUnmounted(() => {
           </span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Master central employee profiles linked by permanent Bio ID. Serves as single source of truth for Attendance, Time Management, and Payroll.
+          Master central employee profiles linked by permanent Bio ID.
         </p>
       </div>
 
@@ -689,7 +689,7 @@ onUnmounted(() => {
           @click="openHrNoticesModal()"
         >
           <Bell class="size-3.5 text-blue-500" />
-          <span class="text-xs">Punch Notices</span>
+          <span class="text-xs">Notices</span>
           <span
             v-if="activeHrNoticesCount > 0"
             class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-blue-600 text-white font-bold"
@@ -717,7 +717,6 @@ onUnmounted(() => {
             @click="exportPeople('xlsx')"
           >
             <Download class="size-3.5" />
-            Excel
           </Button>
           <Button
             variant="ghost"
@@ -726,7 +725,6 @@ onUnmounted(() => {
             @click="exportPeople('csv')"
           >
             <Download class="size-3.5" />
-            CSV
           </Button>
         </div>
       </div>
@@ -919,7 +917,10 @@ onUnmounted(() => {
               <TableCell>
                 <Badge
                   :variant="getStatusBadgeVariant(emp.status)"
-                  class="text-[10px] uppercase font-mono"
+                  :class="[
+                    'text-[10px] uppercase font-mono',
+                    getStatusBadgeVariant(emp.status) === 'destructive' ? 'text-white' : ''
+                  ]"
                 >
                   {{ formatStatusDisplay(emp.status) }}
                 </Badge>
@@ -931,11 +932,11 @@ onUnmounted(() => {
                   <Button
                     variant="ghost"
                     size="sm"
-                    class="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-500/10"
+                    class="h-7 px-2 text-xs gap-1"
                     title="Assign or manage punch notification for this employee"
                     @click="openHrNoticesModal(emp.biometric_user_id)"
                   >
-                    <Bell class="size-3 text-blue-500" />
+                    <Bell class="size-3" />
                     <span>Notice</span>
                   </Button>
                   <Button
