@@ -500,7 +500,7 @@ export class PunchDisplayDirectionResolver {
     } else if (resolvedDir === 'BREAK_OUT') {
       resolvedCategory = 'regular'
       resolvedStatus = 'BREAK OUT'
-      resolvedDetail = 'Lunch / break period started'
+      resolvedDetail = 'BREAK OUT'
       resolvedVariant = 'secondary'
       isEarly = false
       isLate = false
@@ -508,7 +508,7 @@ export class PunchDisplayDirectionResolver {
     } else if (resolvedDir === 'BREAK_IN') {
       resolvedCategory = 'regular'
       resolvedStatus = 'BREAK IN'
-      resolvedDetail = 'Returned from break'
+      resolvedDetail = 'BREAK IN'
       resolvedVariant = 'secondary'
       isEarly = false
       isLate = false
@@ -538,7 +538,7 @@ export class PunchDisplayDirectionResolver {
           diffMinutes = expectedOutMinutes - punchMinutes
           resolvedCategory = 'undertime'
           resolvedStatus = 'EARLY OUT'
-          resolvedDetail = `${formatDuration(diffMinutes)} before scheduled exit`
+          resolvedDetail = `${formatDuration(diffMinutes)} before exit`
           resolvedVariant = 'warning'
           isEarly = false
           isLate = false

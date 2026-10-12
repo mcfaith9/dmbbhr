@@ -1421,10 +1421,10 @@ onUnmounted(() => {
           <!-- Full-Card Backdrop for Late Punches (Always attractive designed layer with dark overlay) -->
           <template v-if="isLateVisualActive">
             <div
-              class="absolute inset-0 bg-cover bg-center sm:bg-[center_60%] bg-no-repeat transition-transform duration-700 pointer-events-none"
+              class="absolute inset-0 bg-cover bg-[75%_center] bg-no-repeat transition-transform duration-700 pointer-events-none"
               :style="{ backgroundImage: `url('${effectiveLateImageUrl}')` }"
             ></div>
-
+            <img class="absolute -right-46 top-1/2 -translate-y-1/2 w-150 z-10" src="/jupeta3.png" />
             <!-- Measured dark vignette scrim ensuring WCAG AAA legibility -->
             <div class="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/85 to-slate-950/75 pointer-events-none"></div>
           </template>
@@ -1471,7 +1471,7 @@ onUnmounted(() => {
             <div class="w-full md:w-44 sm:md:w-52 md:w-60 lg:w-72 xl:w-80 shrink-0 flex flex-col items-center justify-center text-center gap-2 sm:gap-2.5">
               <div class="relative">
                 <div
-                  class="size-28 sm:size-36 md:size-44 lg:size-52 xl:size-60 rounded-2xl sm:rounded-3xl border-4 sm:border-[5px] lg:border-[6px] shadow-2xl overflow-hidden flex items-center justify-center transition-transform"
+                  class="size-70 sm:size-36 md:size-44 lg:size-52 xl:size-70 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex items-center justify-center transition-transform"
                   :class="[
                     isLateVisualActive
                       ? 'shadow-2xl border-white/50 ring-4 ring-rose-500/30'
@@ -1555,7 +1555,7 @@ onUnmounted(() => {
 
               <!-- 2. Attendance Time & Status Banner Card -->
               <div
-                class="rounded-xl sm:rounded-2xl border p-2.5 sm:p-3.5 md:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-4 shadow-xs transition-all"
+                class="rounded-xl w-[75%] sm:rounded-2xl border p-2.5 sm:p-3.5 md:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-4 shadow-xs transition-all"
                 :class="[
                   isLateVisualActive
                     ? 'text-white border-white/20 bg-black/45 backdrop-blur-xs'
@@ -1602,10 +1602,8 @@ onUnmounted(() => {
 
               <!-- 3. Schedule Context or Today's Punch Recap -->
               <!-- When Direction is OUT: Recap strip -->
-              <div
-                v-if="currentPunch.direction === 'OUT'"
-                class="grid grid-cols-3 gap-2 sm:gap-2.5 text-center"
-              >
+              <div v-if="currentPunch.direction === 'OUT'" class="w-[75%]">
+                <div class="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
                 <div
                   class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
                   :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
@@ -1646,40 +1644,43 @@ onUnmounted(() => {
                   </span>
                 </div>
               </div>
+              </div>
 
               <!-- When Direction is NOT OUT: Schedule Context -->
               <div
                 v-else-if="currentSchedule"
-                class="grid grid-cols-3 gap-2 sm:gap-2.5 text-center"
+                class="w-[75%]"
               >
-                <div
-                  class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
-                >
-                  <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Scheduled In</span>
-                  <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
-                    {{ currentSchedule.standardIn }}
-                  </span>
-                </div>
+                <div class="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
+                  <div
+                    class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                    :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                  >
+                    <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Scheduled In</span>
+                    <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
+                      {{ currentSchedule.standardIn }}
+                    </span>
+                  </div>
 
-                <div
-                  class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
-                >
-                  <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Expected Out</span>
-                  <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
-                    {{ currentSchedule.expectedOut }}
-                  </span>
-                </div>
+                  <div
+                    class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                    :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                  >
+                    <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Expected Out</span>
+                    <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
+                      {{ currentSchedule.expectedOut }}
+                    </span>
+                  </div>
 
-                <div
-                  class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
-                >
-                  <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Grace Period</span>
-                  <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
-                    {{ currentSchedule.gracePeriod }} mins
-                  </span>
+                  <div
+                    class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                    :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                  >
+                    <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Grace Period</span>
+                    <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
+                      {{ currentSchedule.gracePeriod }} mins
+                    </span>
+                  </div>
                 </div>
               </div>
 
