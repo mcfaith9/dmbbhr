@@ -1193,18 +1193,57 @@ onUnmounted(() => {
 
           <!-- Standard Announcement / Reminder Layout -->
           <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4 flex-1 flex flex-col items-center justify-center">
-            <h3 class="text-3xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
+            <h3 class="font-googlesans text-3xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
               {{ currentAnnouncement.title }}
             </h3>
-            <p class="text-lg sm:text-2xl md:text-3xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
+            <p class="font-googlesans text-lg sm:text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
               {{ currentAnnouncement.message }}
             </p>
           </div>
 
-          <!-- Subtle Footer Priority Notice -->
-          <div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t text-center text-xs sm:text-sm font-mono text-muted-foreground/75 flex items-center justify-center gap-2 shrink-0">
-            <Fingerprint class="size-4 sm:size-5 text-primary animate-pulse" />
-            <span>Biometric scan immediately takes priority</span>
+          <!-- Company Footer -->
+          <div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t flex flex-col items-center justify-center gap-3 shrink-0">
+            <!-- Company Logos & Taglines -->
+            <div class="flex flex-row flex-wrap items-center justify-center gap-6 sm:gap-12">
+              <!-- DMBB -->
+              <div class="flex items-center gap-2.5">
+                <Avatar class="size-8 rounded-lg">
+                  <AvatarImage src="/dmbblogo.png" alt="DMBB Logo" />
+                  <AvatarFallback>DMBB</AvatarFallback>
+                </Avatar>
+
+                <div class="flex flex-col">
+                  <span class="text-xs sm:text-sm font-bold tracking-wide text-foreground">
+                    DMBB
+                  </span>
+                  <span class="text-[9px] sm:text-[10px] text-muted-foreground">
+                    Excellence in Service
+                  </span>
+                </div>
+              </div>
+
+              <!-- DBB -->
+              <div class="flex items-center gap-2.5">
+                <Avatar class="size-8 rounded-lg">
+                  <AvatarImage src="/dbblogo.png" alt="DBB Logo" />
+                  <AvatarFallback>DBB</AvatarFallback>
+                </Avatar>
+
+                <div class="flex flex-col">
+                  <span class="text-xs sm:text-sm font-bold tracking-wide text-foreground">
+                    DBB
+                  </span>
+                  <span class="text-[9px] sm:text-[10px] text-muted-foreground">
+                    Commitment to Quality
+                  </span>
+                </div>
+              </div>
+            </div>
+            <!-- Biometric Notice -->
+            <div class="flex items-center justify-center gap-2 text-[10px] sm:text-xs text-muted-foreground/75 text-center">
+              <Fingerprint class="size-3.5 sm:size-4 text-primary shrink-0" />
+              <span>Biometric Verification • Real-Time Attendance Monitoring</span>
+            </div>
           </div>
         </div>
       </div>
