@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Server,
@@ -33,6 +33,8 @@ import { liveAttendanceService } from '@/services/liveAttendance'
 import { punchDisplayService } from '@/services/punchDisplay'
 import { punchVoiceService } from '@/services/punchVoiceService'
 import { announcementService, type AnnouncementItem, type AnnouncementType } from '@/services/announcements'
+import { hrNoticeService, isNoticeActive } from '@/services/hrNotices'
+import HrNoticeManagerDialog from '@/components/HrNoticeManagerDialog.vue'
 import { authService } from '@/services/auth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -63,6 +65,13 @@ const deviceStatus = liveAttendanceService.deviceStatus
 
 type SystemTab = 'punch-display' | 'devices' | 'network' | 'integrations'
 const activeTab = ref<SystemTab>('punch-display')
+
+// HR Punch Notices dialog state
+const showHrNoticeDialog = ref(false)
+const hrNotices = hrNoticeService.notices
+const activeHrNoticesCount = computed(() => {
+  return hrNotices.value.filter(n => isNoticeActive(n)).length
+})
 
 // Punch display settings local state
 const lateGraphicUrlInput = ref(punchDisplayService.settings.value.customLateImageUrl || '')
@@ -768,6 +777,32 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- Employee-Specific Punch Notifications Section (HR Notice) -->
+        <div class="p-4 sm:p-5 rounded-xl border border-blue-500/30 bg-blue-500/5 space-y-3 shadow-2xs">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <Bell class="size-4 text-blue-500" />
+                <Label class="text-sm font-bold text-foreground">Employee Biometric Punch Notifications</Label>
+                <Badge variant="outline" class="text-[10px] font-mono px-1.5 py-0 border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/10">
+                  {{ activeHrNoticesCount }} Active
+                </Badge>
+              </div>
+              <p class="text-xs text-muted-foreground">
+                Assign personalized notices to specific employees. When that employee punches their fingerprint, their HR notice automatically displays on the Punch Display.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              class="h-8 gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white shrink-0 shadow-xs font-medium cursor-pointer"
+              @click="showHrNoticeDialog = true"
+            >
+              <Bell class="size-3.5" />
+              <span>Manage Punch Notices</span>
+            </Button>
+          </div>
+        </div>
+
         <!-- 6. Announcements & Reminders Management Section -->
         <div class="p-4 sm:p-5 rounded-xl border bg-card space-y-4 shadow-2xs">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
@@ -1272,5 +1307,8 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- HR-to-Employee Punch Notifications Manager Dialog -->
+    <HrNoticeManagerDialog v-model:open="showHrNoticeDialog" />
   </div>
 </template>

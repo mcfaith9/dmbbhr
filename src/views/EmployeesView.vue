@@ -28,7 +28,8 @@ import {
   Banknote,
   Calculator,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Bell
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -38,6 +39,9 @@ import {
   type PeopleImportRowItem,
   type PeopleImportApplyResult
 } from '@/services/employees'
+import { hrNoticeService, isNoticeActive } from '@/services/hrNotices'
+import { normalizeBioId } from '@/services/punchDisplay'
+import HrNoticeManagerDialog from '@/components/HrNoticeManagerDialog.vue'
 import type { Employee, EmployeeLocation, EmploymentStatus, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -64,6 +68,19 @@ const selectedLocation = ref<string>('all')
 const selectedWorkGroup = ref<string>('all')
 const selectedDepartment = ref<string>('all')
 const selectedStatus = ref<string>('all')
+
+// HR Punch Notices Modal state
+const showHrNoticesModal = ref(false)
+const targetNoticeBioId = ref('')
+const hrNotices = hrNoticeService.notices
+const activeHrNoticesCount = computed(() => {
+  return hrNotices.value.filter(n => isNoticeActive(n)).length
+})
+
+function openHrNoticesModal(bioId?: string) {
+  targetNoticeBioId.value = bioId ? normalizeBioId(bioId) : ''
+  showHrNoticesModal.value = true
+}
 
 // Pagination state
 const currentPage = ref(1)
@@ -666,6 +683,22 @@ onUnmounted(() => {
       <!-- Action Buttons -->
       <div class="flex items-center gap-2 flex-wrap">
         <Button
+          variant="outline"
+          size="sm"
+          class="h-8 gap-1.5 font-medium border-blue-500/40 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 shadow-xs"
+          @click="openHrNoticesModal()"
+        >
+          <Bell class="size-3.5 text-blue-500" />
+          <span class="text-xs">Punch Notices</span>
+          <span
+            v-if="activeHrNoticesCount > 0"
+            class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-blue-600 text-white font-bold"
+          >
+            {{ activeHrNoticesCount }}
+          </span>
+        </Button>
+
+        <Button
           variant="default"
           size="sm"
           class="h-8 gap-1.5 font-medium shadow-xs"
@@ -895,6 +928,16 @@ onUnmounted(() => {
               <!-- Actions -->
               <TableCell class="text-right" @click.stop>
                 <div class="flex items-center justify-end gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-500/10"
+                    title="Assign or manage punch notification for this employee"
+                    @click="openHrNoticesModal(emp.biometric_user_id)"
+                  >
+                    <Bell class="size-3 text-blue-500" />
+                    <span>Notice</span>
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -2074,6 +2117,16 @@ onUnmounted(() => {
                       <CheckCircle2 class="size-3 text-primary" />
                       <span>View Daily Attendance</span>
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      class="h-7 text-xs gap-1.5 text-blue-600 dark:text-blue-400 border-blue-500/30 hover:bg-blue-500/10"
+                      @click="openHrNoticesModal(selectedEmployee?.biometric_user_id || formBioId)"
+                    >
+                      <Bell class="size-3 text-blue-500" />
+                      <span>Assign Punch Notice</span>
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -2511,5 +2564,11 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- HR-to-Employee Punch Notifications Manager Dialog -->
+    <HrNoticeManagerDialog
+      v-model:open="showHrNoticesModal"
+      :target-bio-id="targetNoticeBioId"
+    />
   </div>
 </template>

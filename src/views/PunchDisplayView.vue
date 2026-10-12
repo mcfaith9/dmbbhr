@@ -19,13 +19,15 @@ import {
   Bell,
   Cake,
   X,
-  Sparkles
+  Sparkles,
+  UserCheck
 } from '@lucide/vue'
 import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
 import { punchVoiceService } from '@/services/punchVoiceService'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
 import { announcementService, type AnnouncementItem } from '@/services/announcements'
+import { hrNoticeService, isNoticeActive, type HrNotice } from '@/services/hrNotices'
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -365,8 +367,19 @@ function setupAnnouncementPresentation(item?: AnnouncementItem | null) {
   }
 }
 
+// Pending HR Notice for Punched Employee
+const pendingHrNoticeForPunch = ref<{
+  notice: HrNotice
+  punchEventId: string
+  employeeName: string
+  bioId: string
+  department?: string
+  photoUrl?: string
+} | null>(null)
+const lastNoticePunchEventId = ref<string>('')
+
 const activeAnnouncements = computed(() => {
-  return announcementService.announcements.value.filter(a => a.enabled)
+  return announcementService.announcements.value.filter(a => a.enabled && a.type !== 'hr_notice')
 })
 
 function stopAnnouncementSequence() {
@@ -606,6 +619,21 @@ function triggerBirthdayPreview() {
   showAnnouncementPreview(bdayItem)
 }
 
+function previewSampleHrNotice() {
+  const sampleNotice: AnnouncementItem = {
+    id: `sample-hrn-${Date.now()}`,
+    type: 'hr_notice',
+    title: 'HR NOTICE',
+    employeeName: 'Marc Louie',
+    bioId: '25065',
+    department: 'Operations',
+    photoUrl: '/employee-photos/25065.jpg',
+    message: 'Marc Louie, please see HR office.',
+    enabled: true
+  }
+  showAnnouncementPreview(sampleNotice)
+}
+
 // Lightweight, graceful confetti burst for qualifying on-time/early IN punches
 function triggerSubtleConfetti() {
   if (!settings.value.confettiEnabled || !canvasRef.value) return
@@ -716,7 +744,42 @@ function startDisplayTimer() {
       currentPunch.value = null
       cancelDisplayTimer()
       resetIdleTimer()
+      triggerPendingHrNoticeIfAvailable()
     }, totalMs)
+  }
+}
+
+function triggerPendingHrNoticeIfAvailable() {
+  if (!pendingHrNoticeForPunch.value) return
+
+  const item = pendingHrNoticeForPunch.value
+  pendingHrNoticeForPunch.value = null
+  lastNoticePunchEventId.value = item.punchEventId
+
+  // Double check notice is still active (not expired or deactivated in meantime)
+  if (!isNoticeActive(item.notice)) return
+
+  const noticeAnnouncementItem: AnnouncementItem = {
+    id: `punch-hrn-${item.notice.id}-${Date.now()}`,
+    type: 'hr_notice',
+    title: 'HR NOTICE',
+    message: item.notice.message,
+    employeeName: item.employeeName,
+    bioId: item.bioId,
+    department: item.department,
+    photoUrl: item.photoUrl,
+    enabled: true
+  }
+
+  showAnnouncementPreview(noticeAnnouncementItem)
+
+  if (settings.value.punchDisplayVoiceEnabled) {
+    punchVoiceService.speak(`Notice for ${item.employeeName}: ${item.notice.message}`, {
+      volume: settings.value.punchDisplayVoiceVolume,
+      rate: settings.value.punchDisplayVoiceRate,
+      pitch: settings.value.punchDisplayVoicePitch,
+      voiceURI: settings.value.punchDisplayVoiceURI
+    })
   }
 }
 
@@ -779,6 +842,27 @@ watch(
 
     const punch = currentPunch.value
 
+    // Check whether the punched employee has an active HR notice
+    if (punch?.bioId) {
+      const activeNotice = hrNoticeService.getActiveNoticeForBioId(punch.bioId)
+      if (activeNotice && isNoticeActive(activeNotice)) {
+        if (lastNoticePunchEventId.value !== punch.eventId) {
+          pendingHrNoticeForPunch.value = {
+            notice: activeNotice,
+            punchEventId: punch.eventId,
+            employeeName: punch.employeeName || activeNotice.employeeName,
+            bioId: punch.bioId,
+            department: punch.department || activeNotice.department,
+            photoUrl: punch.photoUrl || activeNotice.photoUrl
+          }
+        }
+      } else {
+        pendingHrNoticeForPunch.value = null
+      }
+    } else {
+      pendingHrNoticeForPunch.value = null
+    }
+
     // Trigger celebration only for qualifying positive IN (early / on-time)
     if (
       settings.value.confettiEnabled &&
@@ -804,7 +888,7 @@ let testSeq = 0
 
 // Interactive Test Punch simulation for demo & comprehensive test verification
 async function triggerTestPunch(
-  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'lunch_out' | 'lunch_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown',
+  scenario: 'late_in' | 'ontime_in' | 'early_in' | 'lunch_out' | 'lunch_in' | 'normal_out' | 'early_out' | 'late_then_out' | 'same_employee' | 'unknown' | 'hr_notice_punch',
   rawUserId: string = 'user25065'
 ) {
   if (employees.value.length === 0) {
@@ -906,6 +990,23 @@ async function triggerTestPunch(
     case 'unknown':
       mockDate.setHours(8, 2, (testSeq * 6) % 60, 0)
       direction = 'IN'
+      break
+    case 'hr_notice_punch':
+      // Ensure target employee has an active notice for this test demo if none exists
+      if (!hrNoticeService.getActiveNoticeForBioId(normalizedId)) {
+        await hrNoticeService.saveNotice({
+          bioId: normalizedId,
+          employeeName: foundEmp?.full_name || 'Marc Louie',
+          department: empDept,
+          message: 'Marc Louie, please see HR office.',
+          enabled: true
+        })
+      }
+      mockDate.setHours(8, 0, (testSeq * 4) % 60, 0)
+      direction = 'IN'
+      testFirstInTime = '8:00:00 AM'
+      testFirstInLate = false
+      testFirstInLateMinutes = 0
       break
   }
 
@@ -1064,7 +1165,9 @@ onUnmounted(() => {
               ? 'border-rose-500/40 bg-gradient-to-b from-card via-card to-rose-500/10 shadow-rose-950/25 h-[580px] sm:h-[620px] md:h-[660px] max-h-[calc(100vh-2rem)] flex flex-col justify-between'
               : currentAnnouncement.type === 'reminder'
                 ? 'border-amber-500/40 bg-gradient-to-b from-card via-card to-amber-500/10 shadow-amber-950/25'
-                : 'border-primary/40 bg-gradient-to-b from-card via-card to-primary/10 shadow-primary/15'
+                : currentAnnouncement.type === 'hr_notice'
+                  ? 'border-blue-500/40 bg-gradient-to-b from-card via-card to-blue-500/10 shadow-blue-950/25'
+                  : 'border-primary/40 bg-gradient-to-b from-card via-card to-primary/10 shadow-primary/15'
           ]"
         >
           <!-- Subtle Top Accent Glow Bar -->
@@ -1075,7 +1178,9 @@ onUnmounted(() => {
                 ? 'bg-gradient-to-r from-rose-500 via-pink-400 to-amber-400'
                 : currentAnnouncement.type === 'reminder'
                   ? 'bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300'
-                  : 'bg-gradient-to-r from-primary via-blue-500 to-emerald-400'
+                  : currentAnnouncement.type === 'hr_notice'
+                    ? 'bg-gradient-to-r from-blue-600 via-indigo-500 to-sky-400'
+                    : 'bg-gradient-to-r from-primary via-blue-500 to-emerald-400'
             ]"
           ></div>
 
@@ -1098,13 +1203,16 @@ onUnmounted(() => {
                   ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
                   : currentAnnouncement.type === 'reminder'
                     ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30'
-                    : 'bg-primary/15 text-primary border-primary/30'
+                    : currentAnnouncement.type === 'hr_notice'
+                      ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30'
+                      : 'bg-primary/15 text-primary border-primary/30'
               ]"
             >
-              <Cake v-if="currentAnnouncement.type === 'birthday'" class="size-4" />
+              <UserCheck v-if="currentAnnouncement.type === 'hr_notice'" class="size-4" />
+              <Cake v-else-if="currentAnnouncement.type === 'birthday'" class="size-4" />
               <Bell v-else-if="currentAnnouncement.type === 'reminder'" class="size-4" />
               <Megaphone v-else class="size-4" />
-              <span>{{ currentAnnouncement.type === 'birthday' ? 'HAPPY BIRTHDAY!' : currentAnnouncement.type.toUpperCase() }}</span>
+              <span>{{ currentAnnouncement.type === 'birthday' ? 'HAPPY BIRTHDAY!' : (currentAnnouncement.type === 'hr_notice' ? 'HR NOTICE' : currentAnnouncement.type.toUpperCase()) }}</span>
             </span>
           </div>
 
@@ -1189,6 +1297,55 @@ onUnmounted(() => {
                 </p>
               </div>
             </Transition>
+          </div>
+
+          <!-- HR Notice Specific Presentation (Personalized Employee Notice) -->
+          <div
+            v-else-if="currentAnnouncement.type === 'hr_notice'"
+            class="text-center space-y-4 sm:space-y-6 py-2 sm:py-5 flex-1 flex flex-col items-center justify-center max-w-3xl mx-auto"
+          >
+            <!-- Targeted Employee Avatar with Notification Ring -->
+            <div class="relative py-1 shrink-0">
+              <Avatar class="size-28 sm:size-36 border-4 sm:border-6 border-blue-500/50 shadow-2xl ring-8 ring-blue-500/20">
+                <AvatarImage
+                  v-if="currentAnnouncement.photoUrl"
+                  :src="currentAnnouncement.photoUrl"
+                  :alt="currentAnnouncement.employeeName"
+                />
+                <AvatarFallback class="bg-blue-500/20 text-blue-600 dark:text-blue-400 text-3xl sm:text-4xl font-black">
+                  {{ (currentAnnouncement.employeeName || 'E').charAt(0) }}
+                </AvatarFallback>
+              </Avatar>
+              <div class="absolute -bottom-1 -right-1 bg-blue-600 text-white p-2 rounded-full shadow-lg">
+                <Bell class="size-4 sm:size-5" />
+              </div>
+            </div>
+
+            <!-- Targeted Employee Name and Department/Bio ID -->
+            <div class="space-y-1 sm:space-y-1.5">
+              <div class="text-xs sm:text-sm font-mono uppercase tracking-widest text-blue-600 dark:text-blue-400 font-bold">
+                Notice for Employee
+              </div>
+              <h3 class="font-googlesans text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-foreground leading-tight">
+                {{ currentAnnouncement.employeeName }}
+              </h3>
+              <div class="flex items-center justify-center gap-2 text-xs sm:text-sm font-mono text-muted-foreground font-medium">
+                <span v-if="currentAnnouncement.department">{{ currentAnnouncement.department }}</span>
+                <span v-if="currentAnnouncement.department && currentAnnouncement.bioId">•</span>
+                <span v-if="currentAnnouncement.bioId">Bio ID: {{ currentAnnouncement.bioId }}</span>
+              </div>
+            </div>
+
+            <!-- The Notification Message Card -->
+            <div class="w-full rounded-2xl border-2 border-blue-500/30 bg-blue-500/10 px-6 py-4 sm:px-8 sm:py-5 shadow-inner">
+              <p class="font-googlesans text-xl sm:text-2xl md:text-3xl text-foreground font-bold tracking-tight leading-snug">
+                "{{ currentAnnouncement.message }}"
+              </p>
+            </div>
+
+            <p class="text-xs sm:text-sm text-muted-foreground font-medium">
+              Official notice from Human Resources. Please attend to this promptly.
+            </p>
           </div>
 
           <!-- Standard Announcement / Reminder Layout -->
@@ -1393,6 +1550,13 @@ onUnmounted(() => {
                 <span class="text-[10px] text-muted-foreground">4:30 PM Early Departure</span>
               </div>
             </DropdownMenuItem>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('hr_notice_punch', 'user25065')">
+              <Bell class="size-3.5 text-blue-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">HR Notice Punch</span>
+                <span class="text-[10px] text-muted-foreground">Punch -> HR Notice popup</span>
+              </div>
+            </DropdownMenuItem>
             <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerTestPunch('unknown', 'user99999')">
               <Play class="size-3.5 text-muted-foreground shrink-0" />
               <div class="flex flex-col">
@@ -1404,6 +1568,13 @@ onUnmounted(() => {
             <DropdownMenuLabel class="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
               Kiosk Overlays & Previews
             </DropdownMenuLabel>
+            <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="previewSampleHrNotice()">
+              <Bell class="size-3.5 text-blue-600 shrink-0" />
+              <div class="flex flex-col">
+                <span class="font-bold text-foreground">Preview HR Notice</span>
+                <span class="text-[10px] text-muted-foreground">Targeted employee notice modal</span>
+              </div>
+            </DropdownMenuItem>
             <DropdownMenuItem class="cursor-pointer gap-2 py-1.5" @click="triggerBirthdayPreview()">
               <Cake class="size-3.5 text-rose-600 shrink-0" />
               <div class="flex flex-col">

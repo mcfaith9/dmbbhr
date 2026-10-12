@@ -208,6 +208,20 @@ export interface ManualAttendanceHistoryRecord {
   processedAt: string
 }
 
+export interface HrNoticeRecord {
+  id: string
+  bioId: string // normalized target employee Bio ID
+  employeeName: string
+  department?: string
+  photoUrl?: string
+  message: string
+  expiresAt?: string | null // ISO date string or null
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  createdBy?: string
+}
+
 export class DMBBHRDatabase extends Dexie {
   workGroups!: Table<WorkGroupRecord, string>
   biometricPunches!: Table<BiometricPunchRecord, string>
@@ -220,6 +234,7 @@ export class DMBBHRDatabase extends Dexie {
   importJobs!: Table<ImportJobRecord, string>
   manualAdjustments!: Table<ManualAttendanceRecord, string>
   manualAttendanceHistory!: Table<ManualAttendanceHistoryRecord, string>
+  hrNotices!: Table<HrNoticeRecord, string>
 
   constructor() {
     super('DMBBHR_LocalDB')
@@ -240,6 +255,10 @@ export class DMBBHRDatabase extends Dexie {
 
     this.version(6).stores({
       manualAttendanceHistory: 'id, requestId, employeeId, attendanceDate, status, processedAt, [status+processedAt]'
+    })
+
+    this.version(7).stores({
+      hrNotices: 'id, bioId, enabled, createdAt, [bioId+enabled]'
     })
   }
 }

@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-export type AnnouncementType = 'announcement' | 'reminder' | 'birthday'
+export type AnnouncementType = 'announcement' | 'reminder' | 'birthday' | 'hr_notice'
 
 export interface AnnouncementItem {
   id: string
@@ -56,7 +56,9 @@ export function toPlainAnnouncement(raw: any): AnnouncementItem | null {
 
   const rawType = String(raw.type || 'announcement').toLowerCase().trim()
   const cleanType: AnnouncementType =
-    rawType === 'reminder' ? 'reminder' : (rawType === 'birthday' ? 'birthday' : 'announcement')
+    rawType === 'reminder' ? 'reminder' :
+    (rawType === 'birthday' ? 'birthday' :
+    (rawType === 'hr_notice' ? 'hr_notice' : 'announcement'))
 
   return {
     id: String(raw.id || `ann-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
