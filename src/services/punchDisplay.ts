@@ -26,6 +26,7 @@ export interface CompactRecentPunch {
   firstInTime?: string
   firstInLate?: boolean
   firstInLateMinutes?: number
+  photoUrl?: string
 }
 
 export interface PunchDisplayEvent {
@@ -617,7 +618,7 @@ class PunchDisplayService {
   public isChannelSupported = typeof window !== 'undefined' && 'BroadcastChannel' in window
   public currentPunch = ref<PunchDisplayEvent | null>(null)
   
-  // Maximum 7 recent punches for visual lineup
+  // Maximum 5 recent punches for visual lineup
   public recentPunches = ref<CompactRecentPunch[]>([])
   public punchHistory = ref<CompactRecentPunch[]>([]) // alias for backward compatibility
 
@@ -1023,6 +1024,7 @@ class PunchDisplayService {
       eventId: event.eventId || event.id,
       employeeName: event.employeeName,
       bioId: event.bioId || event.userId,
+      photoUrl: event.photoUrl,
       direction: event.stateLabel,
       time: event.time || this.formatTimeDisplay(event.timestamp),
       date: event.date || this.formatDateDisplay(event.timestamp),
@@ -1034,12 +1036,12 @@ class PunchDisplayService {
       firstInLateMinutes: event.firstInLateMinutes
     }
 
-    // Immediately prepend incoming punch to Recent Punches (capped strictly at 7 entries)
+    // Immediately prepend incoming punch to Recent Punches (capped strictly at 5 entries)
     // Filter out any matching eventId / id to prevent double-counting across multi-channel broadcasts
     this.recentPunches.value = [
       compactIncoming,
       ...this.recentPunches.value.filter(p => p.id !== compactIncoming.id && p.eventId !== compactIncoming.eventId)
-    ].slice(0, 7)
+    ].slice(0, 5)
 
     // Always replace current punch with a fresh object reference for the hero display
     this.currentPunch.value = { ...event }
@@ -1061,11 +1063,11 @@ class PunchDisplayService {
       const punchesToday = await punchRepository.getPunchesByDate(todayStr)
       if (punchesToday.length === 0) return
 
-      // Sort descending (newest first) and take the latest up to 7
+      // Sort descending (newest first) and take the latest up to 5
       const sorted = [...punchesToday].sort(
         (a, b) => new Date(b.attendance_time).getTime() - new Date(a.attendance_time).getTime()
       )
-      const latest = sorted.slice(0, 7)
+      const latest = sorted.slice(0, 5)
 
       const compactList: CompactRecentPunch[] = latest.map(p => {
         const stateNum = Number(p.state ?? 1)
@@ -1099,11 +1101,13 @@ class PunchDisplayService {
           '17:00',
           dir === 'IN'
         )
+        const normalizedBio = normalizeBioId(p.user_id)
         return {
           id: p.id,
           eventId: p.id,
           employeeName: p.employee_name || `User ${p.user_id}`,
-          bioId: normalizeBioId(p.user_id),
+          bioId: normalizedBio,
+          photoUrl: normalizedBio ? `/employee-photos/${normalizedBio}.jpg` : undefined,
           direction: stateInfo.label,
           time: this.formatTimeDisplay(p.attendance_time),
           date: this.formatDateDisplay(p.attendance_time),

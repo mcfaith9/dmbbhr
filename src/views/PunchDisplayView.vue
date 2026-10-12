@@ -51,6 +51,23 @@ const isFullscreen = ref(false)
 const employees = ref<Employee[]>([])
 const workGroups = ref<WorkGroup[]>([])
 
+// Display exactly 5 recent punch entries (5/5), ordered newest to oldest
+const displayedRecentPunches = computed(() => {
+  return recentPunches.value.slice(0, 5)
+})
+
+// Employee profile photo resolution reusing directory and fallback
+function getEmployeePhoto(bioId?: string, punchPhotoUrl?: string): string {
+  if (punchPhotoUrl && punchPhotoUrl.trim()) return punchPhotoUrl.trim()
+  if (!bioId) return ''
+  const normalized = normalizeBioId(bioId)
+  const emp = employees.value.find(
+    e => e.biometric_user_id === normalized || normalizeBioId(e.biometric_user_id) === normalized
+  )
+  if (emp?.photo && emp.photo.trim()) return emp.photo.trim()
+  return normalized ? `/employee-photos/${normalized}.jpg` : ''
+}
+
 // Real-time Clock in Manila / Local Time
 const currentTimeStr = ref('')
 const currentDateStr = ref('')
@@ -1743,7 +1760,7 @@ onUnmounted(() => {
       </section>
 
       <!-- Bottom / Session Stream: Recent Punches Panel (Horizontal Deck) -->
-      <aside class="w-full bg-card text-card-foreground border rounded-xl sm:rounded-2xl lg:rounded-3xl shadow-sm p-2 sm:p-2.5 md:p-3 shrink-0 flex flex-col justify-between overflow-hidden h-24 sm:h-28 md:h-32 lg:h-34 xl:h-36">
+      <aside class="w-full bg-card text-card-foreground border rounded-xl sm:rounded-2xl lg:rounded-3xl shadow-sm p-2 sm:p-2.5 md:p-3 shrink-0 flex flex-col justify-between overflow-hidden h-24 sm:h-28 md:h-30 lg:h-32 xl:h-34">
         <div class="flex items-center justify-between px-1.5 pb-1 border-b shrink-0">
           <div class="flex items-center gap-2">
             <History class="size-3.5 sm:size-4 text-primary" />
@@ -1752,37 +1769,62 @@ onUnmounted(() => {
             </h4>
           </div>
           <Badge variant="outline" class="text-[10px] sm:text-xs font-mono font-bold px-1.5 py-0">
-            {{ recentPunches.length }} / 7
+            {{ displayedRecentPunches.length }} / 5
           </Badge>
         </div>
 
         <!-- Empty state -->
-        <div v-if="recentPunches.length === 0" class="flex-1 flex items-center justify-center text-muted-foreground gap-2 text-xs sm:text-sm">
+        <div v-if="displayedRecentPunches.length === 0" class="flex-1 flex items-center justify-center text-muted-foreground gap-2 text-xs sm:text-sm">
           <Clock class="size-3.5 sm:size-4 text-muted-foreground/60" />
           <span>No recent punches recorded yet today.</span>
         </div>
 
-        <!-- Horizontal row of recent punch cards -->
-        <div v-else class="flex-1 min-h-0 flex items-center gap-2 sm:gap-2.5 md:gap-3 overflow-x-auto overflow-y-hidden pt-1 pb-0.5 px-0.5">
+        <!-- Horizontal row of recent punch cards: exactly 5 items, newest to oldest, zero overflow -->
+        <div v-else class="flex-1 min-h-0 flex items-stretch gap-1.5 sm:gap-2 md:gap-2.5 lg:gap-3 w-full h-full overflow-hidden pt-1 pb-0.5 px-0.5">
           <div
-            v-for="punch in recentPunches"
+            v-for="punch in displayedRecentPunches"
             :key="punch.eventId || punch.id"
-            class="h-full min-w-[170px] sm:min-w-[190px] md:min-w-[210px] max-w-[250px] p-1.5 sm:p-2 rounded-lg sm:rounded-xl border bg-muted/20 hover:bg-muted/35 transition-colors flex items-center justify-between gap-2 shrink-0 shadow-2xs"
+            class="h-full flex-1 min-w-0 p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl border bg-muted/20 hover:bg-muted/35 transition-colors flex items-center justify-between gap-1.5 sm:gap-2 md:gap-2.5 shadow-2xs overflow-hidden"
           >
-            <div class="min-w-0 flex-1">
-              <div class="font-bold text-foreground text-xs sm:text-sm truncate">
-                {{ punch.employeeName }}
-              </div>
-              <div class="text-[10px] sm:text-xs text-muted-foreground flex items-center gap-1 font-mono mt-0.5">
-                <span>Bio {{ punch.bioId }}</span>
-                <span>•</span>
-                <span class="text-foreground font-semibold">{{ punch.time }}</span>
+            <!-- Left Side: Profile Photo & Employee Identity -->
+            <div class="flex items-center gap-1.5 sm:gap-2 md:gap-2.5 min-w-0 flex-1">
+              <!-- Profile Photo / Fallback Avatar -->
+              <Avatar class="size-8 sm:size-9 md:size-10 lg:size-11 rounded-lg sm:rounded-xl shrink-0 overflow-hidden border border-border/60 bg-muted/40 ring-1 ring-border/40">
+                <AvatarImage
+                  v-if="Boolean(getEmployeePhoto(punch.bioId, punch.photoUrl))"
+                  :src="getEmployeePhoto(punch.bioId, punch.photoUrl)"
+                  :alt="punch.employeeName"
+                  class="size-full object-cover"
+                />
+                <AvatarFallback class="size-full rounded-lg sm:rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
+                  <User class="size-3.5 sm:size-4 md:size-4.5 text-muted-foreground/70" />
+                </AvatarFallback>
+              </Avatar>
+
+              <!-- Name and punch details -->
+              <div class="min-w-0 flex-1 flex flex-col justify-center">
+                <div
+                  class="font-bold text-foreground text-[11px] sm:text-xs md:text-sm truncate leading-snug"
+                  :title="punch.employeeName"
+                >
+                  {{ punch.employeeName }}
+                </div>
+                <div class="text-[9px] sm:text-[10px] md:text-[11px] text-muted-foreground flex items-center gap-1 font-mono truncate mt-0.5">
+                  <span class="truncate">Bio {{ punch.bioId }}</span>
+                  <span class="opacity-60 shrink-0">•</span>
+                  <span class="text-foreground font-semibold shrink-0">{{ punch.time }}</span>
+                </div>
               </div>
             </div>
 
+            <!-- Right Side: Status Badge -->
             <Badge
-              :variant="punch.statusVariant === 'destructive' && settings.lateVisualEnabled ? 'destructive' : (punch.statusVariant === 'warning' ? 'warning' : 'success')"
-              class="text-[9px] sm:text-[10px] uppercase font-mono px-1.5 py-0.5 font-bold shrink-0"
+              :variant="
+                punch.statusVariant === 'destructive' && settings.lateVisualEnabled
+                  ? 'destructive'
+                  : (punch.statusVariant === 'warning' ? 'warning' : (punch.statusVariant === 'secondary' ? 'secondary' : 'success'))
+              "
+              class="text-[8.5px] sm:text-[9px] md:text-[10px] uppercase font-mono px-1 sm:px-1.5 py-0.5 font-bold shrink-0 tracking-tight text-center"
             >
               {{ punch.status }}
             </Badge>
