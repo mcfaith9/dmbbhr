@@ -1092,7 +1092,7 @@ onUnmounted(() => {
           <!-- Type Header Badge (Large TV Scale) -->
           <div class="flex items-center justify-center mb-4 sm:mb-6 shrink-0">
             <span
-              class="px-5 sm:px-6 py-2 sm:py-2.5 rounded-full text-xs sm:text-sm md:text-base font-mono font-black uppercase tracking-widest flex items-center gap-2 sm:gap-2.5 border shadow-sm"
+              class="px-3 py-2 rounded-full text-xs sm:text-sm md:text-base font-mono font-black uppercase tracking-widest flex items-center gap-2 sm:gap-2.5 border shadow-sm"
               :class="[
                 currentAnnouncement.type === 'birthday'
                   ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
@@ -1101,9 +1101,9 @@ onUnmounted(() => {
                     : 'bg-primary/15 text-primary border-primary/30'
               ]"
             >
-              <Cake v-if="currentAnnouncement.type === 'birthday'" class="size-5 sm:size-6" />
-              <Bell v-else-if="currentAnnouncement.type === 'reminder'" class="size-5 sm:size-6" />
-              <Megaphone v-else class="size-5 sm:size-6" />
+              <Cake v-if="currentAnnouncement.type === 'birthday'" class="size-4" />
+              <Bell v-else-if="currentAnnouncement.type === 'reminder'" class="size-4" />
+              <Megaphone v-else class="size-4" />
               <span>{{ currentAnnouncement.type === 'birthday' ? 'HAPPY BIRTHDAY!' : currentAnnouncement.type.toUpperCase() }}</span>
             </span>
           </div>
@@ -1202,47 +1202,49 @@ onUnmounted(() => {
           </div>
 
           <!-- Company Footer -->
-          <div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t flex flex-col items-center justify-center gap-3 shrink-0">
-            <!-- Company Logos & Taglines -->
-            <div class="flex flex-row flex-wrap items-center justify-center gap-6 sm:gap-12">
+          <!-- Corporate Architectural Footer Strip -->
+          <div class="px-4 sm:px-6 py-2.5 sm:py-3.5 border-t border-border/80 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+            <!-- Dual Company Emblems -->
+            <div class="flex flex-row items-center justify-center gap-6 sm:gap-8">
               <!-- DMBB -->
-              <div class="flex items-center gap-2.5">
-                <Avatar class="size-8 rounded-lg">
+              <div class="flex items-center gap-2">
+                <Avatar class="size-7 sm:size-8 rounded-lg shrink-0 border border-border/60">
                   <AvatarImage src="/dmbblogo.png" alt="DMBB Logo" />
-                  <AvatarFallback>DMBB</AvatarFallback>
+                  <AvatarFallback class="font-bold text-[10px]">DMBB</AvatarFallback>
                 </Avatar>
-
-                <div class="flex flex-col">
-                  <span class="text-xs sm:text-sm font-bold tracking-wide text-foreground">
+                <div class="flex flex-col text-left leading-tight">
+                  <span class="font-googlesans text-xs sm:text-sm font-bold tracking-wide text-foreground">
                     DMBB
                   </span>
-                  <span class="text-[9px] sm:text-[10px] text-muted-foreground">
+                  <span class="text-[9px] sm:text-[10px] text-muted-foreground font-medium">
                     Excellence in Service
                   </span>
                 </div>
               </div>
 
-              <!-- DBB -->
-              <div class="flex items-center gap-2.5">
-                <Avatar class="size-8 rounded-lg">
-                  <AvatarImage src="/dbblogo.png" alt="DBB Logo" />
-                  <AvatarFallback>DBB</AvatarFallback>
-                </Avatar>
+              <span class="opacity-30 hidden sm:inline">|</span>
 
-                <div class="flex flex-col">
-                  <span class="text-xs sm:text-sm font-bold tracking-wide text-foreground">
+              <!-- DBB -->
+              <div class="flex items-center gap-2">
+                <Avatar class="size-7 sm:size-8 rounded-lg shrink-0 border border-border/60">
+                  <AvatarImage src="/dbblogo.png" alt="DBB Logo" />
+                  <AvatarFallback class="font-bold text-[10px]">DBB</AvatarFallback>
+                </Avatar>
+                <div class="flex flex-col text-left leading-tight">
+                  <span class="font-googlesans text-xs sm:text-sm font-bold tracking-wide text-foreground">
                     DBB
                   </span>
-                  <span class="text-[9px] sm:text-[10px] text-muted-foreground">
+                  <span class="text-[9px] sm:text-[10px] text-muted-foreground font-medium">
                     Commitment to Quality
                   </span>
                 </div>
               </div>
             </div>
-            <!-- Biometric Notice -->
-            <div class="flex items-center justify-center gap-2 text-[10px] sm:text-xs text-muted-foreground/75 text-center">
-              <Fingerprint class="size-3.5 sm:size-4 text-primary shrink-0" />
-              <span>Biometric Verification • Real-Time Attendance Monitoring</span>
+
+            <!-- Biometric Verification Standby Rail -->
+            <div class="flex items-center gap-2 text-[10px] sm:text-xs font-mono font-medium text-muted-foreground bg-card/90 px-3 py-1 rounded-full border border-border shadow-2xs">
+              <Fingerprint class="size-3.5 sm:size-4 text-primary animate-pulse shrink-0" />
+              <span>Biometric Scan Takes Immediate Priority</span>
             </div>
           </div>
         </div>
