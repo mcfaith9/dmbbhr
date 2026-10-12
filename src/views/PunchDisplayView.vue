@@ -1227,15 +1227,15 @@ onUnmounted(() => {
           </div>
         </div>
         <div>
-          <div class="flex items-center gap-1.5 sm:gap-2">
+          <div class="font-googlesans flex items-center gap-1.5 sm:gap-2">
             <span class="font-bold text-sm sm:text-base xl:text-lg tracking-tight text-foreground">
               DMBB / DBB Biometrics
             </span>
-            <Badge variant="outline" class="text-[9px] sm:text-[10px] xl:text-xs font-mono px-1.5 sm:px-2 py-0 bg-muted/40">
+            <Badge variant="outline" class="font-googlesans text-[9px] sm:text-[10px] xl:text-xs font-mono px-1.5 sm:px-2 py-0 bg-muted/40">
               Live Kiosk
             </Badge>
           </div>
-          <p class="text-[11px] sm:text-xs xl:text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
+          <p class="font-googlesans text-[11px] sm:text-xs xl:text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
             <Server class="size-2.5 sm:size-3 xl:size-3.5 text-muted-foreground" />
             <span>BISMAC BISBIO B-29b • 192.168.1.201:4370</span>
           </p>
@@ -1245,11 +1245,11 @@ onUnmounted(() => {
       <!-- Live Clock Display (PC Time Minus 5 Minutes in Asia/Manila) -->
       <div class="flex flex-col items-center justify-center px-3.5 py-0.5 sm:py-1">
         <div class="flex items-center gap-2 leading-none">
-          <span class="text-3xl font-black tracking-tight text-foreground leading-none">
+          <span class="font-googlesans text-3xl font-black tracking-tight text-foreground leading-none">
             {{ currentTimeStr }}
           </span>
         </div>
-        <div class="text-xs sm:text-sm xl:text-base text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
+        <div class="font-googlesans text-xs sm:text-sm xl:text-base text-muted-foreground font-medium flex items-center gap-1 mt-0.5 leading-none">
           <CalendarIcon class="size-3 sm:size-3.5 xl:size-4 text-muted-foreground" />
           {{ currentDateStr }}
         </div>
@@ -1538,7 +1538,7 @@ onUnmounted(() => {
               <!-- 1. Employee Identity -->
               <div class="space-y-1">
                 <h2
-                  class="text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-black tracking-tight truncate leading-tight"
+                  class="font-googlesans text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-black tracking-tight truncate leading-tight"
                   :class="isLateVisualActive ? 'text-white' : 'text-foreground'"
                 >
                   {{ currentPunch.employeeName }}
@@ -1546,23 +1546,23 @@ onUnmounted(() => {
 
                 <!-- BIO ID, Department & Work Group tags -->
                 <div
-                  class="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm md:text-base font-medium flex-wrap pt-0.5"
+                  class="font-googlesans flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm md:text-base font-medium flex-wrap pt-0.5"
                   :class="isLateVisualActive ? 'text-zinc-200' : 'text-muted-foreground'"
                 >
                   <span
-                    class="font-mono text-xs sm:text-sm md:text-base font-bold px-2.5 sm:px-3 py-0.5 rounded-lg border shadow-2xs tracking-wider"
+                    class="text-[11px] font-bold px-2.5 sm:px-3 py-0.5 rounded-lg border shadow-2xs tracking-wider"
                     :class="isLateVisualActive ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/80 border-border text-foreground'"
                   >
                     BIO ID: {{ currentPunch.userId || currentPunch.bioId }}
                   </span>
                   <span
-                    class="font-mono text-xs sm:text-sm md:text-base font-semibold px-2.5 sm:px-3 py-0.5 rounded-lg border shadow-2xs"
+                    class="text-[11px] font-semibold px-2.5 sm:px-3 py-0.5 rounded-lg border shadow-2xs"
                     :class="isLateVisualActive ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/80 border-border text-foreground'"
                   >
                     {{ currentPunch.department || 'Operations' }}
                   </span>
                   <span
-                    class="font-mono text-xs sm:text-sm md:text-base font-semibold px-2.5 sm:px-3 py-0.5 rounded-lg border shadow-2xs uppercase"
+                    class="text-[11px] font-semibold px-2.5 sm:px-3 py-0.5 rounded-lg border shadow-2xs uppercase"
                     :class="isLateVisualActive ? 'bg-black/50 border-white/20 text-white' : 'bg-muted/80 border-border text-foreground'"
                   >
                     {{ currentPunch.workGroup || 'Group C' }}
@@ -1572,7 +1572,7 @@ onUnmounted(() => {
 
               <!-- 2. Attendance Time & Status Banner Card -->
               <div
-                class="rounded-xl w-[75%] sm:rounded-2xl border p-2.5 sm:p-3.5 md:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-4 shadow-xs transition-all"
+                class="font-googlesans rounded-xl w-[75%] sm:rounded-2xl border p-2.5 sm:p-3.5 md:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-4 shadow-xs transition-all"
                 :class="[
                   isLateVisualActive
                     ? 'text-white border-white/20 bg-black/45 backdrop-blur-xs'
@@ -1588,7 +1588,7 @@ onUnmounted(() => {
                     {{ currentPunch.direction === 'OUT' ? 'Departure Time' : 'Arrival Time' }}
                   </span>
                   <div
-                    class="text-3xl sm:text-4xl md:text-5xl lg:text-5xl xl:text-6xl font-mono font-black tracking-tight leading-none my-0.5"
+                    class="font-googlesans text-3xl sm:text-4xl md:text-5xl lg:text-5xl xl:text-6xl font-mono font-black tracking-tight leading-none my-0.5"
                     :class="isLateVisualActive ? 'text-white' : 'text-foreground'"
                   >
                     {{ formatPunchTime(currentPunch.timestamp) }}
@@ -1621,46 +1621,46 @@ onUnmounted(() => {
               <!-- When Direction is OUT: Recap strip -->
               <div v-if="currentPunch.direction === 'OUT'" class="w-[75%]">
                 <div class="grid grid-cols-3 gap-2 sm:gap-2.5 text-center">
-                <div
-                  class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
-                >
-                  <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Time In</span>
-                  <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
-                    {{ recapTimeIn }}
-                  </span>
-                </div>
+                  <div
+                    class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                    :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                  >
+                    <span class="font-googlesans text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Time In</span>
+                    <span class="font-googlesans font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
+                      {{ recapTimeIn }}
+                    </span>
+                  </div>
 
-                <div
-                  class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
-                >
-                  <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Time Out</span>
-                  <span class="font-mono font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
-                    {{ formatPunchTime(currentPunch.timestamp) }}
-                  </span>
-                </div>
+                  <div
+                    class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                    :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                  >
+                    <span class="font-googlesans text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Time Out</span>
+                    <span class="font-googlesans font-black text-xs sm:text-sm md:text-base lg:text-lg mt-0.5" :class="isLateVisualActive ? 'text-white' : 'text-foreground'">
+                      {{ formatPunchTime(currentPunch.timestamp) }}
+                    </span>
+                  </div>
 
-                <div
-                  class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
-                  :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
-                >
-                  <span class="text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Remarks</span>
-                  <span class="font-mono font-bold text-xs sm:text-sm mt-0.5">
-                    <Badge
-                      :variant="
-                        (currentPunch.firstInLate || currentPunch.isLate)
-                          ? 'destructive'
-                          : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
-                      "
-                      class="px-2 sm:px-3 py-0.5 text-xs sm:text-sm font-mono font-black uppercase tracking-wider"
-                      :class="(currentPunch.firstInLate || currentPunch.isLate) ? 'text-white' : ''"
-                    >
-                      {{ recapResultText }}
-                    </Badge>
-                  </span>
+                  <div
+                    class="p-1.5 sm:p-2 rounded-xl border flex flex-col items-center justify-center shadow-2xs"
+                    :class="isLateVisualActive ? 'border-white/15 text-zinc-200 bg-black/35 backdrop-blur-xs' : 'bg-muted/25 border-border/60 text-muted-foreground'"
+                  >
+                    <span class="font-googlesans text-[10px] sm:text-xs font-mono uppercase tracking-wider font-semibold opacity-80">Remarks</span>
+                    <span class="font-googlesans font-bold text-xs sm:text-sm mt-0.5">
+                      <Badge
+                        :variant="
+                          (currentPunch.firstInLate || currentPunch.isLate)
+                            ? 'destructive'
+                            : (currentPunch.statusCategory === 'undertime' ? 'warning' : 'success')
+                        "
+                        class="px-2 sm:px-3 py-0.5 text-xs sm:text-sm font-mono font-black uppercase tracking-wider"
+                        :class="(currentPunch.firstInLate || currentPunch.isLate) ? 'text-white' : ''"
+                      >
+                        {{ recapResultText }}
+                      </Badge>
+                    </span>
+                  </div>
                 </div>
-              </div>
               </div>
 
               <!-- When Direction is NOT OUT: Schedule Context -->
@@ -1731,16 +1731,16 @@ onUnmounted(() => {
             </div>
             <div class="flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-mono font-bold tracking-wider uppercase bg-muted/80 border text-foreground shadow-2xs">
               <span class="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>STANDBY READY</span>
+              <span class="font-googlesans">STANDBY READY</span>
             </div>
           </div>
 
           <!-- Right: Clear Guidance & Terminal Details -->
           <div class="relative z-10 flex-1 min-w-0 flex flex-col justify-center space-y-2 sm:space-y-3 text-left">
-            <h2 class="text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-black tracking-tight text-foreground">
+            <h2 class="font-googlesans text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-black tracking-tight text-foreground">
               Ready for Biometric Scan
             </h2>
-            <p class="text-xs sm:text-sm md:text-base lg:text-lg text-muted-foreground max-w-2xl leading-relaxed font-medium">
+            <p class="font-googlesans text-xs sm:text-sm md:text-base lg:text-lg text-muted-foreground max-w-2xl leading-relaxed font-medium">
               Place your registered finger on the optical sensor to record your attendance punch. Your photo and attendance status will display automatically.
             </p>
             <div class="pt-1.5 flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-muted-foreground font-mono flex-wrap">
@@ -1760,7 +1760,7 @@ onUnmounted(() => {
       </section>
 
       <!-- Bottom / Session Stream: Recent Punches Panel (Horizontal Deck) -->
-      <aside class="w-full bg-card text-card-foreground border rounded-xl sm:rounded-2xl lg:rounded-3xl shadow-sm p-2 sm:p-2.5 md:p-3 shrink-0 flex flex-col justify-between overflow-hidden h-24 sm:h-28 md:h-30 lg:h-32 xl:h-34">
+      <aside class="font-googlesans w-full bg-card text-card-foreground border rounded-xl sm:rounded-2xl lg:rounded-3xl shadow-sm p-2 sm:p-2.5 md:p-3 shrink-0 flex flex-col justify-between overflow-hidden h-24 sm:h-28 md:h-30 lg:h-32 xl:h-34">
         <div class="flex items-center justify-between px-1.5 pb-1 border-b shrink-0">
           <div class="flex items-center gap-2">
             <History class="size-3.5 sm:size-4 text-primary" />
@@ -1784,7 +1784,7 @@ onUnmounted(() => {
           <div
             v-for="punch in displayedRecentPunches"
             :key="punch.eventId || punch.id"
-            class="h-full flex-1 min-w-0 p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl border bg-muted/20 hover:bg-muted/35 transition-colors flex items-center justify-between gap-1.5 sm:gap-2 md:gap-2.5 shadow-2xs overflow-hidden"
+            class="relative h-full flex-1 min-w-0 p-1.5 sm:p-2 md:p-2.5 rounded-lg sm:rounded-xl border bg-muted/20 hover:bg-muted/35 transition-colors flex items-center justify-between gap-1.5 sm:gap-2 md:gap-2.5 shadow-2xs overflow-hidden"
           >
             <!-- Left Side: Profile Photo & Employee Identity -->
             <div class="flex items-center gap-1.5 sm:gap-2 md:gap-2.5 min-w-0 flex-1">
@@ -1802,7 +1802,7 @@ onUnmounted(() => {
               </Avatar>
 
               <!-- Name and punch details -->
-              <div class="min-w-0 flex-1 flex flex-col justify-center">
+              <div class="min-w-0 flex-1 flex flex-col justify-center pr-1 sm:pr-2">
                 <div
                   class="font-bold text-foreground text-[11px] sm:text-xs md:text-sm truncate leading-snug"
                   :title="punch.employeeName"
@@ -1810,7 +1810,7 @@ onUnmounted(() => {
                   {{ punch.employeeName }}
                 </div>
                 <div class="text-[9px] sm:text-[10px] md:text-[11px] text-muted-foreground flex items-center gap-1 font-mono truncate mt-0.5">
-                  <span class="truncate">Bio {{ punch.bioId }}</span>
+                  <span class="truncate">{{ punch.bioId }}</span>
                   <span class="opacity-60 shrink-0">•</span>
                   <span class="text-foreground font-semibold shrink-0">{{ punch.time }}</span>
                 </div>
@@ -1824,7 +1824,10 @@ onUnmounted(() => {
                   ? 'destructive'
                   : (punch.statusVariant === 'warning' ? 'warning' : (punch.statusVariant === 'secondary' ? 'secondary' : 'success'))
               "
-              class="text-[8.5px] sm:text-[9px] md:text-[10px] uppercase font-mono px-1 sm:px-1.5 py-0.5 font-bold shrink-0 tracking-tight text-center"
+              :class="[
+                'absolute top-1 right-1.5 text-[8.5px] sm:text-[9px] md:text-[10px] uppercase font-mono px-1 sm:px-1.5 py-0.5 font-bold tracking-tight text-center shrink-0',
+                punch.status.toLowerCase() === 'late' ? 'text-white' : ''
+              ]"
             >
               {{ punch.status }}
             </Badge>
@@ -1836,6 +1839,13 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap');
+
+:deep(body),
+:deep(.font-googlesans) {
+  font-family: 'Google Sans', sans-serif;
+}
+
 .announcement-slide-enter-active,
 .announcement-slide-leave-active {
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
