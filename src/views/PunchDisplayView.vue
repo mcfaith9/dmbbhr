@@ -331,7 +331,7 @@ let previewUnsubscribe: (() => void) | null = null
 
 // Exact calculation: Base configured duration from settings, extended by exactly 3 additional seconds for birthdays
 function getAnnouncementDurationMs(item?: AnnouncementItem | null): number {
-  const durationSeconds = settings.value.displayDurationSeconds || 5
+  const durationSeconds = settings.value.displayDurationSeconds || 15
   const baseDurationMs = Math.max(1, durationSeconds) * 1000
   // Birthday modal gets exactly 3 additional seconds (+3000ms) added to the existing duration
   const isBirthday = item?.type === 'birthday'
@@ -1350,10 +1350,10 @@ onUnmounted(() => {
 
           <!-- Standard Announcement / Reminder Layout -->
           <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4 flex-1 flex flex-col items-center justify-center">
-            <h3 class="font-googlesans text-3xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
+            <h3 class="font-googlesans text-4xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
               {{ currentAnnouncement.title }}
             </h3>
-            <p class="font-googlesans text-lg sm:text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
+            <p class="font-googlesans text-3xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
               {{ currentAnnouncement.message }}
             </p>
           </div>
