@@ -1350,10 +1350,10 @@ onUnmounted(() => {
 
           <!-- Standard Announcement / Reminder Layout -->
           <div v-else class="text-center space-y-4 sm:space-y-6 py-2 sm:py-4 flex-1 flex flex-col items-center justify-center">
-            <h3 class="font-googlesans text-4xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
+            <h3 class="font-googlesans text-7xl font-black tracking-tight text-foreground leading-tight max-w-4xl mx-auto uppercase">
               {{ currentAnnouncement.title }}
             </h3>
-            <p class="font-googlesans text-3xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
+            <p class="font-googlesans text-5xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-medium">
               {{ currentAnnouncement.message }}
             </p>
           </div>
@@ -1700,7 +1700,7 @@ onUnmounted(() => {
             <div class="w-full md:w-44 sm:md:w-52 md:w-60 lg:w-72 xl:w-80 shrink-0 flex flex-col items-center justify-center text-center gap-2 sm:gap-2.5">
               <div class="relative">
                 <div
-                  class="size-70 sm:size-36 md:size-44 lg:size-52 xl:size-70 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex items-center justify-center transition-transform"
+                  class="size-80 sm:size-36 md:size-44 lg:size-52 xl:size-70 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex items-center justify-center transition-transform"
                   :class="[
                     isLateVisualActive
                       ? 'shadow-2xl border-white/50 ring-4 ring-rose-500/30'
@@ -1750,7 +1750,7 @@ onUnmounted(() => {
               <!-- 1. Employee Identity -->
               <div class="space-y-1">
                 <h2
-                  class="font-googlesans text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-5xl font-black tracking-tight truncate leading-tight"
+                  class="font-googlesans text-6xl font-black tracking-tight truncate leading-tight"
                   :class="isLateVisualActive ? 'text-white' : 'text-foreground'"
                 >
                   {{ currentPunch.employeeName }}
@@ -2001,7 +2001,7 @@ onUnmounted(() => {
             <!-- Left Side: Profile Photo & Employee Identity -->
             <div class="flex items-center gap-1.5 sm:gap-2 md:gap-2.5 min-w-0 flex-1">
               <!-- Profile Photo / Fallback Avatar -->
-              <Avatar class="size-8 sm:size-9 md:size-10 lg:size-11 rounded-lg sm:rounded-xl shrink-0 overflow-hidden border border-border/60 bg-muted/40 ring-1 ring-border/40">
+              <Avatar class="size-18 rounded-lg sm:rounded-xl shrink-0 overflow-hidden border border-border/60 bg-muted/40 ring-1 ring-border/40">
                 <AvatarImage
                   v-if="Boolean(getEmployeePhoto(punch.bioId, punch.photoUrl))"
                   :src="getEmployeePhoto(punch.bioId, punch.photoUrl)"
@@ -2009,19 +2009,19 @@ onUnmounted(() => {
                   class="size-full object-cover"
                 />
                 <AvatarFallback class="size-full rounded-lg sm:rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
-                  <User class="size-3.5 sm:size-4 md:size-4.5 text-muted-foreground/70" />
+                  <User class="size-18 text-muted-foreground/70" />
                 </AvatarFallback>
               </Avatar>
 
               <!-- Name and punch details -->
               <div class="min-w-0 flex-1 flex flex-col justify-center pr-1 sm:pr-2">
                 <div
-                  class="font-bold text-foreground text-[11px] sm:text-xs md:text-sm truncate leading-snug"
+                  class="font-bold text-foreground text-12 truncate leading-snug"
                   :title="punch.employeeName"
                 >
                   {{ punch.employeeName }}
                 </div>
-                <div class="text-[9px] sm:text-[10px] md:text-[11px] text-muted-foreground flex items-center gap-1 font-mono truncate mt-0.5">
+                <div class="text-[12px] text-muted-foreground flex items-center gap-1 font-mono truncate mt-0.5">
                   <span class="truncate">{{ punch.bioId }}</span>
                   <span class="opacity-60 shrink-0">•</span>
                   <span class="text-foreground font-semibold shrink-0">{{ punch.time }}</span>
