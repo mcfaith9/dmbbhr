@@ -22,7 +22,7 @@ import {
   Sparkles,
   UserCheck
 } from '@lucide/vue'
-import { punchDisplayService, normalizeBioId } from '@/services/punchDisplay'
+import { punchDisplayService, normalizeBioId, getManilaDateString, getManilaMinutesFromMidnight } from '@/services/punchDisplay'
 import { punchVoiceService } from '@/services/punchVoiceService'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
@@ -134,15 +134,39 @@ const effectiveLateImageUrl = computed(() => {
 })
 
 const isLateVisualActive = computed(() => {
-  return Boolean(currentPunch.value?.isLate) && Boolean(settings.value.lateVisualEnabled)
+  if (!currentPunch.value?.isLate || !settings.value.lateVisualEnabled) {
+    return false
+  }
+  // Requirement 4: From 4:00 PM through 5:00 PM (16:00 to 17:00), never show the morning late modal,
+  // regardless of the employee's morning result
+  const displayDate = punchDisplayService.getDeviceAlignedDate()
+  const currentMinutes = getManilaMinutesFromMidnight(displayDate)
+  if (currentMinutes >= 16 * 60 && currentMinutes <= 17 * 60) {
+    return false
+  }
+  const punchDate = new Date(currentPunch.value.timestamp || Date.now())
+  const punchMinutes = getManilaMinutesFromMidnight(punchDate)
+  if (punchMinutes >= 16 * 60 && punchMinutes <= 17 * 60) {
+    return false
+  }
+  return true
 })
 
 // Canvas Confetti
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let confettiAnimationId: any = null
+let lastManilaDateStr = ''
 
 function updateClock() {
   const displayDate = punchDisplayService.getDeviceAlignedDate()
+  const currentManilaDate = getManilaDateString(displayDate)
+
+  // Requirement 5: On a new Philippine calendar day, discard previous day's temporary state
+  if (lastManilaDateStr && currentManilaDate !== lastManilaDateStr) {
+    punchDisplayService.checkAndResetNewDay(currentManilaDate)
+  }
+  lastManilaDateStr = currentManilaDate
+
   currentTimeStr.value = new Intl.DateTimeFormat('en-PH', {
     timeZone: 'Asia/Manila',
     hour: '2-digit',
@@ -1109,7 +1133,7 @@ onUnmounted(() => {
         <!-- Celebratory Flying Balloons and Lightweight Confetti Layer (Celebration for Birthday) -->
         <div
           v-if="currentAnnouncement.type === 'birthday'"
-          class="pointer-events-none fixed inset-0 z-99 overflow-hidden"
+          class="pointer-events-none fixed inset-0 z-30 overflow-hidden"
           aria-hidden="true"
         >
           <!-- Flying Balloons: Float gently upward from bottom of screen beyond top -->

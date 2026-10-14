@@ -731,13 +731,33 @@ class IsolatedDirectionResolver {
     this.states.clear()
   }
 
+  clearPreviousDayStates(todayStr) {
+    for (const [key, s] of this.states.entries()) {
+      if (s.date !== todayStr) {
+        this.states.delete(key)
+      }
+    }
+  }
+
   resolve(params) {
     const cleanBioId = String(params.bioId || '').replace(/\D/g, '') || String(params.bioId)
     const punchDate = new Date(params.timestamp)
-    const year = punchDate.getFullYear()
-    const month = String(punchDate.getMonth() + 1).padStart(2, '0')
-    const day = String(punchDate.getDate()).padStart(2, '0')
-    const todayStr = `${year}-${month}-${day}`
+    let todayStr = ''
+    try {
+      todayStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(punchDate)
+    } catch {
+      const year = punchDate.getFullYear()
+      const month = String(punchDate.getMonth() + 1).padStart(2, '0')
+      const day = String(punchDate.getDate()).padStart(2, '0')
+      todayStr = `${year}-${month}-${day}`
+    }
+
+    this.clearPreviousDayStates(todayStr)
 
     // Compute Manila minutes from midnight
     let hours = punchDate.getHours()
@@ -777,21 +797,33 @@ class IsolatedDirectionResolver {
 
     let state = this.states.get(cleanBioId)
     if (!state || state.date !== todayStr) {
+      const initialDirection = params.priorDirection || 'IN'
       state = {
         date: todayStr,
         lastEventId: '',
         lastPunchMs: 0,
-        lastDirection: 'IN',
-        lastStateLabel: 'TIME IN',
+        lastDirection: initialDirection,
+        lastStateLabel: initialDirection === 'OUT' ? 'TIME OUT' : (initialDirection === 'BREAK_OUT' ? 'BREAK OUT' : 'TIME IN'),
         lastStatusCategory: 'regular',
         lastStatusLabel: 'ON TIME',
         lastStatusDetail: 'Biometric verified',
         lastIsLate: false,
         lastIsEarly: false,
         lastDiffMinutes: 0,
-        punchCountToday: 0
+        punchCountToday: params.priorPunchCount ?? 0,
+        firstInTime: params.firstInTime,
+        firstInLate: params.firstInLate,
+        firstInLateMinutes: params.firstInLateMinutes
       }
       this.states.set(cleanBioId, state)
+    } else {
+      if (state.firstInLate === undefined && params.firstInLate !== undefined) {
+        state.firstInLate = params.firstInLate
+        state.firstInLateMinutes = params.firstInLateMinutes
+      }
+      if (!state.firstInTime && params.firstInTime) {
+        state.firstInTime = params.firstInTime
+      }
     }
 
     // Reset sequence state when requested or when running an independent simulation
@@ -871,7 +903,7 @@ class IsolatedDirectionResolver {
         resolvedDir = 'OUT'
         resolvedLabel = 'TIME OUT'
       } else if (state.lastDirection === 'OUT') {
-        if (state.punchCountToday <= 2 || punchMinutes < expectedOutMinutes - 60) {
+        if (state.punchCountToday <= 2 && punchMinutes < expectedOutMinutes - 60) {
           resolvedDir = 'IN'
           resolvedLabel = 'TIME IN'
         } else {
@@ -909,8 +941,17 @@ class IsolatedDirectionResolver {
             isEarly = false
           }
         }
+      } else if (state.firstInTime !== undefined && state.punchCountToday > 0) {
+        // Employee ALREADY has an established morning TIME IN recorded in temporary memory.
+        // A subsequent punch (such as at 10:00 AM) CANNOT overwrite the original morning classification!
+        isEarly = false
+        isLate = false
+        diffMinutes = 0
+        resolvedCategory = state.firstInLate ? 'regular' : 'on_time'
+        resolvedStatus = 'ON TIME'
+        resolvedDetail = 'Attendance confirmed'
       } else {
-        const isMorningArrival = state.punchCountToday === 0 || punchMinutes < lunchStartMinutes - 30
+        const isMorningArrival = state.punchCountToday === 0 && punchMinutes < lunchStartMinutes - 30
         if (isMorningArrival) {
           if (punchMinutes < standardInMinutes) {
             diffMinutes = standardInMinutes - punchMinutes
@@ -919,6 +960,8 @@ class IsolatedDirectionResolver {
             resolvedDetail = `${diffMinutes}m early`
             isEarly = true
             isLate = false
+            state.firstInLate = false
+            state.firstInLateMinutes = 0
           } else if (punchMinutes === standardInMinutes) {
             diffMinutes = 0
             resolvedCategory = 'on_time'
@@ -926,6 +969,8 @@ class IsolatedDirectionResolver {
             resolvedDetail = 'On schedule'
             isEarly = false
             isLate = false
+            state.firstInLate = false
+            state.firstInLateMinutes = 0
           } else {
             diffMinutes = punchMinutes - standardInMinutes
             resolvedCategory = 'late'
@@ -933,14 +978,26 @@ class IsolatedDirectionResolver {
             resolvedDetail = `Late by ${diffMinutes}m`
             isEarly = false
             isLate = true
+            state.firstInLate = true
+            state.firstInLateMinutes = diffMinutes
           }
+          state.firstInTime = new Intl.DateTimeFormat('en-PH', {
+            timeZone: 'Asia/Manila',
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          }).format(punchDate)
         } else {
           resolvedCategory = 'regular'
           resolvedStatus = 'ON TIME'
-          resolvedDetail = 'Returned from break'
+          resolvedDetail = 'Biometric verified'
           isEarly = false
           isLate = false
           diffMinutes = 0
+          state.firstInLate = undefined
+          state.firstInLateMinutes = undefined
+          state.firstInTime = undefined
         }
       }
     } else if (resolvedDir === 'BREAK_OUT') {
@@ -984,6 +1041,12 @@ class IsolatedDirectionResolver {
       }
     }
 
+    // From 4:00 PM through 5:00 PM (16:00 to 17:00), never show the morning late modal,
+    // regardless of the employee's morning result.
+    if (punchMinutes >= 16 * 60 && punchMinutes <= 17 * 60) {
+      isLate = false
+    }
+
     const isStateRepeating = state.punchCountToday > 0 && state.lastDirection === resolvedDir
     if (!isStateRepeating) {
       state.punchCountToday += 1
@@ -1008,7 +1071,10 @@ class IsolatedDirectionResolver {
       statusDetail: resolvedDetail,
       isLate,
       isEarly,
-      diffMinutes
+      diffMinutes,
+      firstInTime: state.firstInTime,
+      firstInLate: state.firstInLate,
+      firstInLateMinutes: state.firstInLateMinutes
     }
   }
 }
@@ -1281,5 +1347,277 @@ assert.strictEqual(duplicateEv.statusLabel, 'LATE')
 console.log('✔ Case 16 Passed: Duplicate event ID suppression verified')
 
 console.log('\n✅ ALL 16 PUNCH DISPLAY DIRECTION RESOLUTION CASES PASSED!\n')
+
+// ============================================================================
+// 19. Critical Requirement: Temporary Daily State Only — 10 Test Scenarios
+// ============================================================================
+console.log('--- Running 10 Critical Temporary Daily State & Lateness Scenarios ---')
+
+// Scenario 1: Before 8:01 AM, the employee is ON TIME (e.g. 7:48 AM, 7:59:59 AM)
+resolver.clearAll()
+const s1_early = resolver.resolve({
+  bioId: '25065',
+  eventId: 's1-early',
+  timestamp: '2026-10-12T07:48:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s1_early.isLate, false, 'Scenario 1: 7:48 AM must NOT be late')
+assert.strictEqual(s1_early.statusLabel, 'EARLY')
+
+const s1_59s = resolver.resolve({
+  bioId: '25069',
+  eventId: 's1-59s',
+  timestamp: '2026-10-12T07:59:59+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s1_59s.isLate, false, 'Scenario 1: 7:59:59 AM must NOT be late')
+assert.strictEqual(s1_59s.statusLabel, 'EARLY')
+console.log('✔ Scenario 1 Passed: Before 8:01 AM is ON TIME/EARLY (isLate: false)')
+
+// Scenario 2: 8:00:00–8:00:59 AM is still ON TIME
+resolver.clearAll()
+const s2_00 = resolver.resolve({
+  bioId: '25065',
+  eventId: 's2-00',
+  timestamp: '2026-10-12T08:00:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s2_00.isLate, false, 'Scenario 2: 8:00:00 AM must NOT be late')
+assert.strictEqual(s2_00.statusLabel, 'ON TIME')
+
+const s2_59 = resolver.resolve({
+  bioId: '25069',
+  eventId: 's2-59',
+  timestamp: '2026-10-12T08:00:59+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s2_59.isLate, false, 'Scenario 2: 8:00:59 AM must NOT be late')
+assert.strictEqual(s2_59.statusLabel, 'ON TIME')
+console.log('✔ Scenario 2 Passed: 8:00:00–8:00:59 AM is still ON TIME')
+
+// Scenario 3: At 8:01 AM or later, a valid first morning TIME IN is LATE
+resolver.clearAll()
+const s3_late = resolver.resolve({
+  bioId: '25065',
+  eventId: 's3-late',
+  timestamp: '2026-10-12T08:01:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s3_late.isLate, true, 'Scenario 3: 8:01:00 AM is LATE')
+assert.strictEqual(s3_late.statusLabel, 'LATE')
+assert.strictEqual(s3_late.diffMinutes, 1)
+
+const s3_late_sec = resolver.resolve({
+  bioId: '25069',
+  eventId: 's3-late-sec',
+  timestamp: '2026-10-12T08:01:23+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s3_late_sec.isLate, true, 'Scenario 3: 8:01:23 AM is LATE')
+assert.strictEqual(s3_late_sec.statusLabel, 'LATE')
+assert.strictEqual(s3_late_sec.diffMinutes, 1)
+console.log('✔ Scenario 3 Passed: 8:01 AM or later is LATE (diffMinutes: 1)')
+
+// Scenario 4: Preserve morning ON TIME result in memory so later 10:00 AM punch cannot overwrite to LATE
+resolver.clearAll()
+const s4_in = resolver.resolve({
+  bioId: '25065',
+  eventId: 's4-in',
+  timestamp: '2026-10-12T08:00:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s4_in.isLate, false)
+assert.strictEqual(s4_in.firstInLate, false)
+assert.strictEqual(s4_in.statusLabel, 'ON TIME')
+
+// Employee scans again at 10:00 AM
+const s4_10am = resolver.resolve({
+  bioId: '25065',
+  eventId: 's4-10am',
+  timestamp: '2026-10-12T10:00:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s4_10am.firstInLate, false, '10:00 AM punch must NOT overwrite morning ON TIME classification!')
+assert.strictEqual(s4_10am.isLate, false, '10:00 AM repeat scan must NOT be marked late!')
+assert.strictEqual(s4_10am.statusLabel, 'ON TIME')
+assert.strictEqual(s4_10am.direction, 'IN')
+console.log('✔ Scenario 4 Passed: 10:00 AM punch preserves morning ON TIME classification')
+
+// Scenario 5: Preserve morning LATE result in memory so later 10:00 AM punch cannot overwrite to 120m or ON TIME
+resolver.clearAll()
+const s5_in = resolver.resolve({
+  bioId: '25065',
+  eventId: 's5-in',
+  timestamp: '2026-10-12T08:01:23+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s5_in.isLate, true)
+assert.strictEqual(s5_in.firstInLate, true)
+assert.strictEqual(s5_in.firstInLateMinutes, 1)
+
+// Employee scans again at 10:00 AM
+const s5_10am = resolver.resolve({
+  bioId: '25065',
+  eventId: 's5-10am',
+  timestamp: '2026-10-12T10:00:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s5_10am.firstInLate, true, '10:00 AM punch preserves morning firstInLate: true')
+assert.strictEqual(s5_10am.firstInLateMinutes, 1, '10:00 AM punch preserves original morning 1m late, not 120m!')
+console.log('✔ Scenario 5 Passed: 10:00 AM punch preserves morning LATE 1m classification')
+
+// Scenario 6: Lunch break punches (12:02 PM BREAK OUT, 12:57 PM BREAK IN) never treated as late morning arrival
+const s6_lunchOut = resolver.resolve({
+  bioId: '25065',
+  eventId: 's6-lout',
+  timestamp: '2026-10-12T12:02:12+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s6_lunchOut.direction, 'BREAK_OUT')
+assert.strictEqual(s6_lunchOut.isLate, false, 'Lunch OUT must never be late')
+
+const s6_lunchIn = resolver.resolve({
+  bioId: '25065',
+  eventId: 's6-lin',
+  timestamp: '2026-10-12T12:57:29+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s6_lunchIn.direction, 'IN')
+assert.strictEqual(s6_lunchIn.isLate, false, 'Lunch IN must never be marked late')
+assert.strictEqual(s6_lunchIn.firstInLate, true, 'Still preserves morning arrival classification')
+assert.strictEqual(s6_lunchIn.firstInLateMinutes, 1)
+console.log('✔ Scenario 6 Passed: Lunch break punches are never treated as late morning arrival')
+
+// Scenario 7: Missing morning TIME IN: First punch at 12:30 PM is NEVER treated as substitute for morning TIME IN
+resolver.clearAll()
+const s7_firstLunch = resolver.resolve({
+  bioId: '50044',
+  eventId: 's7-lunch',
+  timestamp: '2026-10-12T12:30:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s7_firstLunch.isLate, false, 'First punch at lunch must NEVER be late')
+assert.strictEqual(s7_firstLunch.firstInTime, undefined, 'First punch at lunch must NOT populate morning arrival firstInTime')
+assert.strictEqual(s7_firstLunch.firstInLate, undefined, 'First punch at lunch must NOT populate firstInLate')
+console.log('✔ Scenario 7 Passed: Lunch punch is never treated as substitute for missing morning TIME IN')
+
+// Scenario 8: From 4:00 PM through 5:00 PM, never show morning late modal, regardless of morning result
+// Case A: Employee was late in morning (8:01 AM), punches OUT at 4:30 PM (early out)
+resolver.clearAll()
+const s8_morningLate = resolver.resolve({
+  bioId: '25065',
+  eventId: 's8-morning',
+  timestamp: '2026-10-12T08:01:23+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s8_morningLate.isLate, true)
+
+const s8_430pm = resolver.resolve({
+  bioId: '25065',
+  eventId: 's8-430',
+  timestamp: '2026-10-12T16:30:00+08:00',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(s8_430pm.isLate, false, '4:30 PM punch isLate must be false (no late modal!)')
+assert.strictEqual(s8_430pm.statusLabel, 'EARLY OUT')
+assert.strictEqual(s8_430pm.firstInLate, true, 'Recap preserves morning lateness')
+
+// Case B: 5:00 PM punch
+const s8_500pm = resolver.resolve({
+  bioId: '25065',
+  eventId: 's8-500',
+  timestamp: '2026-10-12T17:00:00+08:00',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(s8_500pm.isLate, false, '5:00 PM punch isLate must be false (no late modal!)')
+assert.strictEqual(s8_500pm.statusLabel, 'TIME OUT')
+assert.strictEqual(s8_500pm.firstInLate, true, 'Recap preserves morning lateness')
+
+// Case C: Even if someone punched IN at 4:05 PM, between 4-5 PM late modal is never shown
+const s8_405in = resolver.resolve({
+  bioId: '25065',
+  eventId: 's8-405in',
+  timestamp: '2026-10-12T16:05:00+08:00',
+  explicitDirection: 'IN',
+  standardIn: '08:00'
+})
+assert.strictEqual(s8_405in.isLate, false, '4:05 PM IN punch must NEVER show morning late modal')
+console.log('✔ Scenario 8 Passed: From 4:00 PM through 5:00 PM, morning late modal is never shown')
+
+// Scenario 9: On a new Philippine calendar day (Asia/Manila), discard previous day's temporary state
+resolver.clearAll()
+// Day 1: 2026-10-12
+const s9_day1 = resolver.resolve({
+  bioId: '25065',
+  eventId: 's9-d1',
+  timestamp: '2026-10-12T08:01:23+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s9_day1.firstInLate, true)
+
+// Day 2: 2026-10-13 arrives
+const s9_day2 = resolver.resolve({
+  bioId: '25065',
+  eventId: 's9-d2',
+  timestamp: '2026-10-13T07:55:00+08:00',
+  standardIn: '08:00'
+})
+assert.strictEqual(s9_day2.firstInLate, false, "Day 2 must discard Day 1's temporary late state!")
+assert.strictEqual(s9_day2.isLate, false)
+assert.strictEqual(s9_day2.statusLabel, 'EARLY')
+assert.strictEqual(s9_day2.direction, 'IN', "Day 2 first punch starts fresh at TIME IN")
+console.log("✔ Scenario 9 Passed: New Philippine calendar day cleanly discards previous day's temporary state")
+
+// Scenario 10: Refresh / restart behavior without persistent Punch Display storage
+// When display restarts, in-memory state is empty. Morning result is reconstructed only from existing logs
+resolver.clearAll()
+// Existing log from morning: 8:01:23 AM (1m late)
+const mockExistingLogs = [
+  { id: 'log-1', user_id: '25065', attendance_time: '2026-10-12T08:01:23+08:00', state: 1 }
+]
+// Reconstruct morning metadata from existing log:
+function getMockManilaMinutes(timestampStr) {
+  const d = new Date(timestampStr)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23'
+  }).formatToParts(d)
+  const h = parseInt(parts.find(p => p.type === 'hour').value, 10)
+  const m = parseInt(parts.find(p => p.type === 'minute').value, 10)
+  return h * 60 + m
+}
+
+const morningCutoffMins = 12 * 60 - 15 // 11:45 AM
+const firstMorning = mockExistingLogs.find(p => getMockManilaMinutes(p.attendance_time) < morningCutoffMins)
+assert.ok(firstMorning, 'Found existing morning punch')
+const firstMins = getMockManilaMinutes(firstMorning.attendance_time)
+const reconstructedLate = firstMins > 480
+const reconstructedLateMins = firstMins - 480
+
+// Freshly started resolver receives evening punch at 5:00 PM with reconstructed parameters:
+const s10_postRefresh = resolver.resolve({
+  bioId: '25065',
+  eventId: 's10-refresh',
+  timestamp: '2026-10-12T17:00:00+08:00',
+  firstInTime: '8:01:23 AM',
+  firstInLate: reconstructedLate,
+  firstInLateMinutes: reconstructedLateMins,
+  priorPunchCount: 1,
+  priorDirection: 'IN',
+  standardIn: '08:00',
+  expectedOut: '17:00'
+})
+assert.strictEqual(s10_postRefresh.direction, 'OUT', 'Correctly continues sequence as TIME OUT')
+assert.strictEqual(s10_postRefresh.isLate, false, 'No late modal on OUT')
+assert.strictEqual(s10_postRefresh.firstInLate, true, 'Recap preserves morning late')
+assert.strictEqual(s10_postRefresh.firstInLateMinutes, 1, 'Recap preserves 1m late')
+console.log('✔ Scenario 10 Passed: Refresh reconstructed morning result from existing logs without new persistent storage')
+
+console.log('\n✅ ALL 10 CRITICAL TEMPORARY DAILY STATE & LATENESS SCENARIOS PASSED SUCCESSFULLY! 🎉\n')
 
 console.log('✅ ALL PUNCH DISPLAY, VOICE ANNOUNCEMENT & DEVICE CLOCK TESTS PASSED SUCCESSFULLY! 🎉')

@@ -11,6 +11,7 @@ import { employeeService } from '@/services/employees'
 import { punchRepository } from '@/repositories/punchRepository'
 import { workGroupRepository, calculateExpectedOutMinutes } from '@/repositories/workGroupRepository'
 import { getManilaDateString, getManilaMinutesFromMidnight } from '@/services/attendanceEngine'
+export { getManilaDateString, getManilaMinutesFromMidnight } from '@/services/attendanceEngine'
 
 export interface CompactRecentPunch {
   id: string
@@ -172,6 +173,14 @@ export class PunchDisplayDirectionResolver {
     this.states.clear()
   }
 
+  public clearPreviousDayStates(todayStr: string): void {
+    for (const [key, s] of this.states.entries()) {
+      if (s.date !== todayStr) {
+        this.states.delete(key)
+      }
+    }
+  }
+
   public getState(bioId: string): EmployeeDisplaySessionState | undefined {
     return this.states.get(normalizeBioId(bioId))
   }
@@ -196,6 +205,8 @@ export class PunchDisplayDirectionResolver {
     firstInLateMinutes?: number
     isSimulation?: boolean
     resetSequence?: boolean
+    priorPunchCount?: number
+    priorDirection?: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT'
   }): {
     direction: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT'
     stateNumber: number
@@ -219,6 +230,9 @@ export class PunchDisplayDirectionResolver {
     const punchMinutes = getManilaMinutesFromMidnight(punchDate)
     const currentMs = punchDate.getTime()
 
+    // Discard any state from previous Philippine calendar days
+    this.clearPreviousDayStates(todayStr)
+
     const standardIn = params.standardIn || '08:00'
     const expectedOut = params.expectedOut || '17:00'
     const lunchStart = params.lunchStart || '12:00'
@@ -239,13 +253,14 @@ export class PunchDisplayDirectionResolver {
     // Lookup or initialize employee session state for today (resets cleanly at day boundaries)
     let state = this.states.get(cleanBioId)
     if (!state || state.date !== todayStr) {
+      const initialDirection = params.priorDirection || 'IN'
       state = {
         date: todayStr,
         lastEventId: '',
         lastPunchMs: 0,
-        lastDirection: 'IN',
-        lastStateLabel: 'TIME IN',
-        lastStateColor: 'emerald',
+        lastDirection: initialDirection,
+        lastStateLabel: initialDirection === 'OUT' ? 'TIME OUT' : (initialDirection === 'BREAK_OUT' ? 'BREAK OUT' : 'TIME IN'),
+        lastStateColor: initialDirection === 'OUT' ? 'rose' : (initialDirection === 'BREAK_OUT' ? 'amber' : 'emerald'),
         lastStatusCategory: 'regular',
         lastStatusLabel: 'ON TIME',
         lastStatusDetail: 'Biometric verified',
@@ -253,12 +268,20 @@ export class PunchDisplayDirectionResolver {
         lastIsLate: false,
         lastIsEarly: false,
         lastDiffMinutes: 0,
-        punchCountToday: 0,
+        punchCountToday: params.priorPunchCount ?? 0,
         firstInTime: params.firstInTime,
         firstInLate: params.firstInLate,
         firstInLateMinutes: params.firstInLateMinutes
       }
       this.states.set(cleanBioId, state)
+    } else {
+      if (state.firstInLate === undefined && params.firstInLate !== undefined) {
+        state.firstInLate = params.firstInLate
+        state.firstInLateMinutes = params.firstInLateMinutes
+      }
+      if (!state.firstInTime && params.firstInTime) {
+        state.firstInTime = params.firstInTime
+      }
     }
 
     // Reset sequence state when requested or when running an independent simulation
@@ -393,7 +416,7 @@ export class PunchDisplayDirectionResolver {
         resolvedColor = 'rose'
       } else if (state.lastDirection === 'OUT') {
         // If employee clocked out for lunch or before afternoon shift end:
-        if (state.punchCountToday <= 2 || punchMinutes < expectedOutMinutes - 60) {
+        if (state.punchCountToday <= 2 && punchMinutes < expectedOutMinutes - 60) {
           // Returning to work from lunch/break -> TIME IN
           resolvedDir = 'IN'
           resolvedLabel = 'TIME IN'
@@ -452,9 +475,20 @@ export class PunchDisplayDirectionResolver {
           second: '2-digit',
           hour12: true
         }).format(punchDate)
+      } else if (state.firstInTime !== undefined && state.punchCountToday > 0) {
+        // Employee ALREADY has an established morning TIME IN recorded in temporary memory.
+        // A subsequent punch (such as at 10:00 AM) CANNOT overwrite the original morning classification!
+        isEarly = false
+        isLate = false
+        diffMinutes = 0
+        resolvedCategory = state.firstInLate ? 'regular' : 'on_time'
+        resolvedStatus = 'ON TIME'
+        resolvedDetail = 'Attendance confirmed'
+        resolvedVariant = 'success'
+        // state.firstInTime, state.firstInLate, and state.firstInLateMinutes remain strictly preserved
       } else {
         // Lateness applies only to a morning arrival. A first-seen punch later in the day
-        // (e.g. after an unsynced morning) must not be compared against standardIn.
+        // (e.g. at lunch or afternoon) must NEVER be treated as a substitute for a missing morning TIME IN.
         const isMorningArrival = punchMinutes < lunchStartMinutes - 30
         if (isMorningArrival) {
           // Strict minute precision morning punctuality against standardIn (e.g. 8:00 AM)
@@ -499,14 +533,18 @@ export class PunchDisplayDirectionResolver {
             hour12: true
           }).format(punchDate)
         } else {
-          // Subsequent IN (e.g. return from break or repeated confirmation)
+          // First punch seen today is during lunch or afternoon.
+          // Never treat a lunch or afternoon punch as a substitute for a missing morning TIME IN!
           resolvedCategory = 'regular'
           resolvedStatus = 'ON TIME'
-          resolvedDetail = 'Returned from break'
+          resolvedDetail = 'Biometric verified'
           resolvedVariant = 'success'
           isEarly = false
           isLate = false
           diffMinutes = 0
+          state.firstInLate = undefined
+          state.firstInLateMinutes = undefined
+          state.firstInTime = undefined
         }
       }
     } else if (resolvedDir === 'BREAK_OUT') {
@@ -574,7 +612,13 @@ export class PunchDisplayDirectionResolver {
       diffMinutes = 0
     }
 
-    // 4. Advance State Machine (unless it's a repeated tap on the same direction)
+    // 4. From 4:00 PM through 5:00 PM (16:00 to 17:00), never show the morning late modal,
+    // regardless of the employee's morning result.
+    if (punchMinutes >= 16 * 60 && punchMinutes <= 17 * 60) {
+      isLate = false
+    }
+
+    // 5. Advance State Machine (unless it's a repeated tap on the same direction)
     const isStateRepeating = state.punchCountToday > 0 && state.lastDirection === resolvedDir
     if (!isStateRepeating) {
       state.punchCountToday += 1
@@ -1152,6 +1196,37 @@ class PunchDisplayService {
   }
 
   /**
+   * Discards previous Philippine calendar day's temporary in-memory state.
+   * No persistent storage is created or modified.
+   */
+  public checkAndResetNewDay = (targetDateStr?: string): void => {
+    const todayStr = targetDateStr || getManilaDateString(new Date())
+    punchDirectionResolver.clearPreviousDayStates(todayStr)
+
+    // Clear session punch history for any previous days
+    for (const key of this.sessionPunchHistory.keys()) {
+      if (!key.startsWith(todayStr)) {
+        this.sessionPunchHistory.delete(key)
+      }
+    }
+
+    // Discard previous day's items from recent punches
+    const formattedToday = this.formatDateDisplay(new Date().toISOString())
+    if (this.recentPunches.value.some(p => p.date && p.date !== formattedToday)) {
+      this.recentPunches.value = this.recentPunches.value.filter(p => p.date === formattedToday)
+      this.punchHistory.value = this.recentPunches.value
+    }
+
+    // Reset current displayed punch if from previous day
+    if (this.currentPunch.value) {
+      const punchDay = getManilaDateString(new Date(this.currentPunch.value.timestamp))
+      if (punchDay !== todayStr) {
+        this.currentPunch.value = null
+      }
+    }
+  }
+
+  /**
    * Resets the resolver session state for a specific employee (used for clean simulation tests).
    */
   public resetResolverEmployee = (bioId: string): void => {
@@ -1295,6 +1370,8 @@ class PunchDisplayService {
 
     const standardInMinutes = (inH || 8) * 60 + (inM || 0)
     const lunchStartMinutes = (lStartH || 12) * 60 + (lStartM || 0)
+    const [lEndH, lEndM] = lunchEnd.split(':').map(Number)
+    const lunchEndMinutes = (lEndH || 13) * 60 + (lEndM || 0)
 
     const morningArrivalCutoffMins = lunchStartMinutes - 15 // e.g. 11:45 AM
 
@@ -1377,6 +1454,23 @@ class PunchDisplayService {
       }
     }
 
+    let priorDirection: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'OT_IN' | 'OT_OUT' | undefined = undefined
+    if (!extra?.isSimulation && primaryPrior.length > 0) {
+      const lastPriorLog = primaryPrior[primaryPrior.length - 1]
+      const stateNum = Number(lastPriorLog.state ?? 1)
+      if (stateNum === 2) priorDirection = 'BREAK_OUT'
+      else if (stateNum === 3) priorDirection = 'BREAK_IN'
+      else if (stateNum === 4) priorDirection = 'OUT'
+      else if (stateNum === 5) priorDirection = 'OT_IN'
+      else if (stateNum === 6) priorDirection = 'OT_OUT'
+      else {
+        const lastMins = getManilaMinutesFromMidnight(lastPriorLog.attendance_time)
+        if (lastMins >= 15 * 60) priorDirection = 'OUT'
+        else if (lastMins >= lunchStartMinutes - 30 && lastMins <= lunchEndMinutes + 15) priorDirection = 'BREAK_OUT'
+        else priorDirection = 'IN'
+      }
+    }
+
     // Resolve punch direction and status using isolated display resolver
     const resolved = punchDirectionResolver.resolve({
       bioId: normalizedBioId,
@@ -1393,7 +1487,9 @@ class PunchDisplayService {
       firstInLate: resolvedFirstInLate,
       firstInLateMinutes: resolvedFirstInLateMinutes,
       isSimulation: extra?.isSimulation,
-      resetSequence: extra?.resetSequence
+      resetSequence: extra?.resetSequence,
+      priorPunchCount: !extra?.isSimulation ? primaryPrior.length : undefined,
+      priorDirection
     })
 
     const direction = resolved.direction
