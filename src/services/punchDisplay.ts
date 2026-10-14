@@ -349,10 +349,19 @@ export class PunchDisplayDirectionResolver {
       // Unflagged punch (raw device state 0 or 1, or normal biometric stream)
       // Sequence-aware & schedule-context transition:
       if (state.punchCountToday === 0) {
-        // First valid punch of the workday -> always TIME IN
-        resolvedDir = 'IN'
-        resolvedLabel = 'TIME IN'
-        resolvedColor = 'emerald'
+        if (punchMinutes >= expectedOutMinutes - 60 || punchMinutes >= 15 * 60) {
+          // No earlier punch is known for this employee today (morning scans not synced,
+          // or the display was reloaded), but this one is at end of day. It cannot be a
+          // morning arrival, so treat it as TIME OUT instead of evaluating it as a late IN.
+          resolvedDir = 'OUT'
+          resolvedLabel = 'TIME OUT'
+          resolvedColor = 'rose'
+        } else {
+          // First valid punch of the workday -> TIME IN
+          resolvedDir = 'IN'
+          resolvedLabel = 'TIME IN'
+          resolvedColor = 'emerald'
+        }
       } else if (state.lastDirection === 'IN') {
         // Employee is currently IN.
         // Check if punch is around lunch time (11:00 AM - 1:15 PM)
@@ -444,7 +453,9 @@ export class PunchDisplayDirectionResolver {
           hour12: true
         }).format(punchDate)
       } else {
-        const isMorningArrival = state.punchCountToday === 0 || punchMinutes < lunchStartMinutes - 30
+        // Lateness applies only to a morning arrival. A first-seen punch later in the day
+        // (e.g. after an unsynced morning) must not be compared against standardIn.
+        const isMorningArrival = punchMinutes < lunchStartMinutes - 30
         if (isMorningArrival) {
           // Strict minute precision morning punctuality against standardIn (e.g. 8:00 AM)
           if (punchMinutes < standardInMinutes) {
@@ -1343,11 +1354,11 @@ class PunchDisplayService {
     }
 
     if (!extra?.isSimulation && primaryPrior.length > 0 && (!resolvedFirstInTime || resolvedFirstInLate === undefined)) {
-      const firstPrimaryIn = primaryPrior.find(p => {
-        const mins = getManilaMinutesFromMidnight(p.attendance_time)
-        const st = Number(p.state ?? 0)
-        return mins < morningArrivalCutoffMins || st === 1 || (p as any).direction === 'IN' || (p as any).windowRole === 'IN'
-      }) || primaryPrior[0]
+      // Only a punch inside the morning window can be the morning TIME IN. Lunch/afternoon
+      // punches (often stored with state 1) must never be used to compute morning lateness.
+      const firstPrimaryIn = primaryPrior.find(p =>
+        getManilaMinutesFromMidnight(p.attendance_time) < morningArrivalCutoffMins
+      )
 
       if (firstPrimaryIn) {
         if (!resolvedFirstInTime) {

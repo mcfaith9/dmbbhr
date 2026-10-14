@@ -828,17 +828,21 @@ function handleDisplayKeyboard(event: KeyboardEvent) {
 watch(
   () => currentPunch.value?.eventId || currentPunch.value?.id,
   (newEventId) => {
-    // PUNCH ALWAYS HAS PRIORITY: Immediately hide any active announcement and reset idle timer!
-    hideAnnouncement()
     resetIdleTimer()
 
     cancelDisplayTimer()
     photoLoadError.value = false
 
     if (!newEventId || !currentPunch.value) {
+      // The punch was cleared (dismiss timer or announcement preview). Do NOT hide announcements
+      // here: the clearing code may have just started one (e.g. the employee's HR notice), and
+      // this watcher runs after it, which would hide the notice immediately.
       dismissProgress.value = 100
       return
     }
+
+    // PUNCH ALWAYS HAS PRIORITY: a new punch immediately hides any active announcement!
+    hideAnnouncement()
 
     const punch = currentPunch.value
 
