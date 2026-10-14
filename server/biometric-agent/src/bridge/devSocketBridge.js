@@ -87,10 +87,13 @@ class DevSocketBridge {
       }
     }
 
-    // Broadcast updated device logs to connected Vue browser instances
+    // Broadcast lightweight status update (avoid oversized WS frames)
     this.broadcastMessage({
-      type: 'DEVICE_LOGS',
-      payload: this.deviceLogs
+      type: 'DEVICE_LOGS_STATUS',
+      payload: {
+        totalCount: this.deviceLogs.length,
+        timestamp: new Date().toISOString()
+      }
     });
   }
 
@@ -118,16 +121,26 @@ class DevSocketBridge {
         return;
       }
 
+      // GET /api/logs: Reliable paginated retrieval in batches (default 50, max 1000)
       if (req.url === '/api/logs' || req.url.startsWith('/api/logs?')) {
         const urlObj = new URL(req.url, 'http://localhost');
+        const offset = Math.max(0, parseInt(urlObj.searchParams.get('offset') || '0', 10));
+        const limitParam = urlObj.searchParams.get('limit');
         const fetchAll = urlObj.searchParams.get('all') === 'true';
-        const limit = parseInt(urlObj.searchParams.get('limit') || '50', 10);
-        const logsToSend = fetchAll ? this.deviceLogs : this.deviceLogs.slice(-limit);
+        // Enforce safe batch size: default 50, maximum 1000 per request
+        const limit = fetchAll ? Math.min(1000, this.deviceLogs.length) : Math.max(1, Math.min(1000, parseInt(limitParam || '50', 10)));
+        const total = this.deviceLogs.length;
+        // Corrected newest-first order: offset 0 is newest
+        const logsToSend = this.deviceLogs.slice(offset, offset + limit);
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'ok',
-          totalCount: this.deviceLogs.length,
+          totalCount: total,
+          offset,
+          limit,
           count: logsToSend.length,
+          hasMore: offset + logsToSend.length < total,
           logs: logsToSend
         }));
         return;
@@ -141,6 +154,9 @@ class DevSocketBridge {
 
       // POST /api/sync: Trigger manual biometric attendance sync with live progress
       if (req.url === '/api/sync' && req.method === 'POST') {
+        req.setTimeout(600000);
+        res.setTimeout(600000);
+
         if (!this.syncHandler) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ status: 'error', message: 'Sync handler not initialized or device not connected' }));
@@ -160,11 +176,18 @@ class DevSocketBridge {
           this.broadcastProgress(progress);
         }).then((result) => {
           this.isSyncing = false;
-          if (result && Array.isArray(result.allRecords)) {
-            this.setDeviceLogs(result.allRecords);
+          // Reload local store from disk to update this.deviceLogs without broadcasting all records
+          const updated = loadLocalStore();
+          if (Array.isArray(updated)) {
+            this.deviceLogs = updated;
+            for (const log of this.deviceLogs) {
+              if (log.id) this.seenEventKeys.add(log.id);
+            }
           }
+          const safeResult = { ...result };
+          delete safeResult.allRecords;
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'ok', ...result }));
+          res.end(JSON.stringify({ status: 'ok', ...safeResult }));
         }).catch((err) => {
           this.isSyncing = false;
           this.broadcastProgress({ stage: 'error', message: `Sync failed: ${err.message}`, progress: 0 });
@@ -227,14 +250,15 @@ class DevSocketBridge {
 
       this.clients.add(client);
 
-      // Immediately send current live device status, recent logs (last 50 for instant UI load), and recent events
+      // Immediately send current live device status, recent logs (newest 50 for instant UI load), and recent events
       // Cap initial handshake so reopening Chrome is instant and never dumps megabytes into memory
       this.sendToClient(client, {
         type: 'INITIAL_STATE',
         payload: {
           device: { ...this.deviceState },
-          logs: this.deviceLogs.slice(-50),
-          recentEvents: this.recentEvents.slice(0, 10)
+          logs: this.deviceLogs.slice(0, 50),
+          recentEvents: this.recentEvents.slice(0, 10),
+          totalStoreCount: this.deviceLogs.length
         }
       });
 

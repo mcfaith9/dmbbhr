@@ -12,7 +12,8 @@ import {
   Radio,
   Fingerprint,
   Trash2,
-  MapPin
+  MapPin,
+  Database
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import { attendanceService } from '@/services/attendance'
@@ -490,6 +491,11 @@ async function handleManualSync() {
   loadData()
 }
 
+async function handleSyncFromStore() {
+  await liveAttendanceService.ingestFromAgentStore({ batchSize: 1000 })
+  loadData()
+}
+
 const latestLiveScan = ref<AttendanceLog | null>(null)
 let unsubscribeLive: (() => void) | null = null
 let unsubscribeLogs: (() => void) | null = null
@@ -585,6 +591,17 @@ onUnmounted(() => {
         >
           <RefreshCw :class="['size-3.5', isSyncing ? 'animate-spin' : '']" />
           <span>{{ isSyncing ? 'Syncing...' : 'Sync Device' }}</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-8 gap-1.5 font-medium shadow-xs text-xs"
+          :disabled="isSyncing"
+          title="Restore/Ingest existing attendance store from local biometric agent in batches"
+          @click="handleSyncFromStore"
+        >
+          <Database class="size-3.5" />
+          <span>Sync Agent Store</span>
         </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs" @click="showImportModal = true">
           <Upload class="size-3.5" />

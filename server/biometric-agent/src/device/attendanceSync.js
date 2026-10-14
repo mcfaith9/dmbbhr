@@ -353,8 +353,7 @@ async function syncBiometricAttendance(deviceOrNull, config, onProgress = () => 
       duplicatesCount,
       newRecords: newCount,
       alreadySynced: duplicatesCount,
-      totalValid: updatedStore.length,
-      allRecords: updatedStore
+      totalValid: updatedStore.length
     };
 
     onProgress({

@@ -21,6 +21,9 @@ const title = computed(() => {
   if (syncProgress.value.stage === 'error') {
     return 'Sync Error'
   }
+  if (syncProgress.value.stage === 'ingesting') {
+    return 'Transferring Scans to Browser Database...'
+  }
   return 'Syncing Hardware Biometric Scans...'
 })
 
@@ -100,6 +103,31 @@ function handleDismiss() {
           >
             <HardDrive class="size-3 text-muted-foreground/70" />
             <span>{{ syncProgress.receivedBytes.toLocaleString() }} / {{ syncProgress.totalBytes.toLocaleString() }} bytes</span>
+          </div>
+        </div>
+
+        <!-- Truthful Persistence Counts Breakdown (Requirement 6) -->
+        <div
+          v-if="syncProgress.counts"
+          class="mt-2 pt-2 border-t border-border/40 grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1 text-[11px] font-mono text-muted-foreground"
+        >
+          <div>
+            <span class="font-sans text-foreground/70 font-medium">Device:</span> {{ syncProgress.counts.deviceRecordsRetrieved.toLocaleString() }}
+          </div>
+          <div>
+            <span class="font-sans text-foreground/70 font-medium">Parsed:</span> {{ syncProgress.counts.recordsParsed.toLocaleString() }}
+          </div>
+          <div>
+            <span class="font-sans text-foreground/70 font-medium">Agent Saved:</span> {{ syncProgress.counts.recordsSavedByAgent.toLocaleString() }}
+          </div>
+          <div>
+            <span class="font-sans text-foreground/70 font-medium">Delivered:</span> {{ syncProgress.counts.recordsDeliveredToBrowser.toLocaleString() }}
+          </div>
+          <div>
+            <span class="font-sans text-foreground/70 font-medium">Saved in DB:</span> {{ syncProgress.counts.recordsInsertedOrUpdated.toLocaleString() }}
+          </div>
+          <div>
+            <span class="font-sans text-foreground/70 font-medium">Duplicates / Skipped:</span> {{ syncProgress.counts.duplicatesSkipped.toLocaleString() }}
           </div>
         </div>
       </div>

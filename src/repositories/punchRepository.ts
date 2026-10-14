@@ -12,6 +12,12 @@ export interface ImportResult {
   batchCount: number
 }
 
+export interface BatchImportContext {
+  existingIds: Set<string>
+  existingSignatureCounts: Map<string, number>
+  employeeBatchMap: Map<string, { bioId: string; name: string; location: any; workGroupId?: string }>
+}
+
 /**
  * Normalizes device ID to a clean consistent string
  */
@@ -525,6 +531,159 @@ export const punchRepository = {
       duplicateCount,
       invalidCount,
       batchCount
+    }
+  },
+
+  /**
+   * Initializes a persistent context for streaming batch imports across multiple HTTP pages.
+   */
+  async createBatchImportContext(): Promise<BatchImportContext> {
+    const existingDbRecords = await db.biometricPunches.toArray()
+    const existingIds = new Set<string>()
+    const existingSignatureCounts = new Map<string, number>()
+
+    for (const rec of existingDbRecords) {
+      existingIds.add(rec.id)
+      const sig = getPunchSignature(rec.bioId, rec.timestampMs, rec.type, rec.state, rec.deviceId)
+      existingSignatureCounts.set(sig, (existingSignatureCounts.get(sig) || 0) + 1)
+    }
+
+    return {
+      existingIds,
+      existingSignatureCounts,
+      employeeBatchMap: new Map()
+    }
+  },
+
+  /**
+   * Imports a single chunk/batch (e.g. 1000 records) safely and idempotently into IndexedDB using existing context.
+   */
+  async bulkImportBatch(
+    rawRecords: any[],
+    context: BatchImportContext
+  ): Promise<{ importedCount: number; duplicateCount: number; invalidCount: number }> {
+    if (!Array.isArray(rawRecords) || rawRecords.length === 0) {
+      return { importedCount: 0, duplicateCount: 0, invalidCount: 0 }
+    }
+
+    // Pre-scan incoming batch for unique SN
+    const snCounts = new Map<string, number>()
+    for (const raw of rawRecords) {
+      const sn = raw.serialNumber ?? raw.serial_number ?? raw.Serial ?? raw.sn
+      if (sn !== undefined && sn !== null && Number(sn) > 0) {
+        const str = String(sn).trim()
+        snCounts.set(str, (snCounts.get(str) || 0) + 1)
+      }
+    }
+    const batchUniqueTxIds = new Set<string>()
+    for (const [snStr, count] of snCounts.entries()) {
+      if (count === 1) {
+        batchUniqueTxIds.add(snStr)
+      }
+    }
+
+    let importedCount = 0
+    let duplicateCount = 0
+    let invalidCount = 0
+    const recordsToInsert: BiometricPunchRecord[] = []
+    const batchOccurrenceMap = new Map<string, number>()
+
+    for (const raw of rawRecords) {
+      const userId = String(raw['User ID'] || raw['userId'] || raw['User_ID'] || raw['ID'] || raw.user_id || '').trim()
+      const rawTime = raw['Date/Time'] || raw['DateTime'] || raw['Date'] || raw['attTime'] || raw['Time'] || raw.attendance_time
+      const rawName = String(raw['Name'] || raw['Employee'] || raw['Employee Name'] || raw.employee_name || '').trim()
+      const rawWg = raw['Work Group'] || raw['WorkGroup'] || raw['Group'] || raw.work_group_id || 'wg-group-c'
+      const devId = raw.device_id || raw.deviceId || 'dev-1'
+
+      if (!userId || !rawTime) {
+        invalidCount++
+        continue
+      }
+
+      const tDate = new Date(rawTime)
+      if (isNaN(tDate.getTime())) {
+        invalidCount++
+        continue
+      }
+
+      const type = Number(raw['Type'] ?? raw.type ?? 1)
+      const state = Number(raw['State'] ?? raw.state ?? 1)
+      const tMs = tDate.getTime()
+      const sig = getPunchSignature(userId, tMs, type, state, devId)
+
+      const occIndex = (batchOccurrenceMap.get(sig) || 0) + 1
+      batchOccurrenceMap.set(sig, occIndex)
+
+      const identity = resolvePunchIdentity(raw, userId, tMs, type, state, devId, occIndex, batchUniqueTxIds)
+      const resolvedId = identity.id
+
+      const existingCountForSig = context.existingSignatureCounts.get(sig) || 0
+      const isAlreadyInDb = context.existingIds.has(resolvedId) || (identity.priority === 3 && occIndex <= existingCountForSig)
+
+      if (isAlreadyInDb) {
+        duplicateCount++
+        continue
+      }
+
+      context.existingIds.add(resolvedId)
+      context.existingSignatureCounts.set(sig, Math.max(existingCountForSig, occIndex))
+
+      const dateKey = getManilaDateString(tDate)
+
+      recordsToInsert.push({
+        id: resolvedId,
+        bioId: userId,
+        date: dateKey,
+        timestamp: tDate.toISOString(),
+        timestampMs: tMs,
+        type,
+        state,
+        serialNumber: Number(raw['Serial'] || raw['Serial Number'] || raw.serial_number || raw.sn || 0),
+        deviceId: devId,
+        deviceIp: raw['IP'] || raw.device_ip || '192.168.1.201',
+        deviceName: raw.device_name || raw.deviceName || 'BISBIO B-29b',
+        locationId: raw.location_id || 'loc-cebu',
+        locationName: raw.location_name || raw.location || 'DBB CEBU',
+        employeeName: rawName || `User ${userId}`,
+        workGroupId: rawWg,
+        isDuplicate: false,
+        importedAt: new Date().toISOString()
+      })
+
+      if (rawName && !context.employeeBatchMap.has(userId)) {
+        context.employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: 'DBB CEBU', workGroupId: rawWg })
+      }
+    }
+
+    if (recordsToInsert.length > 0) {
+      await db.biometricPunches.bulkPut(recordsToInsert)
+      importedCount += recordsToInsert.length
+    }
+
+    return { importedCount, duplicateCount, invalidCount }
+  },
+
+  /**
+   * Finalizes the batch import by updating the employee registry and creating an import job record.
+   */
+  async finishBatchImport(
+    context: BatchImportContext,
+    jobMeta?: { filename?: string; totalRecords?: number; importedCount?: number; duplicateCount?: number; invalidCount?: number }
+  ): Promise<void> {
+    if (context.employeeBatchMap.size > 0) {
+      await employeeRepository.bulkRegisterEmployees(Array.from(context.employeeBatchMap.values()))
+    }
+    if (jobMeta) {
+      await db.importJobs.put({
+        id: `job-${Date.now()}`,
+        filename: jobMeta.filename || 'biometric_agent_store',
+        totalRecords: jobMeta.totalRecords || (jobMeta.importedCount || 0) + (jobMeta.duplicateCount || 0),
+        importedCount: jobMeta.importedCount || 0,
+        duplicateCount: jobMeta.duplicateCount || 0,
+        invalidCount: jobMeta.invalidCount || 0,
+        importedAt: new Date().toISOString(),
+        status: 'completed'
+      })
     }
   },
 

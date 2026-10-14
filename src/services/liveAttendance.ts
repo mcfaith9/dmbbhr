@@ -9,6 +9,7 @@ import { attendanceService } from './attendance'
 import { punchDisplayService, normalizeBioId } from './punchDisplay'
 import { employeeService } from './employees'
 import { workGroupRepository } from '@/repositories/workGroupRepository'
+import { punchRepository } from '@/repositories/punchRepository'
 
 export interface RealDeviceStatus {
   model: string
@@ -23,8 +24,18 @@ export interface RealDeviceStatus {
   lastEvent: string | null
 }
 
+export interface SyncSummaryCounts {
+  deviceRecordsRetrieved: number
+  recordsParsed: number
+  recordsSavedByAgent: number
+  recordsDeliveredToBrowser: number
+  recordsInsertedOrUpdated: number
+  duplicatesSkipped: number
+  failures: number
+}
+
 export interface SyncProgressState {
-  stage: 'connecting' | 'downloading' | 'validating' | 'saving' | 'complete' | 'error' | string
+  stage: 'connecting' | 'reading_users' | 'downloading' | 'validating' | 'saving' | 'ingesting' | 'complete' | 'error' | string
   message: string
   progress: number
   receivedBytes?: number
@@ -35,14 +46,15 @@ export interface SyncProgressState {
     parsedCount?: number
     rejectedCount?: number
     duplicatesCount?: number
-    newRecords: number
-    alreadySynced: number
+    newRecords?: number
+    alreadySynced?: number
     invalidSkipped?: number
-    totalValid: number
+    totalValid?: number
     strategyUsed?: string
     invalidSamples?: Array<{ rawUserId: string; rawDate: string; reason: string }>
     allRecords?: AttendanceLog[]
   }
+  counts?: SyncSummaryCounts
 }
 
 type ScanCallback = (log: AttendanceLog) => void
@@ -202,12 +214,27 @@ class LiveAttendanceService {
               attendanceService.setDeviceLogs(data.payload.logs)
               this.notifyLogsListeners()
             }
+            const agentTotal = Number(data.payload?.totalStoreCount || 0)
+            if (agentTotal > 0) {
+              this.syncStoreIfNeeded(agentTotal)
+            }
           }
 
-          // 1.1 Device Logs Broadcast (from device log pull)
+          // 1.1 Device Logs Broadcast (from device log pull or status)
           if (data.type === 'DEVICE_LOGS' && Array.isArray(data.payload)) {
-            attendanceService.setDeviceLogs(data.payload)
-            this.notifyLogsListeners()
+            if (data.payload.length <= 100) {
+              attendanceService.setDeviceLogs(data.payload)
+              this.notifyLogsListeners()
+            } else {
+              this.syncStoreIfNeeded(data.payload.length)
+            }
+          }
+
+          if (data.type === 'DEVICE_LOGS_STATUS' && data.payload) {
+            const count = Number(data.payload.totalCount || 0)
+            if (count > 0) {
+              this.syncStoreIfNeeded(count)
+            }
           }
 
           // 2. Hardware Status Update (Heartbeat / Connect / Disconnect)
@@ -221,11 +248,7 @@ class LiveAttendanceService {
             const prog = data.payload as SyncProgressState
             this.syncProgress.value = prog
             if (prog.stage === 'complete') {
-              this.isSyncing.value = false
-              if (prog.summary?.allRecords && Array.isArray(prog.summary.allRecords)) {
-                attendanceService.setDeviceLogs(prog.summary.allRecords)
-                this.notifyLogsListeners()
-              }
+              // Note: triggerManualSync transitions seamlessly into browser batched ingestion
             } else if (prog.stage === 'error') {
               this.isSyncing.value = false
             } else {
@@ -417,9 +440,196 @@ class LiveAttendanceService {
     this.syncProgress.value = null
   }
 
+  private isCheckingStoreSync = false
+
+  /**
+   * Automatically checks if the local IndexedDB database has fewer records than the agent store
+   * (e.g. after clearing storage or browser reconnect) and safely synchronizes the store in batches.
+   * Does NOT connect to the physical biometric hardware device.
+   */
+  public async syncStoreIfNeeded(agentTotalCount: number): Promise<void> {
+    if (this.isCheckingStoreSync || this.isSyncing.value || !agentTotalCount || agentTotalCount <= 0) {
+      return
+    }
+    this.isCheckingStoreSync = true
+    try {
+      const currentStoredCount = await punchRepository.count()
+      if (currentStoredCount < agentTotalCount) {
+        console.log(`[DMBBHR] Browser database has ${currentStoredCount} records, agent has ${agentTotalCount}. Syncing local store in batches...`)
+        await this.ingestFromAgentStore({
+          initialSummary: {
+            deviceReturned: agentTotalCount,
+            parsedCount: agentTotalCount,
+            totalValid: agentTotalCount
+          }
+        })
+      }
+    } catch (err: any) {
+      console.warn(`[DMBBHR] Background store sync notice: ${err?.message || err}`)
+    } finally {
+      this.isCheckingStoreSync = false
+    }
+  }
+
+  /**
+   * Reliable paginated/batched ingestion from the agent's local attendance store
+   * into the browser's IndexedDB biometricPunches table in batches of 1,000.
+   * Safe, idempotent, with retry handling and truthful progress reporting.
+   */
+  public async ingestFromAgentStore(options?: {
+    initialSummary?: any
+    batchSize?: number
+  }): Promise<{ success: boolean; message: string; counts: SyncSummaryCounts }> {
+    const httpBase = this.getHttpBaseUrl()
+    const counts: SyncSummaryCounts = {
+      deviceRecordsRetrieved: options?.initialSummary?.deviceReturned ?? 0,
+      recordsParsed: options?.initialSummary?.parsedCount ?? 0,
+      recordsSavedByAgent: options?.initialSummary?.totalValid ?? 0,
+      recordsDeliveredToBrowser: 0,
+      recordsInsertedOrUpdated: 0,
+      duplicatesSkipped: 0,
+      failures: options?.initialSummary?.rejectedCount ?? 0
+    }
+
+    if (!httpBase) {
+      return { success: false, message: 'Agent base URL unavailable', counts }
+    }
+
+    const batchSize = Math.max(100, Math.min(1000, options?.batchSize || 1000))
+    this.isSyncing.value = true
+
+    try {
+      const context = await punchRepository.createBatchImportContext()
+      let offset = 0
+      let totalRecords = counts.recordsSavedByAgent || 0
+      let hasMore = true
+
+      while (hasMore) {
+        let logs: any[] = []
+        let resData: any = null
+
+        // Safe retry loop per batch (up to 3 retries with backoff)
+        let retryAttempt = 0
+        let batchSuccess = false
+        let lastError: any = null
+
+        while (retryAttempt < 3 && !batchSuccess) {
+          try {
+            const res = await fetch(`${httpBase}/api/logs?offset=${offset}&limit=${batchSize}`, {
+              headers: { 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(30000)
+            })
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status} retrieving batch at offset ${offset}`)
+            }
+
+            resData = await res.json()
+            if (resData && Array.isArray(resData.logs)) {
+              logs = resData.logs
+              if (resData.totalCount !== undefined) {
+                totalRecords = resData.totalCount
+                counts.recordsSavedByAgent = totalRecords
+              }
+              batchSuccess = true
+            } else {
+              throw new Error('Invalid JSON format from /api/logs')
+            }
+          } catch (err: any) {
+            retryAttempt++
+            lastError = err
+            if (retryAttempt < 3) {
+              await new Promise(r => setTimeout(r, 400 * retryAttempt))
+            }
+          }
+        }
+
+        if (!batchSuccess) {
+          throw new Error(`Failed to retrieve batch at offset ${offset} after 3 attempts: ${lastError?.message || 'Network error'}`)
+        }
+
+        if (logs.length === 0) {
+          break
+        }
+
+        counts.recordsDeliveredToBrowser += logs.length
+
+        // Import batch safely into IndexedDB
+        const importRes = await punchRepository.bulkImportBatch(logs, context)
+        counts.recordsInsertedOrUpdated += importRes.importedCount
+        counts.duplicatesSkipped += importRes.duplicateCount
+        counts.failures += importRes.invalidCount
+
+        // Update progress state
+        const targetTotal = totalRecords > 0 ? totalRecords : (offset + logs.length)
+        const pct = Math.min(99, Math.round((counts.recordsDeliveredToBrowser / targetTotal) * 100))
+
+        const progressState: SyncProgressState = {
+          stage: 'ingesting',
+          message: `Transferring attendance records: ${counts.recordsDeliveredToBrowser.toLocaleString()} / ${targetTotal.toLocaleString()} delivered (${counts.recordsInsertedOrUpdated.toLocaleString()} new, ${counts.duplicatesSkipped.toLocaleString()} already present)...`,
+          progress: pct,
+          counts: { ...counts }
+        }
+        this.syncProgress.value = progressState
+        this.notifySyncListeners(progressState)
+
+        offset += logs.length
+        hasMore = resData?.hasMore === true && offset < totalRecords && logs.length === batchSize
+
+        // Yield execution to keep browser UI responsive
+        await new Promise(r => setTimeout(r, 0))
+      }
+
+      await punchRepository.finishBatchImport(context, {
+        filename: 'biometric_agent_store',
+        totalRecords: counts.recordsDeliveredToBrowser,
+        importedCount: counts.recordsInsertedOrUpdated,
+        duplicateCount: counts.duplicatesSkipped,
+        invalidCount: counts.failures
+      })
+
+      const finalMsg = `Sync complete. ${counts.deviceRecordsRetrieved > 0 ? counts.deviceRecordsRetrieved.toLocaleString() + ' records retrieved from device, ' : ''}${counts.recordsDeliveredToBrowser.toLocaleString()} delivered to browser, ${counts.recordsInsertedOrUpdated.toLocaleString()} inserted into database (${counts.duplicatesSkipped.toLocaleString()} already present).`
+
+      const completeState: SyncProgressState = {
+        stage: 'complete',
+        message: finalMsg,
+        progress: 100,
+        counts: { ...counts },
+        summary: {
+          success: true,
+          deviceReturned: counts.deviceRecordsRetrieved,
+          parsedCount: counts.recordsParsed,
+          totalValid: counts.recordsSavedByAgent,
+          newRecords: counts.recordsInsertedOrUpdated,
+          alreadySynced: counts.duplicatesSkipped,
+          invalidSkipped: counts.failures
+        }
+      }
+      this.syncProgress.value = completeState
+      this.notifySyncListeners(completeState)
+      this.notifyLogsListeners()
+
+      return { success: true, message: finalMsg, counts }
+    } catch (err: any) {
+      const errorMsg = `Batch ingestion error: ${err?.message || 'Failed to complete record transfer'}`
+      const errorState: SyncProgressState = {
+        stage: 'error',
+        message: errorMsg,
+        progress: 0,
+        counts: { ...counts }
+      }
+      this.syncProgress.value = errorState
+      this.notifySyncListeners(errorState)
+      return { success: false, message: errorMsg, counts }
+    } finally {
+      this.isSyncing.value = false
+    }
+  }
+
   /**
    * Initiates on-demand attendance synchronization from the BISMAC BISBIO B-29b device.
    * Disables repeated polling; runs only when explicitly triggered by the user.
+   * Uses 10-minute timeout so long-running device transfers are never prematurely aborted.
    */
   public async triggerManualSync(): Promise<{ success: boolean; message: string; summary?: any }> {
     if (this.isSyncing.value) {
@@ -445,10 +655,12 @@ class LiveAttendanceService {
         this.isSyncing.value = false
         return { success: false, message: errorMsg }
       }
+
+      // Allow up to 10 minutes (600,000ms) for high-volume device download without aborting
       const res = await fetch(`${httpBase}/api/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(60000) // allow up to 60s for full device download
+        signal: AbortSignal.timeout(600000)
       })
 
       const data = await res.json()
@@ -463,24 +675,26 @@ class LiveAttendanceService {
         return { success: false, message: errorMsg }
       }
 
-      // Success payload received
-      this.isSyncing.value = false
-      if (data.allRecords && Array.isArray(data.allRecords)) {
-        attendanceService.setDeviceLogs(data.allRecords)
-        this.notifyLogsListeners()
+      // Transition to browser persistence phase
+      this.syncProgress.value = {
+        stage: 'ingesting',
+        message: `Biometric device sync complete (${(data.deviceReturned ?? 0).toLocaleString()} records). Transferring to browser database in batches...`,
+        progress: 90
       }
 
-      this.syncProgress.value = {
-        stage: 'complete',
-        message: `Sync complete. ${data.newRecords ?? 0} new record(s) imported, ${data.alreadySynced ?? 0} already synced, ${data.invalidSkipped ?? 0} corrupt/invalid record(s) skipped.`,
-        progress: 100,
-        summary: data
-      }
+      // Reliably ingest all records from the agent's store into IndexedDB in batches of 1,000
+      const ingestRes = await this.ingestFromAgentStore({
+        initialSummary: data,
+        batchSize: 1000
+      })
 
       return {
-        success: true,
-        message: 'Biometric attendance synchronization completed successfully',
-        summary: data
+        success: ingestRes.success,
+        message: ingestRes.message,
+        summary: {
+          ...data,
+          ...ingestRes.counts
+        }
       }
     } catch (err: any) {
       const isTimeout = err?.name === 'TimeoutError' || err?.message?.toLowerCase().includes('timeout')
