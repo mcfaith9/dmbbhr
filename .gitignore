@@ -26,3 +26,6 @@ dist-ssr
 package-lock.json
 
 /public/employee-photos/
+
+/server/biometric-agent/data/attendance_store.json
+/server/biometric-agent/data/sync_cursor.json
