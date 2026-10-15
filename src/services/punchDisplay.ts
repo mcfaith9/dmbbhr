@@ -6,7 +6,7 @@
 
 import { ref } from 'vue'
 import type { AttendanceLog } from '@/types'
-import { formatDuration } from '@/lib/timeUtils'
+import { formatDuration, formatLateDuration } from '@/lib/timeUtils'
 import { employeeService } from '@/services/employees'
 import { punchRepository } from '@/repositories/punchRepository'
 import { workGroupRepository, calculateExpectedOutMinutes } from '@/repositories/workGroupRepository'
@@ -442,7 +442,7 @@ export class PunchDisplayDirectionResolver {
           diffMinutes = params.firstInLateMinutes || (punchMinutes > standardInMinutes ? punchMinutes - standardInMinutes : 1)
           resolvedCategory = 'late'
           resolvedStatus = 'LATE'
-          resolvedDetail = `Late by ${formatDuration(diffMinutes)}`
+          resolvedDetail = `Late by ${formatLateDuration(diffMinutes)}`
           resolvedVariant = 'destructive'
           isEarly = false
           isLate = true
@@ -518,7 +518,7 @@ export class PunchDisplayDirectionResolver {
             diffMinutes = punchMinutes - standardInMinutes
             resolvedCategory = 'late'
             resolvedStatus = 'LATE'
-            resolvedDetail = `Late by ${formatDuration(diffMinutes)}`
+            resolvedDetail = `Late by ${formatLateDuration(diffMinutes)}`
             resolvedVariant = 'destructive'
             isEarly = false
             isLate = true
@@ -983,7 +983,7 @@ class PunchDisplayService {
         return {
           statusCategory: 'late',
           statusLabel: 'LATE',
-          statusDetail: `Late by ${formatDuration(lateDiff)}`,
+          statusDetail: `Late by ${formatLateDuration(lateDiff)}`,
           statusVariant: 'destructive',
           isEarly: false,
           isLate: true,

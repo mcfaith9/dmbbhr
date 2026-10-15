@@ -164,3 +164,31 @@ export function formatDuration(minutes?: number | null): string {
   return `${hours}h ${remainingMins}m`
 }
 
+/**
+ * Formats a late duration according to the application punch display rules:
+ * - 1 -> "1 MIN"
+ * - 2-59 -> "X MINS" (e.g. "5 MINS", "15 MINS", "30 MINS")
+ * - 60 -> "1 hr"
+ * - 61 -> "1 hr 1 min"
+ * - >60 -> "X hrs" / "X hrs Y mins"
+ */
+export function formatLateDuration(minutes?: number | null): string {
+  if (minutes === undefined || minutes === null || isNaN(minutes) || minutes <= 0) {
+    return '0 MINS'
+  }
+  const totalMins = Math.floor(minutes)
+  const hours = Math.floor(totalMins / 60)
+  const remainingMins = totalMins % 60
+
+  if (hours === 0) {
+    return totalMins === 1 ? '1 MIN' : `${totalMins} MINS`
+  }
+
+  const hrUnit = hours === 1 ? '1 hr' : `${hours} hrs`
+  if (remainingMins === 0) {
+    return hrUnit
+  }
+  const minUnit = remainingMins === 1 ? '1 min' : `${remainingMins} mins`
+  return `${hrUnit} ${minUnit}`
+}
+
