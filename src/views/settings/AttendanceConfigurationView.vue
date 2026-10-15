@@ -148,7 +148,7 @@ async function saveWorkGroupForm() {
   }
 
   if (!cleanCode) {
-    formGroupError.value = 'Group Code is required (e.g. A, B, C).'
+    formGroupError.value = 'Group Code is required (e.g. C, D, etc.).'
     return
   }
 
@@ -699,7 +699,7 @@ onMounted(() => {
                 v-model="formGroupName"
                 type="text"
                 required
-                placeholder="e.g. Group A"
+                placeholder="e.g. Group C"
                 class="h-8 text-xs"
               />
             </div>
@@ -707,14 +707,14 @@ onMounted(() => {
             <div class="space-y-1.5">
               <label class="text-xs font-semibold text-foreground flex items-center justify-between">
                 <span>Group Code <span class="text-destructive">*</span></span>
-                <span class="text-[10px] text-muted-foreground font-mono">Unique (e.g. A, B, C)</span>
+                <span class="text-[10px] text-muted-foreground font-mono">Unique (e.g. C)</span>
               </label>
               <Input
                 v-model="formGroupCode"
                 type="text"
                 required
                 maxlength="8"
-                placeholder="e.g. A"
+                placeholder="e.g. C"
                 class="h-8 text-xs font-mono uppercase"
               />
             </div>

@@ -80,34 +80,6 @@ export function formatTime12h(hhmm: string): string {
 
 export const DEFAULT_WORK_GROUPS: WorkGroupRecord[] = [
   {
-    id: 'wg-group-a',
-    name: 'Group A',
-    code: 'A',
-    standardIn: '06:00',
-    requiredWorkMinutes: 480, // 8 hours
-    lunchStart: '12:00',
-    lunchEnd: '13:00',
-    expectedOut: calculateExpectedOutMinutes('06:00', 480, '12:00', '13:00').outHHMM, // "15:00"
-    gracePeriodMinutes: 0,
-    isDefault: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'wg-group-b',
-    name: 'Group B',
-    code: 'B',
-    standardIn: '07:00',
-    requiredWorkMinutes: 480, // 8 hours
-    lunchStart: '12:00',
-    lunchEnd: '13:00',
-    expectedOut: calculateExpectedOutMinutes('07:00', 480, '12:00', '13:00').outHHMM, // "16:00"
-    gracePeriodMinutes: 0,
-    isDefault: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
     id: 'wg-group-c',
     name: 'Group C',
     code: 'C',
@@ -133,6 +105,39 @@ async function ensureWorkGroupsInitialized() {
     await db.workGroups.bulkPut(DEFAULT_WORK_GROUPS)
   }
 
+  // Safe removal of default Groups A and B if present from legacy initialization
+  try {
+    const legacyGroups = await db.workGroups.where('id').anyOf(['wg-group-a', 'wg-group-b']).toArray()
+    if (legacyGroups.length > 0) {
+      // Reassign any employees currently linked to wg-group-a or wg-group-b over to wg-group-c safely
+      const legacyEmps = await db.employees.where('workGroupId').anyOf(['wg-group-a', 'wg-group-b']).toArray()
+      for (const emp of legacyEmps) {
+        emp.workGroupId = 'wg-group-c'
+        emp.updatedAt = new Date().toISOString()
+        await db.employees.put(emp)
+      }
+      // Delete legacy groups from database
+      await db.workGroups.bulkDelete(['wg-group-a', 'wg-group-b'])
+    }
+  } catch (e) {
+    console.warn('[WorkGroupRepository] Migration of legacy groups error:', e)
+  }
+
+  // Ensure wg-group-c exists and is the default with 8:00 AM - 5:00 PM schedule
+  let groupC = await db.workGroups.get('wg-group-c')
+  if (!groupC) {
+    groupC = { ...DEFAULT_WORK_GROUPS[0] }
+    await db.workGroups.put(groupC)
+  } else if (!groupC.isDefault || groupC.standardIn !== '08:00' || groupC.expectedOut !== '17:00') {
+    groupC.isDefault = true
+    groupC.standardIn = '08:00'
+    groupC.lunchStart = '12:00'
+    groupC.lunchEnd = '13:00'
+    groupC.requiredWorkMinutes = 480
+    groupC.expectedOut = '17:00'
+    await db.workGroups.put(groupC)
+  }
+
   const all = await db.workGroups.toArray()
   workGroupCache = new Map<string, WorkGroupRecord>()
   for (const wg of all) {
@@ -143,9 +148,7 @@ async function ensureWorkGroupsInitialized() {
     }
     // Ensure code field exists on legacy cached records
     if (!wg.code) {
-      if (wg.id.includes('group-a') || wg.name.toLowerCase().includes('a')) wg.code = 'A'
-      else if (wg.id.includes('group-b') || wg.name.toLowerCase().includes('b')) wg.code = 'B'
-      else if (wg.id.includes('group-c') || wg.name.toLowerCase().includes('c')) wg.code = 'C'
+      if (wg.id.includes('group-c') || wg.name.toLowerCase().includes('c')) wg.code = 'C'
       else wg.code = wg.name.trim().slice(0, 3).toUpperCase()
     }
     workGroupCache.set(wg.id, wg)
@@ -252,7 +255,7 @@ export const workGroupRepository = {
 
   async getDefault(): Promise<WorkGroup> {
     await ensureWorkGroupsInitialized()
-    const def = Array.from(workGroupCache!.values()).find(w => w.isDefault) || DEFAULT_WORK_GROUPS[2]
+    const def = Array.from(workGroupCache!.values()).find(w => w.isDefault) || workGroupCache!.get('wg-group-c') || DEFAULT_WORK_GROUPS[0]
     return this.toWorkGroup(def)
   },
 

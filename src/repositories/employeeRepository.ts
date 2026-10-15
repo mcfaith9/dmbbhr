@@ -89,7 +89,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50044',
     fullName: 'B Basalo, Randy',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a', // GROUP A: 6:00 AM - 3:00 PM
+    workGroupId: 'wg-group-c', // GROUP A: 6:00 AM - 3:00 PM
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -101,7 +101,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-5007',
     fullName: 'A Abella, Jebjeb',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b', // GROUP B: 7:00 AM - 4:00 PM
+    workGroupId: 'wg-group-c', // GROUP B: 7:00 AM - 4:00 PM
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -125,7 +125,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50062',
     fullName: 'B Baricuatro, Tonton',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -137,7 +137,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50059',
     fullName: 'C Repompo, Raffy',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -161,7 +161,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50052',
     fullName: 'D Canceran, Eduard',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -173,7 +173,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50071',
     fullName: 'D Catampatan, Edgardo',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -197,7 +197,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50065',
     fullName: 'D Villarta Melquiades',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -209,7 +209,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50060',
     fullName: 'E Basalo, Juniemar',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -233,7 +233,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50058',
     fullName: 'E Cuizon, Mark Lester',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -245,7 +245,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50036',
     fullName: 'E Rosal, Joven',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -269,7 +269,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-5009',
     fullName: 'K Pasana, Dothy Marie',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -281,7 +281,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50064',
     fullName: 'L Rosal, Jayson',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -305,7 +305,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50063',
     fullName: 'M Baydal, Reynald',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -317,7 +317,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50066',
     fullName: 'M Dunque, Glenn',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -341,7 +341,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50056',
     fullName: 'O Baydal, Reneboy',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -353,7 +353,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50038',
     fullName: 'P Rosal, Junjie',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -377,7 +377,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50035',
     fullName: 'R Rosales, Larry',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -389,7 +389,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50051',
     fullName: 'R Rosell, Ricky',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -413,7 +413,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50045',
     fullName: 'S Dela Cruz, Ronil',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -425,7 +425,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50037',
     fullName: 'S Rosal, Jessie',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -449,7 +449,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50055',
     fullName: 'T Velasquez, Mark',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-a',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -461,7 +461,7 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
     employeeNumber: 'EMP-50068',
     fullName: 'V Rosal, Alvin',
     location: 'DBB CEBU',
-    workGroupId: 'wg-group-b',
+    workGroupId: 'wg-group-c',
     department: 'Operations',
     position: 'Staff',
     status: 'active',
@@ -496,8 +496,9 @@ async function ensureInitialized() {
   const all = await db.employees.toArray()
   employeeCache = new Map<string, EmployeeRecord>()
   for (const emp of all) {
-    if (!emp.workGroupId) {
+    if (!emp.workGroupId || emp.workGroupId === 'wg-group-a' || emp.workGroupId === 'wg-group-b') {
       emp.workGroupId = 'wg-group-c'
+      db.employees.update(emp.bioId, { workGroupId: 'wg-group-c' }).catch(() => {})
     }
     // Core Identifier Rule: Employee ID = Bio ID
     if (emp.employeeNumber !== emp.bioId) {
@@ -564,17 +565,20 @@ export function getStatusDisplayName(status?: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
-export interface ContractDateParseResult {
+export interface DateParseResult {
   isValid: boolean
   formatted?: string
   raw: string
   isInvalid?: boolean
 }
 
-export function parseContractDate(val: any): ContractDateParseResult | null {
+// Backward compatibility alias
+export type ContractDateParseResult = DateParseResult
+
+export function parseDateValue(val: any, minYear = 1920, maxYear = 2100): DateParseResult | null {
   if (val === undefined || val === null) return null
   const str = String(val).trim()
-  if (str === '' || str === '-' || str === '—' || str.toLowerCase() === 'n/a') return null
+  if (str === '' || str === '-' || str === '—' || str.toLowerCase() === 'n/a' || str.toLowerCase() === 'na') return null
 
   // 1. Numeric Excel serial date (e.g. 45321)
   if (typeof val === 'number') {
@@ -595,12 +599,17 @@ export function parseContractDate(val: any): ContractDateParseResult | null {
     return { isValid: false, isInvalid: true, raw: str }
   }
 
-  // 3. Date string parse (e.g. 'March 17,2017', 'January 09,2025', '2025-01-09')
+  // 3. Exact ISO YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return { isValid: true, formatted: str, raw: str }
+  }
+
+  // 4. Try parsing standard date strings ("July 09, 1996", "March 17,2017", etc.)
   const timestamp = Date.parse(str)
   if (!isNaN(timestamp)) {
     const d = new Date(timestamp)
     const year = d.getFullYear()
-    if (year >= 1950 && year <= 2100) {
+    if (year >= minYear && year <= maxYear) {
       const y = d.getFullYear()
       const m = String(d.getMonth() + 1).padStart(2, '0')
       const day = String(d.getDate()).padStart(2, '0')
@@ -608,11 +617,50 @@ export function parseContractDate(val: any): ContractDateParseResult | null {
     }
   }
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    return { isValid: true, formatted: str, raw: str }
+  // 5. Try slash or hyphen delimited numeric dates (MM/DD/YYYY or DD/MM/YYYY)
+  const slashMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+  if (slashMatch) {
+    const p1 = parseInt(slashMatch[1], 10)
+    const p2 = parseInt(slashMatch[2], 10)
+    const y = parseInt(slashMatch[3], 10)
+    if (y >= minYear && y <= maxYear) {
+      const month = p1 <= 12 ? p1 : p2
+      const day = p1 <= 12 ? p2 : p1
+      return {
+        isValid: true,
+        formatted: `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        raw: str
+      }
+    }
   }
 
   return { isValid: false, isInvalid: true, raw: str }
+}
+
+export function parseContractDate(val: any): DateParseResult | null {
+  return parseDateValue(val, 1950, 2100)
+}
+
+export function parseBirthday(val: any): DateParseResult | null {
+  return parseDateValue(val, 1920, 2100)
+}
+
+export function cleanGovNumber(val: any): string | undefined {
+  if (val === undefined || val === null) return undefined
+  const str = String(val).trim()
+  if (str === '' || str === '-' || str === '—' || str.toLowerCase() === 'n/a' || str.toLowerCase() === 'na') {
+    return undefined
+  }
+  return str
+}
+
+export function cleanStringField(val: any): string | undefined {
+  if (val === undefined || val === null) return undefined
+  const str = String(val).trim()
+  if (str === '' || str === '-' || str === '—' || str.toLowerCase() === 'n/a' || str.toLowerCase() === 'na') {
+    return undefined
+  }
+  return str
 }
 
 export interface PeopleImportRowItem {
@@ -622,6 +670,12 @@ export interface PeopleImportRowItem {
   group: string
   department: string
   contractDate?: string
+  dateOfBirth?: string
+  position?: string
+  sssNumber?: string
+  pagibigNumber?: string
+  philhealthNumber?: string
+  tin?: string
   rawStatus?: string
   displayStatus: string // e.g. "Active → Resigned", "Active", "Resigned"
   previousStatus?: string
