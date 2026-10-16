@@ -13,7 +13,11 @@ import {
   Sparkles,
   RefreshCw,
   Building2,
-  ExternalLink
+  ExternalLink,
+  ChevronsUpDown,
+  Check,
+  Users,
+  Fingerprint
 } from '@lucide/vue'
 import { employeeService } from '@/services/employees'
 import { attendanceService, type DailyAttendanceRecord } from '@/services/attendance'
@@ -23,13 +27,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from '@/components/ui/popover'
 import {
   Avatar,
   AvatarFallback,
@@ -42,8 +43,15 @@ const route = useRoute()
 const employees = ref<Employee[]>([])
 const selectedBioId = ref<string>('')
 const employeeSearchQuery = ref('')
+const isEmployeeSelectorOpen = ref(false)
 const isLoadingEmployees = ref(true)
 const workGroups = ref<WorkGroup[]>([])
+
+function selectEmployee(bioId: string) {
+  selectedBioId.value = bioId
+  isEmployeeSelectorOpen.value = false
+  employeeSearchQuery.value = ''
+}
 
 // Duty period state: 15-day sliding window or semi-monthly anchor
 // Default period: Current 15-day period (1st to 15th, or 16th to end of month)
@@ -116,21 +124,15 @@ const currentPeriod = computed<DutyPeriodInfo>(() => {
     periodLabel = '1st Half (Days 1–15)'
   } else {
     // 2nd half: 16 to end of month (e.g. 16-30 = 15 days, 16-31 = 16 days, Feb = 13/14 days)
-    // To strictly maintain the requested 15-day period window while respecting payroll boundaries:
     const lastDayOfMonth = new Date(year, month + 1, 0).getDate()
-    const targetEndDay = Math.min(lastDayOfMonth, 30) // standard 15-day payroll cycle (16 to 30)
-    for (let d = 16; d <= targetEndDay; d++) {
+    for (let d = 16; d <= lastDayOfMonth; d++) {
       const mm = String(month + 1).padStart(2, '0')
       const dd = String(d).padStart(2, '0')
       dates.push(`${year}-${mm}-${dd}`)
     }
-    // If month has 31 days, include day 31 so end of month is not missed
-    if (lastDayOfMonth === 31 && !dates.includes(`${year}-${String(month + 1).padStart(2, '0')}-31`)) {
-      dates.push(`${year}-${String(month + 1).padStart(2, '0')}-31`)
-    }
     startDateStr = dates[0]
     endDateStr = dates[dates.length - 1]
-    periodLabel = `2nd Half (Days 16–${dates[dates.length - 1].split('-')[2]})`
+    periodLabel = `2nd Half (Days 16–${lastDayOfMonth})`
   }
 
   const [sY, sM, sD] = startDateStr.split('-').map(Number)
@@ -317,6 +319,7 @@ const dutyCells = computed<DutyCellData[]>(() => {
 const periodSummary = computed(() => {
   const cells = dutyCells.value
   const presentDays = cells.filter(c => c.statusCategory === 'present').length
+  const lateDays = cells.filter(c => c.statusCategory === 'present' && Boolean(c.lateMinutes && c.lateMinutes > 0)).length
   const absentDays = cells.filter(c => c.statusCategory === 'absent').length
   const restDays = cells.filter(c => c.statusCategory === 'rest_day').length
   const holidays = cells.filter(c => c.statusCategory === 'holiday').length
@@ -329,6 +332,7 @@ const periodSummary = computed(() => {
   return {
     totalDays: cells.length,
     presentDays,
+    lateDays,
     absentDays,
     restDays,
     holidays,
@@ -433,7 +437,7 @@ onMounted(async () => {
       }
     }
   } catch (err) {
-    console.error('Failed to initialize duty calendar data:', err)
+    console.error('Failed to initialize attendance matrix data:', err)
   } finally {
     isLoadingEmployees.value = false
   }
@@ -451,11 +455,11 @@ onMounted(async () => {
         <div class="flex items-center gap-2">
           <CalendarDays class="size-5 text-primary shrink-0" />
           <h1 class="text-xl font-bold tracking-tight text-foreground">
-            Employee Duty Calendar
+            Employee Attendance Matrix
           </h1>
         </div>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Fifteen-day semi-monthly duty attendance, shift compliance, and rest day calendar for payroll verification.
+          Fifteen-day semi-monthly attendance matrix, shift compliance, and rest day calendar for payroll verification.
         </p>
       </div>
 
@@ -469,7 +473,7 @@ onMounted(async () => {
           @click="loadEmployeePeriodAttendance"
         >
           <RefreshCw :class="['size-3.5', isLoadingAttendance ? 'animate-spin' : '']" />
-          <span>Refresh Duty</span>
+          <span>Refresh Attendance</span>
         </Button>
       </div>
     </div>
@@ -477,44 +481,94 @@ onMounted(async () => {
     <!-- Section A: Employee Selector Card -->
     <div class="rounded-xl border bg-card p-3.5 sm:p-4 shadow-xs space-y-3">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <!-- Searchable Selector -->
+        <!-- Single Searchable Employee Selector -->
         <div class="flex-1 min-w-0 max-w-xl space-y-1.5">
           <label class="text-xs font-semibold text-foreground flex items-center justify-between">
             <span>Select Employee (Excludes Resigned)</span>
             <span class="text-[11px] text-muted-foreground font-normal">
-              {{ selectableEmployees.length }} active employees
+              {{ employees.filter(e => e.status !== 'resigned').length }} active employees
             </span>
           </label>
-          <div class="flex items-center gap-2">
-            <div class="relative flex-1">
-              <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground pointer-events-none" />
-              <Input
-                v-model="employeeSearchQuery"
-                type="text"
-                placeholder="Search by name, Bio ID, or department..."
-                class="h-8 pl-8 text-xs bg-background"
-              />
-            </div>
-            <div class="w-56 shrink-0">
-              <Select v-model="selectedBioId">
-                <SelectTrigger class="h-8 text-xs bg-background w-full">
-                  <SelectValue placeholder="Choose employee..." />
-                </SelectTrigger>
-                <SelectContent class="max-h-64">
-                  <SelectGroup>
-                    <SelectItem
-                      v-for="emp in selectableEmployees"
-                      :key="emp.biometric_user_id"
-                      :value="emp.biometric_user_id"
-                      class="text-xs"
-                    >
-                      {{ emp.full_name }} (#{{ emp.biometric_user_id }})
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+
+          <Popover v-model:open="isEmployeeSelectorOpen">
+            <PopoverTrigger as-child>
+              <button
+                type="button"
+                role="combobox"
+                :aria-expanded="isEmployeeSelectorOpen"
+                class="flex h-9 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-1.5 text-xs shadow-2xs transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+                :class="selectedEmployee ? 'border-primary/40 font-medium' : 'text-muted-foreground'"
+              >
+                <div class="flex items-center gap-2 truncate mr-2">
+                  <Fingerprint v-if="selectedEmployee" class="size-4 text-primary shrink-0" />
+                  <Users v-else class="size-4 text-muted-foreground shrink-0" />
+                  <span v-if="selectedEmployee" class="truncate text-foreground font-semibold">
+                    {{ selectedEmployee.full_name }}
+                    <span class="text-[11px] font-mono text-muted-foreground font-normal">
+                      (#{{ selectedEmployee.biometric_user_id }}<template v-if="selectedEmployee.department"> • {{ selectedEmployee.department }}</template>)
+                    </span>
+                  </span>
+                  <span v-else class="text-muted-foreground">
+                    Search and choose employee...
+                  </span>
+                </div>
+                <ChevronsUpDown class="size-3.5 text-muted-foreground opacity-60 shrink-0" />
+              </button>
+            </PopoverTrigger>
+
+            <PopoverContent class="w-80 sm:w-96 p-2 shadow-lg rounded-xl text-xs space-y-2" align="start">
+              <!-- Search within Selector -->
+              <div class="relative">
+                <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  v-model="employeeSearchQuery"
+                  type="text"
+                  placeholder="Search by name, Bio ID, or department..."
+                  class="pl-8 h-8 text-xs w-full bg-background"
+                  autofocus
+                />
+              </div>
+
+              <!-- Options List -->
+              <div class="max-h-60 overflow-y-auto space-y-0.5 pr-0.5">
+                <div v-if="selectableEmployees.length === 0" class="p-3 text-center text-xs text-muted-foreground">
+                  No active employee found matching "{{ employeeSearchQuery }}"
+                </div>
+
+                <button
+                  v-for="emp in selectableEmployees"
+                  :key="emp.biometric_user_id"
+                  type="button"
+                  class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer text-left group"
+                  :class="
+                    selectedBioId === emp.biometric_user_id
+                      ? 'bg-primary/10 text-primary font-semibold'
+                      : 'hover:bg-muted text-foreground'
+                  "
+                  @click="selectEmployee(emp.biometric_user_id)"
+                >
+                  <div class="min-w-0 flex-1 truncate mr-2">
+                    <span class="font-medium text-foreground truncate group-hover:text-primary">
+                      {{ emp.full_name }}
+                    </span>
+                    <span v-if="emp.department" class="text-[10px] text-muted-foreground block truncate">
+                      {{ emp.department }}
+                    </span>
+                  </div>
+
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    <span class="px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium font-mono text-muted-foreground">
+                      #{{ emp.biometric_user_id }}
+                    </span>
+                    <Check
+                      v-if="selectedBioId === emp.biometric_user_id"
+                      class="size-3.5 text-primary ml-1 shrink-0"
+                    />
+                  </div>
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
 
         <!-- Selected Employee Identity Summary Pill -->
@@ -551,7 +605,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Section B: Fifteen-Day Duty Calendar Navigation & Period Bar -->
+    <!-- Section B: Fifteen-Day Attendance Matrix Navigation & Period Bar -->
     <div class="rounded-xl border bg-card p-3.5 sm:p-4 shadow-xs space-y-3">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <!-- Period Navigation -->
@@ -576,7 +630,7 @@ onMounted(async () => {
               </Badge>
             </div>
             <span class="text-[11px] text-muted-foreground">
-              Official semi-monthly payroll duty window (15-day period)
+              Official semi-monthly payroll attendance matrix window
             </span>
           </div>
 
@@ -606,6 +660,10 @@ onMounted(async () => {
             <CheckCircle2 class="size-3.5 text-emerald-600" />
             <span>Duty / Present: <strong>{{ periodSummary.presentDays }}</strong> days</span>
           </div>
+          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-medium">
+            <Clock class="size-3.5 text-amber-600" />
+            <span>Late: <strong>{{ periodSummary.lateDays }}</strong> {{ periodSummary.lateDays === 1 ? 'day' : 'days' }}</span>
+          </div>
           <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-destructive/10 border-destructive/20 text-destructive text-xs font-medium">
             <XCircle class="size-3.5 text-destructive" />
             <span>Absent: <strong>{{ periodSummary.absentDays }}</strong> days</span>
@@ -623,9 +681,15 @@ onMounted(async () => {
 
       <!-- Calendar Spreadsheet Grid with Horizontal Scrolling on Small Screens -->
       <div class="w-full overflow-x-auto rounded-lg border bg-background shadow-2xs">
-        <div class="min-w-[960px] divide-y divide-border">
+        <div
+          class="divide-y divide-border"
+          :style="{ minWidth: `${Math.max(960, dutyCells.length * 64)}px` }"
+        >
           <!-- Calendar Column Headers: Dates & Days of Week -->
-          <div class="grid grid-cols-15 bg-muted/40 divide-x divide-border text-center">
+          <div
+            class="grid bg-muted/40 divide-x divide-border text-center"
+            :style="{ gridTemplateColumns: `repeat(${dutyCells.length}, minmax(0, 1fr))` }"
+          >
             <div
               v-for="cell in dutyCells"
               :key="cell.date"
@@ -649,7 +713,10 @@ onMounted(async () => {
           </div>
 
           <!-- Calendar Cell Content: Duty Status / Punch Times -->
-          <div class="grid grid-cols-15 divide-x divide-border text-center min-h-[140px]">
+          <div
+            class="grid divide-x divide-border text-center min-h-[140px]"
+            :style="{ gridTemplateColumns: `repeat(${dutyCells.length}, minmax(0, 1fr))` }"
+          >
             <div
               v-for="cell in dutyCells"
               :key="`cell-${cell.date}`"
@@ -672,7 +739,7 @@ onMounted(async () => {
                   ]"
                   :title="cell.statusLabel"
                 >
-                  <span v-if="cell.statusCategory === 'present' && cell.lateMinutes > 0">
+                  <span v-if="cell.statusCategory === 'present' && (cell.lateMinutes ?? 0) > 0">
                     LATE
                   </span>
                   <span v-else-if="cell.statusCategory === 'present'">
@@ -733,7 +800,7 @@ onMounted(async () => {
 
                   <!-- LATE MINUTES -->
                   <div
-                    v-if="cell.statusCategory === 'present' && cell.lateMinutes > 0"
+                    v-if="cell.statusCategory === 'present' && (cell.lateMinutes ?? 0) > 0"
                     class="text-[9px] text-rose-600 dark:text-rose-400 font-semibold font-mono"
                   >
                     Late {{ cell.lateMinutes }}m
@@ -799,11 +866,11 @@ onMounted(async () => {
 
     <!-- Section C: Summary and Operational Insights -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-      <!-- Card 1: Attendance Attendance Breakdown -->
+      <!-- Card 1: Period Attendance Breakdown -->
       <div class="rounded-xl border bg-card p-4 shadow-xs space-y-2">
         <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
           <CheckCircle2 class="size-3.5 text-emerald-600" />
-          <span>Period Duty Breakdown</span>
+          <span>Period Attendance Breakdown</span>
         </h3>
         <div class="space-y-1.5 text-xs">
           <div class="flex items-center justify-between py-1 border-b">
@@ -813,6 +880,10 @@ onMounted(async () => {
           <div class="flex items-center justify-between py-1 border-b">
             <span class="text-muted-foreground">Days Present / Duty:</span>
             <span class="font-bold text-emerald-600">{{ periodSummary.presentDays }} days</span>
+          </div>
+          <div class="flex items-center justify-between py-1 border-b">
+            <span class="text-muted-foreground">Late Occurrences:</span>
+            <span class="font-bold text-amber-600">{{ periodSummary.lateDays }} {{ periodSummary.lateDays === 1 ? 'day' : 'days' }}</span>
           </div>
           <div class="flex items-center justify-between py-1 border-b">
             <span class="text-muted-foreground">Days Absent:</span>

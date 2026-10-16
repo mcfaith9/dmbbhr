@@ -103,7 +103,7 @@ const navSections: NavItem[] = [
     icon: WalletCards,
     children: [
       { title: "Payroll Periods", url: "/payroll/periods", description: "Cut-offs and batch generation" },
-      { title: "Duty Calendar", url: "/payroll/duty-calendar", description: "15-day employee attendance and duty calendar" },
+      { title: "Attendance Matrix", url: "/payroll/attendance-matrix", description: "15-day employee attendance matrix and schedule" },
       { title: "Payroll Records", url: "/payroll/records", description: "Audited payroll sheets" },
     ],
   },

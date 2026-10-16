@@ -13,7 +13,7 @@ const LeaveView = () => import('@/views/LeaveView.vue')
 const OvertimeView = () => import('@/views/OvertimeView.vue')
 const HolidaysView = () => import('@/views/HolidaysView.vue')
 const PayrollPeriodsView = () => import('@/views/PayrollPeriodsView.vue')
-const DutyCalendarView = () => import('@/views/DutyCalendarView.vue')
+const AttendanceMatrixView = () => import('@/views/AttendanceMatrixView.vue')
 const PayrollRecordsView = () => import('@/views/PayrollRecordsView.vue')
 const ReportsView = () => import('@/views/ReportsView.vue')
 const UserAccountsView = () => import('@/views/settings/UserAccountsView.vue')
@@ -123,10 +123,11 @@ export const router = createRouter({
           meta: { title: 'Payroll Periods', breadcrumb: ['Payroll', 'Periods'] }
         },
         {
-          path: 'payroll/duty-calendar',
-          name: 'payroll-duty-calendar',
-          component: DutyCalendarView,
-          meta: { title: 'Duty Calendar', breadcrumb: ['Payroll', 'Duty Calendar'] }
+          path: 'payroll/attendance-matrix',
+          alias: ['payroll/duty-calendar'],
+          name: 'payroll-attendance-matrix',
+          component: AttendanceMatrixView,
+          meta: { title: 'Attendance Matrix', breadcrumb: ['Payroll', 'Attendance Matrix'] }
         },
         {
           path: 'payroll/records',
