@@ -979,6 +979,8 @@ onMounted(async () => {
       v-model:open="showPayrollCalculationModal"
       :selected-employee="selectedEmployee"
       :period-anchor-date="periodAnchorDate"
+      :attendance-records="Array.from(attendanceRecordsMap.values())"
+      :holidays-list="Array.from(holidaysMap.entries()).map(([date, h]) => ({ id: `hol-${date}`, name: h.name, date, type: h.type as any, isNationwide: true }))"
     />
   </div>
 </template>

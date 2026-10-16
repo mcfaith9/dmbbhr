@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, toRaw } from 'vue'
 import {
   Dialog,
   DialogContent,
@@ -43,11 +43,15 @@ import {
   type ItemizedDeduction
 } from '@/services/payrollCalculation'
 import type { Employee } from '@/types'
+import type { HolidayRecord } from '@/db'
+import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
 
 const props = defineProps<{
   open: boolean
   selectedEmployee?: Employee | null
   periodAnchorDate?: Date
+  attendanceRecords?: DailyAttendanceRecord[]
+  holidaysList?: HolidayRecord[]
 }>()
 
 const emit = defineEmits<{
@@ -78,11 +82,11 @@ const newDeductionDescription = ref('')
 const newDeductionAmount = ref<number | ''>('')
 
 // Initialize cutoffs list
-function initCutoffs() {
+function initCutoffs(forceSync = false) {
   const anchor = props.periodAnchorDate || new Date()
   const cutoffs = payrollCalculationService.getAvailableCutoffs(anchor, 8)
   availableCutoffs.value = cutoffs
-  if (!selectedCutoffId.value && cutoffs.length > 0) {
+  if ((forceSync || !selectedCutoffId.value) && cutoffs.length > 0) {
     selectedCutoffId.value = cutoffs[0].id
   }
 }
@@ -98,16 +102,27 @@ async function loadEmployeePayroll() {
   }
 
   if (!currentCutoff.value) {
-    initCutoffs()
+    initCutoffs(false)
   }
 
   if (!currentCutoff.value) return
 
   isLoading.value = true
   try {
+    let passedRecords = props.attendanceRecords || []
+    if (passedRecords.length > 0 && currentCutoff.value) {
+      const cutoffDatesSet = new Set(currentCutoff.value.dates)
+      const hasMatchingDates = passedRecords.some(r => cutoffDatesSet.has(r.raw_date || r.date))
+      if (!hasMatchingDates) {
+        passedRecords = []
+      }
+    }
+
     const record = await payrollCalculationService.computeSingleEmployeePayroll(
       currentCutoff.value,
-      props.selectedEmployee
+      props.selectedEmployee,
+      props.holidaysList || [],
+      passedRecords
     )
     currentRecord.value = record
   } catch (err: any) {
@@ -122,13 +137,23 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      initCutoffs()
+      initCutoffs(true)
       loadEmployeePayroll()
     } else {
       // Clear messages when closed
       saveSuccessMessage.value = ''
       saveErrorMessage.value = ''
       isPayslipViewOpen.value = false
+    }
+  }
+)
+
+watch(
+  () => props.periodAnchorDate,
+  () => {
+    if (props.open) {
+      initCutoffs(true)
+      loadEmployeePayroll()
     }
   }
 )
@@ -141,6 +166,16 @@ watch(
       loadEmployeePayroll()
     }
   }
+)
+
+watch(
+  () => props.attendanceRecords,
+  () => {
+    if (props.open) {
+      loadEmployeePayroll()
+    }
+  },
+  { deep: true }
 )
 
 watch(selectedCutoffId, (newId, oldId) => {
@@ -225,8 +260,9 @@ async function saveRecord(batchStatus: 'draft' | 'approved' | 'finalized') {
       currentRecord.value.reviewStatus = 'finalized'
     }
 
+    const plainRecord = toRaw(currentRecord.value)
     await payrollCalculationService.savePayrollSnapshot(
-      [currentRecord.value],
+      [plainRecord],
       batchStatus,
       'Authorized HR Admin'
     )
