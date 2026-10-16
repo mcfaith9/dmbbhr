@@ -247,12 +247,14 @@ const dutyCells = computed<DutyCellData[]>(() => {
       notes = record.notes || 'Approved Leave'
     } else if (hasValidIn) {
       statusCategory = 'present'
+
       if (record?.late_minutes && record.late_minutes > 0) {
         statusLabel = `Present (Late ${record.late_minutes}m)`
+        statusBadgeVariant = 'warning'
       } else {
         statusLabel = 'Present / Duty'
+        statusBadgeVariant = 'success'
       }
-      statusBadgeVariant = 'success'
     } else if (hol) {
       // Official calendar holiday
       statusCategory = 'holiday'
@@ -652,10 +654,18 @@ onMounted(async () => {
               <div class="flex justify-center mb-1.5">
                 <Badge
                   :variant="cell.statusBadgeVariant"
-                  class="text-[9px] px-1.5 py-0 uppercase tracking-tight font-bold shrink-0 truncate max-w-full"
+                  :class="[
+                    'text-[9px] px-1.5 py-0 uppercase tracking-tight font-bold shrink-0 truncate max-w-full',
+                    cell.statusBadgeVariant === 'destructive' ? 'text-white' : ''
+                  ]"
                   :title="cell.statusLabel"
                 >
-                  <span v-if="cell.statusCategory === 'present'">DUTY</span>
+                  <span v-if="cell.statusCategory === 'present' && cell.lateMinutes > 0">
+                    LATE
+                  </span>
+                  <span v-else-if="cell.statusCategory === 'present'">
+                    DUTY
+                  </span>
                   <span v-else-if="cell.statusCategory === 'absent'">ABSENT</span>
                   <span v-else-if="cell.statusCategory === 'rest_day'">REST</span>
                   <span v-else-if="cell.statusCategory === 'holiday'">HOLIDAY</span>
