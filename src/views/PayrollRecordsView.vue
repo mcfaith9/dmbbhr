@@ -5,25 +5,15 @@ import { Button } from '@/components/ui/button'
 
 const records = [
   {
-    employee: 'K Pasana, Dothy Marie',
-    id: '5009',
-    basic_pay: '₱18,000.00',
+    employee: 'Cabigas Marc Louie',
+    id: '25065',
+    basic_pay: '₱180,000.00',
     worked_days: '11 days',
     late_deduction: '₱0.00',
-    gross_pay: '₱18,000.00',
-    net_pay: '₱16,740.00',
+    gross_pay: '₱180,000.00',
+    net_pay: '₱160,740.00',
     status: 'Audited'
   },
-  {
-    employee: 'Alvarez, Kenneth',
-    id: '25013',
-    basic_pay: '₱16,500.00',
-    worked_days: '11 days',
-    late_deduction: '₱125.00',
-    gross_pay: '₱16,375.00',
-    net_pay: '₱15,220.00',
-    status: 'Audited'
-  }
 ]
 </script>
 

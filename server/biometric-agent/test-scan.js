@@ -15,7 +15,7 @@ const payload = {
   id: `scan-test-${Date.now()}`,
   user_id: userId,
   userId: userId,
-  employee_name: userId === '50366' ? 'Santos, Roberto' : (userId === '5009' ? 'K Pasana, Dothy Marie' : 'Biometric User'),
+  employee_name: userId === '50366' ? 'Test User' : (userId === '25065' ? 'Cabigas Marc Louie' : 'Biometric User'),
   attendance_time: now,
   timestamp: now,
   type: 1,
