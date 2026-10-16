@@ -645,7 +645,7 @@ onMounted(async () => {
           </Button>
 
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             class="h-8 text-xs cursor-pointer ml-1"
             @click="goToTodayPeriod"
@@ -658,7 +658,7 @@ onMounted(async () => {
         <div class="flex items-center gap-2 flex-wrap">
           <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium">
             <CheckCircle2 class="size-3.5 text-emerald-600" />
-            <span>Duty / Present: <strong>{{ periodSummary.presentDays }}</strong> days</span>
+            <span>Duty / Present: <strong>{{ periodSummary.presentDays }}</strong></span>
           </div>
           <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-medium">
             <Clock class="size-3.5 text-amber-600" />
@@ -666,11 +666,11 @@ onMounted(async () => {
           </div>
           <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-destructive/10 border-destructive/20 text-destructive text-xs font-medium">
             <XCircle class="size-3.5 text-destructive" />
-            <span>Absent: <strong>{{ periodSummary.absentDays }}</strong> days</span>
+            <span>Absent: <strong>{{ periodSummary.absentDays }}</strong></span>
           </div>
           <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/60 text-muted-foreground text-xs font-medium">
             <Coffee class="size-3.5 text-muted-foreground" />
-            <span>Rest Days: <strong>{{ periodSummary.restDays }}</strong></span>
+            <span>Rest: <strong>{{ periodSummary.restDays }}</strong></span>
           </div>
           <div v-if="periodSummary.holidays > 0" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-medium">
             <Sparkles class="size-3.5 text-amber-600" />
@@ -693,7 +693,7 @@ onMounted(async () => {
             <div
               v-for="cell in dutyCells"
               :key="cell.date"
-              class="py-2.5 px-1 flex flex-col items-center justify-center transition-colors"
+              class="py-1 px-1 flex flex-col items-center justify-center transition-colors"
               :class="[
                 cell.isToday
                   ? 'bg-primary/10 font-bold'
@@ -747,7 +747,7 @@ onMounted(async () => {
                   </span>
                   <span v-else-if="cell.statusCategory === 'absent'">ABSENT</span>
                   <span v-else-if="cell.statusCategory === 'rest_day'">
-                    {{ cell.timeIn ? 'RESTDUTY' : 'REST' }}
+                    {{ cell.timeIn ? 'RD' : 'REST' }}
                   </span>
                   <span v-else-if="cell.statusCategory === 'holiday'">HOLIDAY</span>
                   <span v-else-if="cell.statusCategory === 'leave'">LEAVE</span>
