@@ -245,6 +245,18 @@ const dutyCells = computed<DutyCellData[]>(() => {
       statusLabel = 'On Leave'
       statusBadgeVariant = 'warning'
       notes = record.notes || 'Approved Leave'
+    } else if (isSunday) {
+      statusCategory = 'rest_day'
+
+      if (hasValidIn) {
+        statusLabel = 'Rest Duty'
+        statusBadgeVariant = 'success'
+      } else {
+        statusLabel = 'Rest Day'
+        statusBadgeVariant = 'secondary'
+      }
+
+      notes = hasValidIn ? 'Worked on rest day' : 'Sunday Rest Day'
     } else if (hasValidIn) {
       statusCategory = 'present'
 
@@ -667,7 +679,9 @@ onMounted(async () => {
                     DUTY
                   </span>
                   <span v-else-if="cell.statusCategory === 'absent'">ABSENT</span>
-                  <span v-else-if="cell.statusCategory === 'rest_day'">REST</span>
+                  <span v-else-if="cell.statusCategory === 'rest_day'">
+                    {{ cell.timeIn ? 'RESTDUTY' : 'REST' }}
+                  </span>
                   <span v-else-if="cell.statusCategory === 'holiday'">HOLIDAY</span>
                   <span v-else-if="cell.statusCategory === 'leave'">LEAVE</span>
                   <span v-else>SCHED</span>
@@ -676,38 +690,70 @@ onMounted(async () => {
 
               <!-- Middle: Verified Attendance Hours or Context -->
               <div class="flex-1 flex flex-col items-center justify-center py-1 space-y-1">
-                <!-- Present Duty: TIME IN and TIME OUT -->
-                <template v-if="cell.statusCategory === 'present'">
+
+                <!-- Present Duty or Rest Day with a Punch -->
+                <template
+                  v-if="
+                    cell.statusCategory === 'present' ||
+                    (cell.statusCategory === 'rest_day' && cell.timeIn)
+                  "
+                >
+                  <!-- TIME IN -->
                   <div class="text-[10px] font-mono leading-tight">
                     <span class="text-muted-foreground block text-[9px]">IN</span>
                     <span class="font-bold text-emerald-700 dark:text-emerald-400">
-                      {{ cell.timeIn || '8:00 AM' }}
+                      {{ cell.timeIn }}
                     </span>
                   </div>
-                  <div v-if="cell.timeOut" class="text-[10px] font-mono leading-tight">
+
+                  <!-- TIME OUT -->
+                  <div class="text-[10px] font-mono leading-tight">
                     <span class="text-muted-foreground block text-[9px]">OUT</span>
-                    <span class="font-bold text-foreground">
+                    <span
+                      v-if="cell.timeOut"
+                      class="font-bold text-foreground"
+                    >
                       {{ cell.timeOut }}
                     </span>
+                    <span
+                      v-else
+                      class="font-semibold text-amber-600 dark:text-amber-400"
+                    >
+                      No time out
+                    </span>
                   </div>
-                  <div v-if="cell.workHours" class="text-[9px] text-muted-foreground font-mono">
+
+                  <!-- WORK HOURS -->
+                  <div
+                    v-if="cell.workHours"
+                    class="text-[9px] text-muted-foreground font-mono"
+                  >
                     {{ cell.workHours }}
                   </div>
-                  <div v-if="cell.lateMinutes && cell.lateMinutes > 0" class="text-[9px] text-rose-600 dark:text-rose-400 font-semibold font-mono">
+
+                  <!-- LATE MINUTES -->
+                  <div
+                    v-if="cell.statusCategory === 'present' && cell.lateMinutes > 0"
+                    class="text-[9px] text-rose-600 dark:text-rose-400 font-semibold font-mono"
+                  >
                     Late {{ cell.lateMinutes }}m
                   </div>
                 </template>
 
-                <!-- Rest Day -->
+                <!-- Rest Day Without a Punch -->
                 <template v-else-if="cell.statusCategory === 'rest_day'">
                   <Coffee class="size-4 text-muted-foreground/60 my-1" />
-                  <span class="text-[10px] text-muted-foreground font-medium">Rest Day</span>
+                  <span class="text-[10px] text-muted-foreground font-medium">
+                    Rest Day
+                  </span>
                 </template>
 
                 <!-- Holiday -->
                 <template v-else-if="cell.statusCategory === 'holiday'">
                   <Sparkles class="size-4 text-amber-500 my-1" />
-                  <span class="text-[10px] text-amber-800 dark:text-amber-300 font-medium line-clamp-2 px-0.5 leading-tight">
+                  <span
+                    class="text-[10px] text-amber-800 dark:text-amber-300 font-medium line-clamp-2 px-0.5 leading-tight"
+                  >
                     {{ cell.statusLabel }}
                   </span>
                 </template>
@@ -715,21 +761,30 @@ onMounted(async () => {
                 <!-- Approved Leave -->
                 <template v-else-if="cell.statusCategory === 'leave'">
                   <Clock class="size-4 text-amber-500 my-1" />
-                  <span class="text-[10px] text-amber-700 dark:text-amber-300 font-medium">On Leave</span>
+                  <span class="text-[10px] text-amber-700 dark:text-amber-300 font-medium">
+                    On Leave
+                  </span>
                 </template>
 
                 <!-- Absent -->
                 <template v-else-if="cell.statusCategory === 'absent'">
                   <XCircle class="size-4 text-rose-500/70 my-1" />
-                  <span class="text-[10px] text-rose-700 dark:text-rose-300 font-bold">No Punch</span>
-                  <span class="text-[9px] text-muted-foreground leading-tight">Scheduled</span>
+                  <span class="text-[10px] text-rose-700 dark:text-rose-300 font-bold">
+                    No Punch
+                  </span>
+                  <span class="text-[9px] text-muted-foreground leading-tight">
+                    Scheduled
+                  </span>
                 </template>
 
                 <!-- Scheduled / Future / Unverified -->
                 <template v-else>
                   <Clock class="size-4 text-muted-foreground/40 my-1" />
-                  <span class="text-[10px] text-muted-foreground">Upcoming</span>
+                  <span class="text-[10px] text-muted-foreground">
+                    Upcoming
+                  </span>
                 </template>
+
               </div>
 
               <!-- Bottom: Date indicator -->
