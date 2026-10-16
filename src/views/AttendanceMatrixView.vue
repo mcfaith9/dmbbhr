@@ -18,7 +18,8 @@ import {
   Check,
   Users,
   Fingerprint,
-  Calculator
+  Calculator,
+  Info
 } from '@lucide/vue'
 import PayrollCalculationDialog from '@/components/PayrollCalculationDialog.vue'
 import { employeeService } from '@/services/employees'
@@ -869,17 +870,23 @@ onMounted(async () => {
       </div>
 
       <!-- Action: Payroll Calculation Button (Directly below matrix, aligned to the left side) -->
-      <div class="flex items-center justify-start pt-1">
+      <div class="flex flex-wrap items-center justify-start gap-3 pt-1">
         <Button
           type="button"
           variant="default"
           size="sm"
           class="h-8 gap-2 text-xs font-semibold shadow-xs cursor-pointer"
+          :disabled="!selectedEmployee"
+          :title="!selectedEmployee ? 'Please select an employee first' : `Calculate payroll for ${selectedEmployee.full_name}`"
           @click="showPayrollCalculationModal = true"
         >
           <Calculator class="size-3.5" />
           <span>Payroll Calculation</span>
         </Button>
+        <span v-if="!selectedEmployee" class="text-xs text-muted-foreground italic flex items-center gap-1.5">
+          <Info class="size-3 text-muted-foreground/70" />
+          <span>Select an employee above to calculate semi-monthly payroll.</span>
+        </span>
       </div>
     </div>
 
@@ -970,6 +977,7 @@ onMounted(async () => {
     <!-- Payroll Calculation Dialog Component -->
     <PayrollCalculationDialog
       v-model:open="showPayrollCalculationModal"
+      :selected-employee="selectedEmployee"
       :period-anchor-date="periodAnchorDate"
     />
   </div>

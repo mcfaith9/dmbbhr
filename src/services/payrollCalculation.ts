@@ -20,6 +20,7 @@
 import { db, type PayrollSnapshotRecord, type ItemizedDeductionRecord, type HolidayRecord } from '@/db'
 import type { Employee } from '@/types'
 import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
+import { attendanceRepository } from '@/repositories'
 
 export interface PayrollCutoffPeriod {
   id: string // e.g. "2026-06-1" or "2026-06-2"
@@ -197,6 +198,275 @@ export const payrollCalculationService = {
       }
     }
     return list
+  },
+
+  /**
+   * Computes semi-monthly payroll for a single employee for a given cutoff period.
+   * Pulls attendance from Attendance Matrix data / IndexedDB and restores any saved snapshot.
+   */
+  async computeSingleEmployeePayroll(
+    period: PayrollCutoffPeriod,
+    employee: Employee,
+    holidays: HolidayRecord[] = [],
+    dailyAttendanceRecords: DailyAttendanceRecord[] = []
+  ): Promise<EmployeePayrollRecord> {
+    const bioId = employee.biometric_user_id || employee.employee_number
+
+    // 1. Check if a saved snapshot exists in IndexedDB for this period and employee
+    const existingSnap = await db.payrollSnapshots.get(`${period.id}_${bioId}`)
+
+    // If an existing finalized snapshot exists, preserve it completely
+    if (existingSnap && existingSnap.batchStatus === 'finalized') {
+      return this.snapshotToPayrollRecord(existingSnap)
+    }
+
+    // 2. Index holidays in this period
+    if (holidays.length === 0) {
+      try {
+        holidays = await db.holidays.toArray()
+      } catch {
+        holidays = []
+      }
+    }
+    const holidayMap = new Map<string, HolidayRecord>()
+    for (const h of holidays) {
+      if (period.dates.includes(h.date)) {
+        holidayMap.set(h.date, h)
+      }
+    }
+
+    // 3. Obtain daily attendance records for this employee across cutoff period dates
+    const empAttendanceMap = new Map<string, DailyAttendanceRecord>()
+    if (dailyAttendanceRecords.length > 0) {
+      for (const rec of dailyAttendanceRecords) {
+        if (rec.biometric_user_id === bioId || !rec.biometric_user_id) {
+          empAttendanceMap.set(rec.date, rec)
+        }
+      }
+    } else {
+      // Query daily attendance from repository for this employee
+      const results = await Promise.all(
+        period.dates.map(d => attendanceRepository.getDailyAttendance(d, 'all', 'all', {}, bioId))
+      )
+      for (const list of results) {
+        for (const r of list) {
+          if (r.biometric_user_id === bioId) {
+            empAttendanceMap.set(r.date, r)
+          }
+        }
+      }
+    }
+
+    let scheduledDays = 0
+    let presentDays = 0
+    let sundayWorkDays = 0
+    let holidayDays = 0
+    let absentDays = 0
+    let lateMinutes = 0
+    const attendanceReviewNotes: string[] = []
+
+    for (const dStr of period.dates) {
+      const [y, m, d] = dStr.split('-').map(Number)
+      const dateObj = new Date(Date.UTC(y, m - 1, d))
+      const isSunday = dateObj.getUTCDay() === 0
+      const isHoliday = holidayMap.has(dStr)
+      const att = empAttendanceMap.get(dStr)
+
+      const hasValidIn = Boolean(att?.actual_in && !att.actual_in.startsWith('Missing') && att.actual_in !== '—')
+      const hasValidOut = Boolean(att?.has_valid_out && att.actual_out && att.actual_out !== '—')
+
+      if (!isSunday && !isHoliday) {
+        scheduledDays++
+      }
+
+      if (hasValidIn) {
+        if (isSunday) {
+          sundayWorkDays++
+          if (!hasValidOut) {
+            attendanceReviewNotes.push(`Sunday punch on ${dStr} has missing OUT`)
+          }
+        } else if (isHoliday) {
+          holidayDays++
+        } else {
+          presentDays++
+        }
+
+        if (att?.late_minutes && att.late_minutes > 0) {
+          lateMinutes += att.late_minutes
+        }
+
+        if (!hasValidOut) {
+          attendanceReviewNotes.push(`Punch on ${dStr} is awaiting or missing OUT`)
+        }
+      } else if (!isSunday && !isHoliday) {
+        if (att?.status === 'On Leave' || att?.status === 'Leave') {
+          // Leave day
+        } else {
+          absentDays++
+        }
+      }
+    }
+
+    // Total payable working days
+    const payableDays = presentDays + sundayWorkDays + holidayDays
+
+    // Salary Configuration & Rates
+    const salaryType = (employee.salary_type || 'unconfigured') as 'Monthly' | 'Daily' | 'Hourly' | 'unconfigured'
+    const basicSalary = typeof employee.basic_salary === 'number' && employee.basic_salary > 0 ? employee.basic_salary : 0
+    let dailyRate = typeof employee.daily_rate === 'number' && employee.daily_rate > 0 ? employee.daily_rate : 0
+    let hourlyRate = typeof employee.hourly_rate === 'number' && employee.hourly_rate > 0 ? employee.hourly_rate : 0
+
+    if (basicSalary > 0 && dailyRate === 0) {
+      if (salaryType === 'Monthly') {
+        dailyRate = Math.round((basicSalary / 26) * 100) / 100
+      } else if (salaryType === 'Daily') {
+        dailyRate = basicSalary
+      }
+    }
+    if (dailyRate > 0 && hourlyRate === 0) {
+      hourlyRate = Math.round((dailyRate / 8) * 100) / 100
+    }
+
+    const reviewReasons: string[] = []
+
+    // Stage A: Initial Earnings
+    let basePay = 0
+    let sundayDutyPay = 0
+    let holidayPay = 0
+    const allowances = typeof employee.allowances === 'number' ? (employee.allowances / 2) : 0
+
+    if (basicSalary <= 0 && dailyRate <= 0) {
+      reviewReasons.push('Salary rate is not configured for this employee')
+    } else if (salaryType === 'Daily') {
+      basePay = Math.round(presentDays * dailyRate * 100) / 100
+      sundayDutyPay = Math.round(sundayWorkDays * (dailyRate * 1.3) * 100) / 100
+      holidayPay = Math.round(holidayDays * (dailyRate * 2.0) * 100) / 100
+    } else if (salaryType === 'Monthly') {
+      const semiMonthlyBasic = Math.round((basicSalary / 2) * 100) / 100
+      const absenceDeduction = Math.round(absentDays * dailyRate * 100) / 100
+      basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction) * 100) / 100)
+      sundayDutyPay = Math.round(sundayWorkDays * (dailyRate * 0.3) * 100) / 100
+      holidayPay = Math.round(holidayDays * (dailyRate * 1.0) * 100) / 100
+    } else if (salaryType === 'Hourly') {
+      basePay = Math.round(payableDays * 8 * hourlyRate * 100) / 100
+    } else {
+      basePay = Math.round(payableDays * dailyRate * 100) / 100
+    }
+
+    const initialEarnings = Math.round((basePay + sundayDutyPay + holidayPay + allowances) * 100) / 100
+
+    // Stage B: Statutory Benefits & Loans
+    let sss = existingSnap?.sss ?? 0
+    let philhealth = existingSnap?.philhealth ?? 0
+    let pagibig = existingSnap?.pagibig ?? 0
+    let sssLoan = existingSnap?.sssLoan ?? 0
+    let pagibigLoan = existingSnap?.pagibigLoan ?? 0
+    let otherLoan = existingSnap?.otherLoan ?? 0
+
+    if (!existingSnap && initialEarnings > 0) {
+      pagibig = 100
+      if (employee.sss_number) {
+        sss = Math.min(1350, Math.max(180, Math.round(initialEarnings * 0.045)))
+      }
+      if (employee.philhealth_number) {
+        philhealth = Math.round(initialEarnings * 0.025)
+      }
+    }
+
+    const totalBenefitsAndLoans = Math.round((sss + philhealth + pagibig + sssLoan + pagibigLoan + otherLoan) * 100) / 100
+    const balanceAfterBenefitsAndLoans = Math.round((initialEarnings - totalBenefitsAndLoans) * 100) / 100
+
+    // Stage C: Cash Advance and Other Itemized Deductions
+    let cashAdvance = existingSnap?.cashAdvance ?? 0
+    let itemizedDeductions: ItemizedDeduction[] = existingSnap?.itemizedDeductions ? [...existingSnap.itemizedDeductions] : []
+    let totalOtherDeductions = 0
+
+    for (const item of itemizedDeductions) {
+      if (item.category === 'cash_advance') {
+        cashAdvance += item.amount
+      } else {
+        totalOtherDeductions += item.amount
+      }
+    }
+
+    const balanceBeforeTax = Math.round((balanceAfterBenefitsAndLoans - (cashAdvance + totalOtherDeductions)) * 100) / 100
+
+    // Stage D: Withholding Tax (Manually editable)
+    const withholdingTax = existingSnap?.withholdingTax ?? 0
+
+    // Stage E: Final Net Pay
+    const netPay = Math.round((balanceBeforeTax - withholdingTax) * 100) / 100
+
+    if (netPay < 0) {
+      reviewReasons.push(`Net pay is negative (₱${netPay.toLocaleString('en-US', { minimumFractionDigits: 2 })}) due to deductions exceeding earnings`)
+    }
+
+    if (attendanceReviewNotes.length > 0) {
+      reviewReasons.push(`${attendanceReviewNotes.length} attendance issue(s) need review`)
+    }
+
+    let reviewStatus: EmployeePayrollRecord['reviewStatus'] = existingSnap?.reviewStatus || 'ready'
+    if (reviewReasons.length > 0) {
+      reviewStatus = 'needs_review'
+    } else if (existingSnap?.reviewStatus === 'approved') {
+      reviewStatus = 'approved'
+    } else if (existingSnap?.reviewStatus === 'finalized') {
+      reviewStatus = 'finalized'
+    } else {
+      reviewStatus = 'ready'
+    }
+
+    return {
+      id: `${period.id}_${bioId}`,
+      periodId: period.id,
+      bioId,
+      employeeNumber: employee.employee_number || bioId,
+      employeeName: employee.full_name,
+      department: employee.department || 'Operations',
+      position: employee.position || 'Staff',
+      status: employee.status,
+      workGroupId: employee.work_group_id || 'wg-group-c',
+      cutoffStart: period.startDate,
+      cutoffEnd: period.endDate,
+      payday: period.payday,
+      salaryType,
+      basicSalary,
+      dailyRate,
+      hourlyRate,
+      scheduledDays,
+      presentDays,
+      sundayWorkDays,
+      holidayDays,
+      absentDays,
+      payableDays,
+      lateMinutes,
+      initialEarnings,
+      earningsBreakdown: {
+        basePay,
+        sundayDutyPay,
+        holidayPay,
+        allowances
+      },
+      sss,
+      philhealth,
+      pagibig,
+      sssLoan,
+      pagibigLoan,
+      otherLoan,
+      totalBenefitsAndLoans,
+      balanceAfterBenefitsAndLoans,
+      cashAdvance,
+      itemizedDeductions,
+      totalOtherDeductions,
+      balanceBeforeTax,
+      withholdingTax,
+      netPay,
+      reviewStatus,
+      reviewReasons,
+      attendanceReviewNotes,
+      batchStatus: existingSnap?.batchStatus || 'draft',
+      updatedAt: existingSnap?.updatedAt || new Date().toISOString()
+    }
   },
 
   /**

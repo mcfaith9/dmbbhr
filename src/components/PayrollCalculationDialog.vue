@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
   Select,
   SelectContent,
@@ -20,22 +19,22 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Calculator,
   Printer,
-  Search,
   CalendarDays,
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
   Plus,
   Trash2,
-  Eye,
-  Lock,
   Save,
   RefreshCw,
   Landmark,
-  ShieldCheck
+  ShieldCheck,
+  User,
+  FileText
 } from '@lucide/vue'
 import {
   payrollCalculationService,
@@ -43,15 +42,11 @@ import {
   type EmployeePayrollRecord,
   type ItemizedDeduction
 } from '@/services/payrollCalculation'
-import { employeeService } from '@/services/employees'
-import { attendanceService } from '@/services/attendance'
-import { holidayService } from '@/services/holidays/holidayService'
 import type { Employee } from '@/types'
-import type { HolidayRecord } from '@/db'
-import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
 
 const props = defineProps<{
   open: boolean
+  selectedEmployee?: Employee | null
   periodAnchorDate?: Date
 }>()
 
@@ -59,11 +54,12 @@ const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
 }>()
 
-// Loading & UI State
+// UI state
 const isLoading = ref(false)
 const isSaving = ref(false)
 const saveSuccessMessage = ref('')
 const saveErrorMessage = ref('')
+const isPayslipViewOpen = ref(false)
 
 // Cutoff Periods
 const availableCutoffs = ref<PayrollCutoffPeriod[]>([])
@@ -73,1030 +69,1056 @@ const currentCutoff = computed<PayrollCutoffPeriod | undefined>(() => {
   return availableCutoffs.value.find(c => c.id === selectedCutoffId.value)
 })
 
-// Loaded Base Data
-const employees = ref<Employee[]>([])
-const holidays = ref<HolidayRecord[]>([])
-const periodAttendanceRecords = ref<DailyAttendanceRecord[]>([])
+// Current Single Employee Payroll Record
+const currentRecord = ref<EmployeePayrollRecord | null>(null)
 
-// Master Payroll Records
-const payrollRecords = ref<EmployeePayrollRecord[]>([])
-
-// Search & Filter
-const searchQuery = ref('')
-const statusFilter = ref<'all' | 'needs_review' | 'ready' | 'finalized'>('all')
-
-const filteredRecords = computed(() => {
-  let list = payrollRecords.value
-  if (statusFilter.value === 'needs_review') {
-    list = list.filter(r => r.reviewStatus === 'needs_review')
-  } else if (statusFilter.value === 'ready') {
-    list = list.filter(r => r.reviewStatus === 'ready' || r.reviewStatus === 'approved')
-  } else if (statusFilter.value === 'finalized') {
-    list = list.filter(r => r.batchStatus === 'finalized' || r.reviewStatus === 'finalized')
-  }
-
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.toLowerCase().trim()
-    list = list.filter(r =>
-      r.employeeName.toLowerCase().includes(q) ||
-      r.bioId.toLowerCase().includes(q) ||
-      r.department.toLowerCase().includes(q) ||
-      r.position.toLowerCase().includes(q)
-    )
-  }
-  return list
-})
-
-// KPI Totals across all active employees in this period
-const periodKPIs = computed(() => {
-  const records = payrollRecords.value
-  let totalEarnings = 0
-  let totalBenefits = 0
-  let totalCashAdvance = 0
-  let totalOtherDeductions = 0
-  let totalTax = 0
-  let totalNetPay = 0
-  let needsReviewCount = 0
-  let payableDaysSum = 0
-
-  for (const r of records) {
-    totalEarnings += r.initialEarnings || 0
-    totalBenefits += r.totalBenefitsAndLoans || 0
-    totalCashAdvance += r.cashAdvance || 0
-    totalOtherDeductions += r.totalOtherDeductions || 0
-    totalTax += r.withholdingTax || 0
-    totalNetPay += r.netPay || 0
-    payableDaysSum += r.payableDays || 0
-    if (r.reviewStatus === 'needs_review') {
-      needsReviewCount++
-    }
-  }
-
-  return {
-    totalEmployees: records.length,
-    payableDaysSum,
-    totalEarnings: Math.round(totalEarnings * 100) / 100,
-    totalBenefits: Math.round(totalBenefits * 100) / 100,
-    totalCashAdvance: Math.round(totalCashAdvance * 100) / 100,
-    totalOtherDeductions: Math.round(totalOtherDeductions * 100) / 100,
-    totalTax: Math.round(totalTax * 100) / 100,
-    totalNetPay: Math.round(totalNetPay * 100) / 100,
-    needsReviewCount
-  }
-})
-
-// Batch Status
-const currentBatchStatus = computed(() => {
-  if (payrollRecords.value.length === 0) return 'draft'
-  if (payrollRecords.value.every(r => r.batchStatus === 'finalized')) return 'finalized'
-  if (payrollRecords.value.some(r => r.reviewStatus === 'needs_review')) return 'needs_review'
-  return 'draft'
-})
-
-// Deduction & Stage Breakdown Inspection Dialog State
-const showDetailModal = ref(false)
-const inspectingRecord = ref<EmployeePayrollRecord | null>(null)
-
-// Add Itemized Deduction Form
-const newDeductionCategory = ref<ItemizedDeduction['category']>('cash_advance')
+// Itemized deduction draft for Stage C
+const newDeductionCategory = ref<'cash_advance' | 'safety_boots' | 'gloves' | 'uniform' | 'other'>('cash_advance')
 const newDeductionDescription = ref('')
 const newDeductionAmount = ref<number | ''>('')
-const newDeductionError = ref('')
 
-function openInspectModal(record: EmployeePayrollRecord) {
-  inspectingRecord.value = record
-  newDeductionCategory.value = 'cash_advance'
-  newDeductionDescription.value = ''
-  newDeductionAmount.value = ''
-  newDeductionError.value = ''
-  showDetailModal.value = true
-}
-
-function addDeductionItem() {
-  if (!inspectingRecord.value) return
-  if (!newDeductionDescription.value.trim()) {
-    newDeductionError.value = 'Please provide a description (e.g. Cash Advance, Safety Boots).'
-    return
+// Initialize cutoffs list
+function initCutoffs() {
+  const anchor = props.periodAnchorDate || new Date()
+  const cutoffs = payrollCalculationService.getAvailableCutoffs(anchor, 8)
+  availableCutoffs.value = cutoffs
+  if (!selectedCutoffId.value && cutoffs.length > 0) {
+    selectedCutoffId.value = cutoffs[0].id
   }
-  const amt = Number(newDeductionAmount.value)
-  if (isNaN(amt) || amt <= 0) {
-    newDeductionError.value = 'Please provide a valid deduction amount greater than zero.'
-    return
-  }
-
-  newDeductionError.value = ''
-  const item: ItemizedDeduction = {
-    id: `ded-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    category: newDeductionCategory.value,
-    description: newDeductionDescription.value.trim(),
-    amount: Math.round(amt * 100) / 100,
-    createdAt: new Date().toISOString()
-  }
-
-  if (!Array.isArray(inspectingRecord.value.itemizedDeductions)) {
-    inspectingRecord.value.itemizedDeductions = []
-  }
-  inspectingRecord.value.itemizedDeductions.push(item)
-
-  // Recalculate
-  payrollCalculationService.recalculateRecord(inspectingRecord.value)
-
-  // Reset form
-  newDeductionDescription.value = ''
-  newDeductionAmount.value = ''
 }
 
-function removeDeductionItem(itemId: string) {
-  if (!inspectingRecord.value) return
-  inspectingRecord.value.itemizedDeductions = inspectingRecord.value.itemizedDeductions.filter(i => i.id !== itemId)
-  payrollCalculationService.recalculateRecord(inspectingRecord.value)
-}
-
-function onWithholdingTaxChange(record: EmployeePayrollRecord, event: Event) {
-  const target = event.target as HTMLInputElement
-  const val = parseFloat(target.value) || 0
-  record.withholdingTax = Math.max(0, val)
-  payrollCalculationService.recalculateRecord(record)
-}
-
-function onInlineFieldChange(record: EmployeePayrollRecord) {
-  payrollCalculationService.recalculateRecord(record)
-}
-
-/**
- * Loads payroll records for the selected cutoff period.
- */
-async function loadPayrollData() {
-  if (!currentCutoff.value) return
-  isLoading.value = true
+// Compute/Load payroll for the selected employee only
+async function loadEmployeePayroll() {
   saveSuccessMessage.value = ''
   saveErrorMessage.value = ''
 
+  if (!props.selectedEmployee) {
+    currentRecord.value = null
+    return
+  }
+
+  if (!currentCutoff.value) {
+    initCutoffs()
+  }
+
+  if (!currentCutoff.value) return
+
+  isLoading.value = true
   try {
-    const period = currentCutoff.value
-
-    // Load base employees if not yet cached
-    if (employees.value.length === 0) {
-      employees.value = await employeeService.getEmployees()
-    }
-
-    // Load holidays for this cutoff period's year
-    const holidayRes = await holidayService.getHolidays(period.year)
-    holidays.value = holidayRes.holidays.map(h => ({
-      id: h.id || h.date,
-      name: h.name,
-      date: h.date,
-      type: h.type as any,
-      isNationwide: h.scope === 'National'
-    }))
-
-    // Load daily attendance records for this 15-day window
-    const attendancePromises = period.dates.map(async (dStr) => {
-      try {
-        return await attendanceService.getDailyAttendance(dStr)
-      } catch {
-        return []
-      }
-    })
-    const attendanceArrays = await Promise.all(attendancePromises)
-    const flattenedAttendance = attendanceArrays.flat()
-    periodAttendanceRecords.value = flattenedAttendance
-
-    // Compute payroll
-    const records = await payrollCalculationService.computePayroll(
-      period,
-      employees.value,
-      holidays.value,
-      periodAttendanceRecords.value
+    const record = await payrollCalculationService.computeSingleEmployeePayroll(
+      currentCutoff.value,
+      props.selectedEmployee
     )
-
-    payrollRecords.value = records
+    currentRecord.value = record
   } catch (err: any) {
-    saveErrorMessage.value = err?.message || 'Failed to calculate payroll records.'
+    saveErrorMessage.value = `Failed to compute payroll: ${err?.message || 'Unknown error'}`
   } finally {
     isLoading.value = false
   }
 }
 
-/**
- * Saves current payroll calculations as a Draft.
- */
-async function saveDraft() {
-  if (payrollRecords.value.length === 0) return
-  isSaving.value = true
-  saveSuccessMessage.value = ''
-  saveErrorMessage.value = ''
-
-  try {
-    await payrollCalculationService.savePayrollSnapshot(payrollRecords.value, 'draft')
-    saveSuccessMessage.value = 'Payroll draft saved successfully in local database.'
-    setTimeout(() => {
-      saveSuccessMessage.value = ''
-    }, 3500)
-  } catch (err: any) {
-    saveErrorMessage.value = err?.message || 'Failed to save payroll draft.'
-  } finally {
-    isSaving.value = false
-  }
-}
-
-/**
- * Finalizes the payroll calculation and preserves as a locked historical snapshot.
- */
-async function finalizePayroll() {
-  if (payrollRecords.value.length === 0) return
-
-  // Check if any records require review
-  const issues = payrollRecords.value.filter(r => r.reviewStatus === 'needs_review')
-  if (issues.length > 0) {
-    saveErrorMessage.value = `Cannot finalize payroll: ${issues.length} employee record(s) require review (e.g. unconfigured salary rate or unresolved attendance). Please review them first.`
-    return
-  }
-
-  isSaving.value = true
-  saveSuccessMessage.value = ''
-  saveErrorMessage.value = ''
-
-  try {
-    for (const r of payrollRecords.value) {
-      r.batchStatus = 'finalized'
-      r.reviewStatus = 'finalized'
-    }
-
-    await payrollCalculationService.savePayrollSnapshot(payrollRecords.value, 'finalized', 'Authorized HR Admin')
-    saveSuccessMessage.value = `Payroll for ${currentCutoff.value?.label} successfully finalized and locked as an official historical snapshot.`
-    setTimeout(() => {
-      saveSuccessMessage.value = ''
-    }, 4000)
-  } catch (err: any) {
-    saveErrorMessage.value = err?.message || 'Failed to finalize payroll snapshot.'
-  } finally {
-    isSaving.value = false
-  }
-}
-
-function handleClose() {
-  emit('update:open', false)
-}
-
-// Initialize Cutoffs on mount or anchor change
-function initializeCutoffs() {
-  const anchor = props.periodAnchorDate || new Date()
-  const cutoffs = payrollCalculationService.getAvailableCutoffs(anchor, 8)
-  availableCutoffs.value = cutoffs
-
-  // Match anchor's period
-  const anchorY = anchor.getFullYear()
-  const anchorM = anchor.getMonth() + 1
-  const anchorHalf = anchor.getDate() <= 15 ? 1 : 2
-  const matched = cutoffs.find(c => c.year === anchorY && c.month === anchorM && c.half === anchorHalf)
-  selectedCutoffId.value = matched ? matched.id : cutoffs[0].id
-}
-
+// Watch modal open and selectedEmployee changes
 watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      initializeCutoffs()
-      loadPayrollData()
+      initCutoffs()
+      loadEmployeePayroll()
+    } else {
+      // Clear messages when closed
+      saveSuccessMessage.value = ''
+      saveErrorMessage.value = ''
+      isPayslipViewOpen.value = false
     }
   }
 )
 
-watch(selectedCutoffId, () => {
-  if (props.open) {
-    loadPayrollData()
+watch(
+  () => props.selectedEmployee?.biometric_user_id,
+  (newId, oldId) => {
+    if (props.open && newId !== oldId) {
+      currentRecord.value = null // Prevent stale data
+      loadEmployeePayroll()
+    }
+  }
+)
+
+watch(selectedCutoffId, (newId, oldId) => {
+  if (props.open && newId && newId !== oldId) {
+    loadEmployeePayroll()
   }
 })
 
-onMounted(() => {
-  initializeCutoffs()
-})
+// Stage B: Statutory recalculation
+function onStatutoryChange() {
+  if (!currentRecord.value) return
+  payrollCalculationService.recalculateRecord(currentRecord.value)
+}
+
+// Stage C: Add Itemized Deduction
+function addDeductionItem() {
+  if (!currentRecord.value) return
+  const amount = Number(newDeductionAmount.value)
+  if (isNaN(amount) || amount <= 0) return
+
+  const desc = newDeductionDescription.value.trim() || getDefaultCategoryName(newDeductionCategory.value)
+  const newItem: ItemizedDeduction = {
+    id: `ded_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    category: newDeductionCategory.value,
+    description: desc,
+    amount: Math.round(amount * 100) / 100,
+    createdAt: new Date().toISOString()
+  }
+
+  if (!Array.isArray(currentRecord.value.itemizedDeductions)) {
+    currentRecord.value.itemizedDeductions = []
+  }
+
+  currentRecord.value.itemizedDeductions.push(newItem)
+  payrollCalculationService.recalculateRecord(currentRecord.value)
+
+  // Reset inputs
+  newDeductionDescription.value = ''
+  newDeductionAmount.value = ''
+}
+
+// Stage C: Remove Itemized Deduction
+function removeDeductionItem(index: number) {
+  if (!currentRecord.value || !Array.isArray(currentRecord.value.itemizedDeductions)) return
+  currentRecord.value.itemizedDeductions.splice(index, 1)
+  payrollCalculationService.recalculateRecord(currentRecord.value)
+}
+
+function getDefaultCategoryName(cat: string): string {
+  switch (cat) {
+    case 'cash_advance': return 'Cash Advance (CA)'
+    case 'safety_boots': return 'Safety Boots'
+    case 'gloves': return 'Safety Gloves'
+    case 'uniform': return 'Uniform'
+    default: return 'Authorized Deduction'
+  }
+}
+
+// Stage D: Withholding Tax change
+function onTaxChange() {
+  if (!currentRecord.value) return
+  payrollCalculationService.recalculateRecord(currentRecord.value)
+}
+
+function clearTax() {
+  if (!currentRecord.value) return
+  currentRecord.value.withholdingTax = 0
+  payrollCalculationService.recalculateRecord(currentRecord.value)
+}
+
+// Save Snapshot to IndexedDB
+async function saveRecord(batchStatus: 'draft' | 'approved' | 'finalized') {
+  if (!currentRecord.value) return
+
+  isSaving.value = true
+  saveSuccessMessage.value = ''
+  saveErrorMessage.value = ''
+
+  try {
+    currentRecord.value.batchStatus = batchStatus
+    if (batchStatus === 'finalized') {
+      currentRecord.value.reviewStatus = 'finalized'
+    }
+
+    await payrollCalculationService.savePayrollSnapshot(
+      [currentRecord.value],
+      batchStatus,
+      'Authorized HR Admin'
+    )
+
+    saveSuccessMessage.value = batchStatus === 'finalized'
+      ? `Payroll snapshot finalized and locked for ${currentRecord.value.employeeName}.`
+      : `Payroll record successfully saved for ${currentRecord.value.employeeName}.`
+
+    setTimeout(() => {
+      saveSuccessMessage.value = ''
+    }, 4000)
+  } catch (err: any) {
+    saveErrorMessage.value = `Failed to save payroll snapshot: ${err?.message || 'Database error'}`
+  } finally {
+    isSaving.value = false
+  }
+}
+
+// Print / View Payslip
+function triggerPrint() {
+  window.print()
+}
 </script>
 
 <template>
-  <div>
-    <!-- Main Payroll Calculation Dialog -->
-    <Dialog :open="open" @update:open="$emit('update:open', $event)">
-      <DialogContent class="sm:max-w-6xl max-w-7xl w-[96vw] max-h-[92vh] flex flex-col p-0 overflow-hidden shadow-2xl rounded-xl">
-        <!-- Dialog Header -->
-        <DialogHeader class="p-4 border-b bg-muted/30 shrink-0">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div class="space-y-1">
-              <div class="flex items-center gap-2">
-                <Calculator class="size-5 text-primary shrink-0" />
-                <DialogTitle class="text-base sm:text-lg font-bold tracking-tight text-foreground">
-                  Payroll Calculation
-                </DialogTitle>
-                <Badge
-                  :variant="currentBatchStatus === 'finalized' ? 'default' : (currentBatchStatus === 'needs_review' ? 'destructive' : 'secondary')"
-                  class="text-[10px] uppercase font-mono px-2 py-0.5"
-                >
-                  <Lock v-if="currentBatchStatus === 'finalized'" class="size-2.5 mr-1 inline" />
-                  {{ currentBatchStatus === 'finalized' ? 'Finalized Snapshot' : (currentBatchStatus === 'needs_review' ? 'Action Required' : 'Draft Batch') }}
-                </Badge>
+  <Dialog :open="open" @update:open="(val) => emit('update:open', val)">
+    <DialogContent class="sm:max-w-4xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
+      <!-- Modal Top Header -->
+      <DialogHeader class="px-5 pt-4 pb-3 border-b bg-card shrink-0">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <!-- Title & Badges -->
+          <div>
+            <div class="flex items-center gap-2">
+              <div class="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                <Calculator class="size-4" />
               </div>
-              <DialogDescription class="text-xs text-muted-foreground">
-                Semi-monthly earnings, statutory benefits, itemized deductions, and withholding tax derived from verified attendance.
-              </DialogDescription>
+              <div>
+                <DialogTitle class="text-base sm:text-lg font-bold text-foreground flex items-center gap-2">
+                  <span>Semi-Monthly Payroll Calculation</span>
+                  <Badge variant="outline" class="text-[10px] font-mono py-0 font-medium border-primary/30 text-primary">
+                    Single Employee
+                  </Badge>
+                </DialogTitle>
+                <DialogDescription class="text-xs text-muted-foreground mt-0.5">
+                  Attendance matrix compliance, statutory contributions, itemized deductions, and withholding tax.
+                </DialogDescription>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cutoff Period Selector & Quick Actions -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="w-48 sm:w-56">
+              <Select v-model="selectedCutoffId">
+                <SelectTrigger class="h-8 text-xs bg-background font-semibold">
+                  <CalendarDays class="size-3.5 text-primary mr-1.5 shrink-0" />
+                  <SelectValue placeholder="Select Cutoff Period..." />
+                </SelectTrigger>
+                <SelectContent class="text-xs max-h-60">
+                  <SelectGroup>
+                    <SelectItem
+                      v-for="c in availableCutoffs"
+                      :key="c.id"
+                      :value="c.id"
+                      class="text-xs cursor-pointer"
+                    >
+                      {{ c.label }}
+                    </SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </div>
 
-            <!-- Cutoff Selector & Payday Display Pill -->
-            <div class="flex items-center gap-2 self-start sm:self-auto shrink-0">
-              <div class="flex flex-col items-end">
-                <label class="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider mb-0.5">
-                  Cut-off Period & Payday
-                </label>
-                <div class="flex items-center gap-2">
-                  <Select v-model="selectedCutoffId">
-                    <SelectTrigger class="h-8 text-xs w-[240px] sm:w-[280px] bg-background">
-                      <SelectValue placeholder="Select Cut-off Period" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem
-                          v-for="c in availableCutoffs"
-                          :key="c.id"
-                          :value="c.id"
-                          class="text-xs"
-                        >
-                          {{ c.label }}
-                        </SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 px-2.5 text-xs gap-1.5 cursor-pointer shadow-2xs"
+              :disabled="isLoading || !selectedEmployee"
+              @click="loadEmployeePayroll"
+              title="Refresh attendance records from matrix"
+            >
+              <RefreshCw :class="['size-3.5', isLoading ? 'animate-spin' : '']" />
+              <span class="hidden sm:inline">Refresh</span>
+            </Button>
+          </div>
+        </div>
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="h-8 size-8 p-0"
-                    title="Refresh Live Data"
-                    :disabled="isLoading"
-                    @click="loadPayrollData"
-                  >
-                    <RefreshCw class="size-3.5" :class="isLoading ? 'animate-spin' : ''" />
-                  </Button>
+        <!-- Designated Payday & Period Banner -->
+        <div v-if="currentCutoff" class="mt-3 flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-muted/40 border text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-muted-foreground font-medium">Cutoff Window:</span>
+            <strong class="font-bold text-foreground">{{ currentCutoff.shortLabel }}</strong>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <Landmark class="size-3.5 text-emerald-600 shrink-0" />
+            <span class="text-muted-foreground font-medium">Designated Payday:</span>
+            <span class="font-bold text-emerald-700 dark:text-emerald-400 font-mono">
+              {{ currentCutoff.paydayDisplay }}
+            </span>
+            <span class="text-[10px] text-muted-foreground font-normal">
+              ({{ currentCutoff.half === 1 ? '20th of the same month' : '5th of following month' }})
+            </span>
+          </div>
+        </div>
+
+        <!-- Notification Alerts -->
+        <div v-if="saveSuccessMessage" class="mt-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+          <CheckCircle2 class="size-3.5 text-emerald-600 shrink-0" />
+          <span>{{ saveSuccessMessage }}</span>
+        </div>
+        <div v-if="saveErrorMessage" class="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
+          <AlertCircle class="size-3.5 shrink-0" />
+          <span>{{ saveErrorMessage }}</span>
+        </div>
+      </DialogHeader>
+
+      <!-- Main Body Container -->
+      <div class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+        <!-- Case 1: No Employee Selected -->
+        <div v-if="!selectedEmployee" class="p-8 text-center rounded-xl border border-dashed text-xs text-muted-foreground space-y-2">
+          <User class="size-8 text-muted-foreground mx-auto opacity-50" />
+          <p class="font-semibold text-foreground text-sm">No Employee Selected</p>
+          <p>Please select an employee in the Attendance Matrix before opening Payroll Calculation.</p>
+        </div>
+
+        <!-- Case 2: Loading State -->
+        <div v-else-if="isLoading" class="p-12 text-center text-xs text-muted-foreground space-y-2">
+          <RefreshCw class="size-6 animate-spin mx-auto text-primary" />
+          <p class="font-semibold text-foreground">Computing Semi-Monthly Payroll...</p>
+          <p class="text-muted-foreground">Auditing duty punches, holiday premiums, and benefit deductions for {{ selectedEmployee.full_name }}.</p>
+        </div>
+
+        <!-- Case 3: Employee Payroll Ready -->
+        <template v-else-if="currentRecord">
+          <!-- 1. Employee Profile Card -->
+          <div class="rounded-xl border bg-card p-3.5 sm:p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <Avatar class="size-12 border shadow-xs">
+                <AvatarImage
+                  v-if="selectedEmployee.photo"
+                  :src="selectedEmployee.photo"
+                  :alt="selectedEmployee.full_name"
+                />
+                <AvatarFallback class="bg-primary/10 text-primary font-bold text-sm">
+                  {{ selectedEmployee.full_name.charAt(0) }}
+                </AvatarFallback>
+              </Avatar>
+
+              <div class="space-y-0.5">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <h2 class="text-sm sm:text-base font-bold text-foreground">
+                    {{ currentRecord.employeeName }}
+                  </h2>
+                  <Badge variant="outline" class="font-mono text-[10px] py-0 px-1.5 font-semibold">
+                    ID: {{ currentRecord.employeeNumber }}
+                  </Badge>
+                  <Badge variant="secondary" class="text-[10px] py-0 px-1.5">
+                    Bio #{{ currentRecord.bioId }}
+                  </Badge>
+                </div>
+                <div class="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                  <span>{{ currentRecord.department }}</span>
+                  <span>•</span>
+                  <span>{{ currentRecord.position }}</span>
+                  <span>•</span>
+                  <span class="text-primary font-medium">{{ currentRecord.workGroupId }}</span>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Highlight Banner: Selected Period & Official Payday -->
-          <div v-if="currentCutoff" class="mt-3 p-2.5 rounded-lg border bg-background/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div class="flex items-center gap-4 flex-wrap">
-              <div class="flex items-center gap-1.5 font-medium">
-                <CalendarDays class="size-3.5 text-primary" />
-                <span class="text-muted-foreground">Selected Cut-off:</span>
-                <span class="font-bold text-foreground">{{ currentCutoff.shortLabel }}</span>
-              </div>
-              <div class="flex items-center gap-1.5 font-medium">
-                <Landmark class="size-3.5 text-emerald-600" />
-                <span class="text-muted-foreground">Designated Payday:</span>
-                <span class="font-bold text-emerald-700 dark:text-emerald-400 font-mono">{{ currentCutoff.paydayDisplay }}</span>
-                <span class="text-[10px] text-muted-foreground font-normal">
-                  ({{ currentCutoff.half === 1 ? '20th of same month' : '5th of following month' }})
-                </span>
-              </div>
-            </div>
-
-            <div class="text-[11px] text-muted-foreground">
-              Source: <strong class="text-foreground">Attendance Matrix & Biometric Scanner</strong>
-            </div>
-          </div>
-
-          <!-- Notification Banners -->
-          <div v-if="saveSuccessMessage" class="mt-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
-            <CheckCircle2 class="size-3.5 text-emerald-600 shrink-0" />
-            <span>{{ saveSuccessMessage }}</span>
-          </div>
-
-          <div v-if="saveErrorMessage" class="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
-            <AlertCircle class="size-3.5 shrink-0" />
-            <span>{{ saveErrorMessage }}</span>
-          </div>
-        </DialogHeader>
-
-        <!-- KPI Stages Breakdown Strip -->
-        <div class="px-4 py-3 border-b bg-card grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs shrink-0">
-          <!-- Total Payable Days -->
-          <div class="rounded-lg border p-2 bg-muted/20">
-            <span class="text-[10px] text-muted-foreground font-semibold uppercase block">Payable Days</span>
-            <div class="text-base font-bold text-foreground font-mono mt-0.5">
-              {{ periodKPIs.payableDaysSum }} <span class="text-xs font-normal text-muted-foreground">days</span>
-            </div>
-          </div>
-
-          <!-- Stage A: Initial Gross Earnings -->
-          <div class="rounded-lg border border-primary/20 bg-primary/5 p-2">
-            <span class="text-[10px] text-primary font-semibold uppercase block truncate">A. Initial Earnings</span>
-            <div class="text-base font-bold text-foreground font-mono mt-0.5">
-              ₱{{ periodKPIs.totalEarnings.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-            </div>
-          </div>
-
-          <!-- Stage B: Statutory Benefits & Loans -->
-          <div class="rounded-lg border p-2 bg-muted/20">
-            <span class="text-[10px] text-muted-foreground font-semibold uppercase block truncate">B. Benefits & Loans</span>
-            <div class="text-base font-semibold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
-              -₱{{ periodKPIs.totalBenefits.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-            </div>
-          </div>
-
-          <!-- Stage C: CA & Other Deductions -->
-          <div class="rounded-lg border p-2 bg-muted/20">
-            <span class="text-[10px] text-muted-foreground font-semibold uppercase block truncate">C. CA & Deductions</span>
-            <div class="text-base font-semibold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
-              -₱{{ (periodKPIs.totalCashAdvance + periodKPIs.totalOtherDeductions).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-            </div>
-          </div>
-
-          <!-- Stage D: Withholding Tax -->
-          <div class="rounded-lg border p-2 bg-muted/20">
-            <span class="text-[10px] text-muted-foreground font-semibold uppercase block truncate">D. Withholding Tax</span>
-            <div class="text-base font-semibold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
-              -₱{{ periodKPIs.totalTax.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-            </div>
-          </div>
-
-          <!-- Stage E: Final Net Pay -->
-          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2">
-            <span class="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold uppercase block truncate">E. Total Net Pay</span>
-            <div class="text-base font-black text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
-              ₱{{ periodKPIs.totalNetPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-            </div>
-          </div>
-        </div>
-
-        <!-- Filter & Search Toolbar -->
-        <div class="px-4 py-2 border-b bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0 text-xs">
-          <!-- Status Tabs -->
-          <div class="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
-            <button
-              type="button"
-              class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer"
-              :class="statusFilter === 'all' ? 'bg-primary text-primary-foreground shadow-2xs' : 'text-muted-foreground hover:bg-muted'"
-              @click="statusFilter = 'all'"
-            >
-              All Employees ({{ payrollRecords.length }})
-            </button>
-            <button
-              type="button"
-              class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer flex items-center gap-1"
-              :class="statusFilter === 'needs_review' ? 'bg-amber-600 text-white shadow-2xs' : 'text-muted-foreground hover:bg-muted'"
-              @click="statusFilter = 'needs_review'"
-            >
-              <AlertTriangle v-if="periodKPIs.needsReviewCount > 0" class="size-3 text-amber-200" />
-              <span>Requires Review</span>
-              <span v-if="periodKPIs.needsReviewCount > 0" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-white/20">
-                {{ periodKPIs.needsReviewCount }}
-              </span>
-            </button>
-            <button
-              type="button"
-              class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer"
-              :class="statusFilter === 'ready' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-muted-foreground hover:bg-muted'"
-              @click="statusFilter = 'ready'"
-            >
-              Audited & Ready
-            </button>
-          </div>
-
-          <!-- Search Box -->
-          <div class="relative w-full sm:w-64">
-            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
-            <Input
-              v-model="searchQuery"
-              placeholder="Search employee, ID, dept..."
-              class="h-7 text-xs pl-8 bg-background w-full"
-            />
-          </div>
-        </div>
-
-        <!-- Employee Payroll Breakdown Table (Responsive & Horizontally Scrollable) -->
-        <div class="flex-1 overflow-y-auto overflow-x-auto min-h-[300px]">
-          <div v-if="isLoading" class="p-12 text-center text-xs text-muted-foreground">
-            <RefreshCw class="size-5 animate-spin mx-auto mb-2 text-primary" />
-            <span>Calculating semi-monthly payroll from attendance matrix data...</span>
-          </div>
-
-          <div v-else-if="filteredRecords.length === 0" class="p-12 text-center text-xs text-muted-foreground">
-            No employee payroll records match the filter criteria.
-          </div>
-
-          <Table v-else class="text-xs border-collapse min-w-[1100px]">
-            <TableHeader class="sticky top-0 bg-muted/95 backdrop-blur-xs z-10 shadow-2xs">
-              <TableRow class="hover:bg-transparent">
-                <TableHead class="w-[75px] font-semibold">ID</TableHead>
-                <TableHead class="w-[160px] font-semibold">Employee Name</TableHead>
-                <TableHead class="w-[85px] text-center font-semibold">Payable Days</TableHead>
-                <TableHead class="w-[110px] text-right font-semibold">Initial Earnings</TableHead>
-                <TableHead class="w-[80px] text-right font-semibold">SSS</TableHead>
-                <TableHead class="w-[80px] text-right font-semibold">PhilHealth</TableHead>
-                <TableHead class="w-[80px] text-right font-semibold">Pag-IBIG</TableHead>
-                <TableHead class="w-[85px] text-right font-semibold">Loans</TableHead>
-                <TableHead class="w-[90px] text-right font-semibold">Cash Adv.</TableHead>
-                <TableHead class="w-[90px] text-right font-semibold">Other Ded.</TableHead>
-                <TableHead class="w-[110px] text-right font-semibold">Withholding Tax</TableHead>
-                <TableHead class="w-[115px] text-right font-semibold font-mono">Final Net Pay</TableHead>
-                <TableHead class="w-[110px] text-center font-semibold">Review Status</TableHead>
-                <TableHead class="w-[80px] text-center font-semibold">Details</TableHead>
-              </TableRow>
-            </TableHeader>
-
-            <TableBody>
-              <TableRow
-                v-for="rec in filteredRecords"
-                :key="rec.id"
-                class="hover:bg-muted/30 transition-colors"
-                :class="rec.reviewStatus === 'needs_review' ? 'bg-amber-500/[0.03]' : ''"
+            <!-- Salary Configuration Status Pill -->
+            <div class="flex items-center gap-2 self-start sm:self-auto">
+              <div
+                v-if="currentRecord.basicSalary > 0 || currentRecord.dailyRate > 0"
+                class="px-3 py-1.5 rounded-lg border bg-muted/40 text-xs font-mono text-right"
               >
-                <!-- Employee ID (Bio ID) -->
-                <TableCell class="font-mono font-bold text-foreground">
-                  {{ rec.bioId }}
-                </TableCell>
-
-                <!-- Employee Name & Dept -->
-                <TableCell>
-                  <div class="font-medium text-foreground leading-tight truncate max-w-[155px]" :title="rec.employeeName">
-                    {{ rec.employeeName }}
-                  </div>
-                  <div class="text-[10px] text-muted-foreground truncate">
-                    {{ rec.department }} • <span class="capitalize">{{ rec.salaryType }}</span>
-                  </div>
-                </TableCell>
-
-                <!-- Payable Working Days -->
-                <TableCell class="text-center font-mono font-medium">
-                  <span :class="rec.payableDays === 0 ? 'text-destructive font-bold' : 'text-foreground'">
-                    {{ rec.payableDays }}
+                <div class="text-[10px] uppercase text-muted-foreground font-semibold">
+                  {{ currentRecord.salaryType }} Rate
+                </div>
+                <div class="font-bold text-foreground">
+                  ₱{{ (currentRecord.basicSalary || currentRecord.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                  <span class="text-[10px] font-normal text-muted-foreground">
+                    {{ currentRecord.salaryType === 'Monthly' ? '/mo' : '/day' }}
                   </span>
-                  <span v-if="rec.sundayWorkDays > 0" class="text-[10px] text-emerald-600 block leading-none" title="Includes Sunday rest day duty">
-                    +{{ rec.sundayWorkDays }} Sun
-                  </span>
-                </TableCell>
-
-                <!-- Initial Earnings (Stage A) -->
-                <TableCell class="text-right font-mono font-bold text-foreground">
-                  <span v-if="rec.initialEarnings > 0">
-                    ₱{{ rec.initialEarnings.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                  </span>
-                  <span v-else class="text-amber-600 font-semibold text-[11px]">
-                    Unconfigured
-                  </span>
-                </TableCell>
-
-                <!-- SSS Contribution -->
-                <TableCell class="text-right font-mono text-muted-foreground">
-                  ₱{{ (rec.sss || 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                </TableCell>
-
-                <!-- PhilHealth Contribution -->
-                <TableCell class="text-right font-mono text-muted-foreground">
-                  ₱{{ (rec.philhealth || 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                </TableCell>
-
-                <!-- Pag-IBIG Contribution -->
-                <TableCell class="text-right font-mono text-muted-foreground">
-                  ₱{{ (rec.pagibig || 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                </TableCell>
-
-                <!-- Loan Deductions -->
-                <TableCell class="text-right font-mono text-muted-foreground">
-                  <span :class="(rec.sssLoan + rec.pagibigLoan + rec.otherLoan) > 0 ? 'text-rose-600 font-semibold' : ''">
-                    ₱{{ ((rec.sssLoan || 0) + (rec.pagibigLoan || 0) + (rec.otherLoan || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                  </span>
-                </TableCell>
-
-                <!-- Cash Advance -->
-                <TableCell class="text-right font-mono text-muted-foreground">
-                  <span :class="rec.cashAdvance > 0 ? 'text-rose-600 font-semibold' : ''">
-                    ₱{{ (rec.cashAdvance || 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                  </span>
-                </TableCell>
-
-                <!-- Other Itemized Deductions -->
-                <TableCell class="text-right font-mono text-muted-foreground">
-                  <span :class="rec.totalOtherDeductions > 0 ? 'text-rose-600 font-semibold' : ''">
-                    ₱{{ (rec.totalOtherDeductions || 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                  </span>
-                </TableCell>
-
-                <!-- Withholding Tax (Manually editable, not auto-threshold) -->
-                <TableCell class="text-right">
-                  <div class="relative flex items-center justify-end">
-                    <span class="text-[10px] text-muted-foreground font-mono mr-1">₱</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      :value="rec.withholdingTax"
-                      class="h-7 w-20 text-right px-1.5 py-0.5 text-xs font-mono rounded border bg-background text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
-                      :disabled="currentBatchStatus === 'finalized'"
-                      placeholder="0.00"
-                      @change="onWithholdingTaxChange(rec, $event)"
-                    />
-                  </div>
-                </TableCell>
-
-                <!-- Final Net Pay -->
-                <TableCell class="text-right font-mono font-black text-sm" :class="rec.netPay < 0 ? 'text-destructive' : 'text-emerald-700 dark:text-emerald-400'">
-                  ₱{{ rec.netPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                </TableCell>
-
-                <!-- Review Status -->
-                <TableCell class="text-center">
-                  <Badge
-                    :variant="rec.reviewStatus === 'needs_review' ? 'destructive' : (rec.reviewStatus === 'finalized' ? 'default' : 'secondary')"
-                    class="text-[10px] px-2 py-0.5 cursor-pointer capitalize inline-flex items-center gap-1 font-semibold"
-                    :title="rec.reviewReasons.join('; ') || 'Ready for audit'"
-                    @click="openInspectModal(rec)"
-                  >
-                    <AlertTriangle v-if="rec.reviewStatus === 'needs_review'" class="size-2.5 text-amber-200" />
-                    <span>{{ rec.reviewStatus === 'needs_review' ? 'Review' : (rec.reviewStatus === 'finalized' ? 'Finalized' : 'Ready') }}</span>
-                  </Badge>
-                </TableCell>
-
-                <!-- Details Action Button -->
-                <TableCell class="text-center">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="h-7 w-7 p-0 cursor-pointer text-muted-foreground hover:text-foreground"
-                    title="Inspect & Edit Deduction Details"
-                    @click="openInspectModal(rec)"
-                  >
-                    <Eye class="size-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
-
-        <!-- Dialog Footer -->
-        <DialogFooter class="p-3 border-t bg-muted/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-          <div class="flex items-center gap-2 text-xs">
-            <!-- Save Draft Button -->
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs font-medium"
-              :disabled="isSaving || payrollRecords.length === 0 || currentBatchStatus === 'finalized'"
-              @click="saveDraft"
-            >
-              <Save class="size-3.5" />
-              <span>Save Draft</span>
-            </Button>
-
-            <!-- Finalize Button -->
-            <Button
-              variant="default"
-              size="sm"
-              class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
-              :disabled="isSaving || payrollRecords.length === 0 || currentBatchStatus === 'finalized'"
-              @click="finalizePayroll"
-            >
-              <ShieldCheck class="size-3.5" />
-              <span>Finalize & Lock Snapshot</span>
-            </Button>
-          </div>
-
-          <div class="flex items-center gap-2 self-end sm:self-auto">
-            <!-- PRINT BUTTON (Normal action button appearance with printer icon, strictly nonfunctional per prompt) -->
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              class="h-8 gap-1.5 text-xs font-medium shadow-2xs cursor-not-allowed opacity-80"
-              title="Print payroll report (Action disabled in preview)"
-            >
-              <Printer class="size-3.5" />
-              <span>Print</span>
-            </Button>
-
-            <!-- CLOSE BUTTON -->
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              class="h-8 text-xs cursor-pointer"
-              @click="handleClose"
-            >
-              Close
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    <!-- ============================================================= -->
-    <!-- NESTED INSPECT & ITEMIZE DEDUCTIONS MODAL -->
-    <!-- ============================================================= -->
-    <Dialog v-model:open="showDetailModal">
-      <DialogContent class="sm:max-w-xl max-w-2xl max-h-[88vh] flex flex-col p-0 overflow-hidden shadow-2xl rounded-xl">
-        <DialogHeader class="p-4 border-b bg-muted/30 shrink-0">
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <DialogTitle class="text-base font-bold text-foreground flex items-center gap-2">
-                <span>{{ inspectingRecord?.employeeName }}</span>
-                <Badge variant="outline" class="font-mono text-xs">
-                  Bio ID: {{ inspectingRecord?.bioId }}
-                </Badge>
-              </DialogTitle>
-              <DialogDescription class="text-xs text-muted-foreground">
-                Detailed Stage A–E Calculation Breakdown and Itemized Deductions Manager
-              </DialogDescription>
+                </div>
+              </div>
+              <div
+                v-else
+                class="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-1.5"
+              >
+                <AlertTriangle class="size-4 shrink-0 text-amber-600" />
+                <span class="font-medium">Unconfigured Salary</span>
+              </div>
             </div>
           </div>
-        </DialogHeader>
 
-        <div v-if="inspectingRecord" class="p-4 space-y-4 overflow-y-auto text-xs">
-          <!-- Warnings / Review Flags if any -->
-          <div v-if="inspectingRecord.reviewReasons.length > 0" class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 space-y-1">
-            <div class="font-semibold flex items-center gap-1.5">
-              <AlertTriangle class="size-3.5 text-amber-600" />
-              <span>Requires HR Review:</span>
+          <!-- Audit Warning / Flags Banner -->
+          <div
+            v-if="currentRecord.reviewReasons.length > 0 || currentRecord.attendanceReviewNotes.length > 0"
+            class="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-xs space-y-1.5"
+          >
+            <div class="font-bold flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+              <AlertTriangle class="size-4 text-amber-600 shrink-0" />
+              <span>Requires HR Review & Audit:</span>
             </div>
-            <ul class="list-disc pl-4 space-y-0.5 text-[11px]">
-              <li v-for="(reason, idx) in inspectingRecord.reviewReasons" :key="idx">
+            <ul class="list-disc list-inside space-y-0.5 text-[11px] pl-1 text-amber-800 dark:text-amber-300">
+              <li v-for="(reason, idx) in currentRecord.reviewReasons" :key="`r-${idx}`">
                 {{ reason }}
+              </li>
+              <li v-for="(note, idx) in currentRecord.attendanceReviewNotes" :key="`n-${idx}`">
+                {{ note }}
               </li>
             </ul>
           </div>
 
-          <!-- Step-by-Step Mathematical Calculation Stages -->
-          <div class="rounded-xl border bg-card p-3.5 space-y-2.5 shadow-2xs">
-            <div class="font-bold text-foreground text-xs uppercase tracking-wider pb-1.5 border-b">
-              Five-Stage Payroll Calculation Formula
+          <!-- Stage A: Initial Earnings -->
+          <div class="rounded-xl border bg-card p-4 shadow-2xs space-y-3">
+            <div class="flex items-center justify-between border-b pb-2">
+              <div class="flex items-center gap-2">
+                <span class="size-5 rounded-full bg-primary/10 text-primary font-bold text-xs flex items-center justify-center">
+                  A
+                </span>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-foreground">
+                  Initial Gross Earnings
+                </h3>
+              </div>
+              <div class="text-xs font-mono font-bold text-primary">
+                ₱{{ currentRecord.initialEarnings.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+              </div>
             </div>
 
-            <!-- Stage A -->
-            <div class="flex items-center justify-between py-1 border-b">
-              <div>
-                <span class="font-semibold text-foreground">Stage A: Initial Earnings</span>
-                <span class="text-[10px] text-muted-foreground block">
-                  Payable Days: {{ inspectingRecord.payableDays }} • Daily Rate: ₱{{ inspectingRecord.dailyRate.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+            <!-- Attendance Days Metric Grid -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+              <div class="p-2 rounded-lg border bg-muted/20">
+                <span class="text-[10px] text-muted-foreground block">Scheduled</span>
+                <span class="font-bold text-foreground font-mono text-sm">{{ currentRecord.scheduledDays }} days</span>
+              </div>
+              <div class="p-2 rounded-lg border bg-emerald-500/5 border-emerald-500/20">
+                <span class="text-[10px] text-emerald-700 dark:text-emerald-400 block font-medium">Duty / Present</span>
+                <span class="font-bold text-emerald-600 font-mono text-sm">{{ currentRecord.presentDays }} days</span>
+              </div>
+              <div class="p-2 rounded-lg border bg-amber-500/5 border-amber-500/20">
+                <span class="text-[10px] text-amber-700 dark:text-amber-400 block font-medium">Sunday Duty (+30%)</span>
+                <span class="font-bold text-amber-600 font-mono text-sm">{{ currentRecord.sundayWorkDays }} days</span>
+              </div>
+              <div class="p-2 rounded-lg border bg-amber-500/5 border-amber-500/20">
+                <span class="text-[10px] text-amber-700 dark:text-amber-400 block font-medium">Holidays</span>
+                <span class="font-bold text-amber-600 font-mono text-sm">{{ currentRecord.holidayDays }} days</span>
+              </div>
+              <div class="p-2 rounded-lg border bg-destructive/5 border-destructive/20">
+                <span class="text-[10px] text-destructive block font-medium">Absences</span>
+                <span class="font-bold text-destructive font-mono text-sm">{{ currentRecord.absentDays }} days</span>
+              </div>
+              <div class="p-2 rounded-lg border bg-muted/20">
+                <span class="text-[10px] text-muted-foreground block">Late Tardy</span>
+                <span class="font-bold text-foreground font-mono text-sm">{{ currentRecord.lateMinutes }} mins</span>
+              </div>
+            </div>
+
+            <!-- Earnings Breakdown Lines -->
+            <div class="space-y-1.5 pt-1 text-xs">
+              <div class="flex justify-between items-center py-1 border-b text-muted-foreground">
+                <span>Base Working Pay ({{ currentRecord.payableDays }} payable days):</span>
+                <span class="font-mono font-medium text-foreground">
+                  ₱{{ currentRecord.earningsBreakdown.basePay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                 </span>
               </div>
-              <span class="font-mono font-bold text-foreground">
-                ₱{{ inspectingRecord.initialEarnings.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- Stage B Subtraction -->
-            <div class="flex items-center justify-between py-1 border-b text-rose-600 dark:text-rose-400">
-              <div>
-                <span class="font-medium">− Stage B: Benefits Contributions & Loans</span>
-                <span class="text-[10px] text-muted-foreground block">
-                  SSS (₱{{ inspectingRecord.sss }}), PHIC (₱{{ inspectingRecord.philhealth }}), HDMF (₱{{ inspectingRecord.pagibig }}), Loans (₱{{ inspectingRecord.sssLoan + inspectingRecord.pagibigLoan + inspectingRecord.otherLoan }})
+              <div v-if="currentRecord.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">
+                <span>Sunday Duty Premium (+30% Philippine Labor Code):</span>
+                <span class="font-mono font-medium text-foreground">
+                  +₱{{ currentRecord.earningsBreakdown.sundayDutyPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                 </span>
               </div>
-              <span class="font-mono font-semibold">
-                -₱{{ inspectingRecord.totalBenefitsAndLoans.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- Subtotal: Balance After Contributions & Loans -->
-            <div class="flex items-center justify-between py-1 border-b bg-muted/20 px-2 rounded font-semibold text-foreground">
-              <span>= Balance after Contributions & Loans</span>
-              <span class="font-mono">
-                ₱{{ inspectingRecord.balanceAfterBenefitsAndLoans.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- Stage C Subtraction -->
-            <div class="flex items-center justify-between py-1 border-b text-rose-600 dark:text-rose-400">
-              <div>
-                <span class="font-medium">− Stage C: Cash Advance & Other Deductions</span>
-                <span class="text-[10px] text-muted-foreground block">
-                  Cash Advance (₱{{ inspectingRecord.cashAdvance }}) + Other Itemized (₱{{ inspectingRecord.totalOtherDeductions }})
+              <div v-if="currentRecord.earningsBreakdown.holidayPay > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">
+                <span>Holiday Duty Premium (Regular / Special):</span>
+                <span class="font-mono font-medium text-foreground">
+                  +₱{{ currentRecord.earningsBreakdown.holidayPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                 </span>
               </div>
-              <span class="font-mono font-semibold">
-                -₱{{ (inspectingRecord.cashAdvance + inspectingRecord.totalOtherDeductions).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- Subtotal: Balance Before Withholding Tax -->
-            <div class="flex items-center justify-between py-1 border-b bg-muted/20 px-2 rounded font-semibold text-foreground">
-              <span>= Balance before Withholding Tax</span>
-              <span class="font-mono">
-                ₱{{ inspectingRecord.balanceBeforeTax.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- Stage D Subtraction -->
-            <div class="flex items-center justify-between py-1 border-b text-amber-700 dark:text-amber-400">
-              <div>
-                <span class="font-medium">− Stage D: Manually Entered Withholding Tax</span>
-                <span class="text-[10px] text-muted-foreground block">
-                  Entered directly by payroll staff (no automated fixed deduction)
+              <div v-if="currentRecord.earningsBreakdown.allowances > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">
+                <span>Semi-Monthly Allowances:</span>
+                <span class="font-mono font-medium text-foreground">
+                  +₱{{ currentRecord.earningsBreakdown.allowances.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                 </span>
               </div>
-              <span class="font-mono font-semibold">
-                -₱{{ inspectingRecord.withholdingTax.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- Stage E Final -->
-            <div class="flex items-center justify-between py-1.5 bg-emerald-500/10 border border-emerald-500/30 px-2.5 rounded-lg text-emerald-800 dark:text-emerald-300">
-              <span class="font-bold uppercase tracking-wider text-xs">Stage E: Final Net Pay</span>
-              <span class="font-mono font-black text-sm">
-                ₱{{ inspectingRecord.netPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Stage B: Statutory Deductions & Loans (Editable) -->
-          <div class="rounded-xl border bg-card p-3.5 space-y-2.5 shadow-2xs">
-            <div class="font-bold text-foreground text-xs uppercase tracking-wider pb-1 border-b">
-              Statutory Contributions & Loan Repayments
-            </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              <div class="space-y-1">
-                <label class="text-[11px] text-muted-foreground">SSS Contribution</label>
-                <Input
-                  v-model.number="inspectingRecord.sss"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  class="h-7 text-xs font-mono"
-                  @change="onInlineFieldChange(inspectingRecord)"
-                />
-              </div>
-              <div class="space-y-1">
-                <label class="text-[11px] text-muted-foreground">PhilHealth Contribution</label>
-                <Input
-                  v-model.number="inspectingRecord.philhealth"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  class="h-7 text-xs font-mono"
-                  @change="onInlineFieldChange(inspectingRecord)"
-                />
-              </div>
-              <div class="space-y-1">
-                <label class="text-[11px] text-muted-foreground">Pag-IBIG Contribution</label>
-                <Input
-                  v-model.number="inspectingRecord.pagibig"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  class="h-7 text-xs font-mono"
-                  @change="onInlineFieldChange(inspectingRecord)"
-                />
-              </div>
-              <div class="space-y-1">
-                <label class="text-[11px] text-muted-foreground">SSS Loan Repayment</label>
-                <Input
-                  v-model.number="inspectingRecord.sssLoan"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  class="h-7 text-xs font-mono"
-                  @change="onInlineFieldChange(inspectingRecord)"
-                />
-              </div>
-              <div class="space-y-1">
-                <label class="text-[11px] text-muted-foreground">Pag-IBIG Loan Repayment</label>
-                <Input
-                  v-model.number="inspectingRecord.pagibigLoan"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  class="h-7 text-xs font-mono"
-                  @change="onInlineFieldChange(inspectingRecord)"
-                />
-              </div>
-              <div class="space-y-1">
-                <label class="text-[11px] text-muted-foreground">Company / Other Loan</label>
-                <Input
-                  v-model.number="inspectingRecord.otherLoan"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  class="h-7 text-xs font-mono"
-                  @change="onInlineFieldChange(inspectingRecord)"
-                />
+              <div class="flex justify-between items-center pt-1 font-bold">
+                <span class="text-foreground">Total Initial Gross Earnings:</span>
+                <span class="font-mono text-sm text-primary">
+                  ₱{{ currentRecord.initialEarnings.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                </span>
               </div>
             </div>
           </div>
 
-          <!-- Stage C: Itemized Deductions Manager -->
-          <div class="rounded-xl border bg-card p-3.5 space-y-3 shadow-2xs">
-            <div class="flex items-center justify-between pb-1 border-b">
-              <div class="font-bold text-foreground text-xs uppercase tracking-wider">
-                Stage C: Cash Advance & Itemized Deductions
-              </div>
-              <span class="text-[11px] font-mono font-semibold text-rose-600">
-                Total: ₱{{ (inspectingRecord.cashAdvance + inspectingRecord.totalOtherDeductions).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-              </span>
-            </div>
-
-            <!-- List of existing deductions -->
-            <div v-if="!inspectingRecord.itemizedDeductions || inspectingRecord.itemizedDeductions.length === 0" class="text-xs text-muted-foreground italic py-2 text-center">
-              No cash advances or itemized deductions entered for this cutoff.
-            </div>
-
-            <div v-else class="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-              <div
-                v-for="item in inspectingRecord.itemizedDeductions"
-                :key="item.id"
-                class="flex items-center justify-between p-2 rounded-lg border bg-muted/20 text-xs gap-2"
-              >
-                <div class="flex items-center gap-2 min-w-0">
-                  <Badge variant="outline" class="text-[10px] uppercase font-mono shrink-0">
-                    {{ item.category.replace('_', ' ') }}
-                  </Badge>
-                  <span class="font-medium text-foreground truncate">{{ item.description }}</span>
+          <!-- 2-Column Grid: Stage B & Stage C -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Stage B: Statutory Benefits & Loan Repayments -->
+            <div class="rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between border-b pb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="size-5 rounded-full bg-rose-500/10 text-rose-600 font-bold text-xs flex items-center justify-center">
+                      B
+                    </span>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Benefits Contributions & Loans
+                    </h3>
+                  </div>
+                  <div class="text-xs font-mono font-bold text-rose-600 dark:text-rose-400">
+                    -₱{{ currentRecord.totalBenefitsAndLoans.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                  </div>
                 </div>
 
-                <div class="flex items-center gap-2 shrink-0">
-                  <span class="font-mono font-semibold text-rose-600">
-                    ₱{{ item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                <!-- Editable Fields -->
+                <div class="space-y-2.5 pt-2 text-xs">
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-muted-foreground">SSS Contribution:</label>
+                    <div class="relative w-32">
+                      <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                      <Input
+                        v-model.number="currentRecord.sss"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        class="h-7 text-xs pl-6 text-right font-mono"
+                        @input="onStatutoryChange"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-muted-foreground">PhilHealth Contribution:</label>
+                    <div class="relative w-32">
+                      <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                      <Input
+                        v-model.number="currentRecord.philhealth"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        class="h-7 text-xs pl-6 text-right font-mono"
+                        @input="onStatutoryChange"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-muted-foreground">Pag-IBIG Contribution:</label>
+                    <div class="relative w-32">
+                      <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                      <Input
+                        v-model.number="currentRecord.pagibig"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        class="h-7 text-xs pl-6 text-right font-mono"
+                        @input="onStatutoryChange"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-muted-foreground">SSS Loan Repayment:</label>
+                    <div class="relative w-32">
+                      <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                      <Input
+                        v-model.number="currentRecord.sssLoan"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        class="h-7 text-xs pl-6 text-right font-mono"
+                        @input="onStatutoryChange"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-muted-foreground">Pag-IBIG Loan Repayment:</label>
+                    <div class="relative w-32">
+                      <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                      <Input
+                        v-model.number="currentRecord.pagibigLoan"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        class="h-7 text-xs pl-6 text-right font-mono"
+                        @input="onStatutoryChange"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between gap-2">
+                    <label class="text-muted-foreground">Other Company Loan:</label>
+                    <div class="relative w-32">
+                      <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                      <Input
+                        v-model.number="currentRecord.otherLoan"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        class="h-7 text-xs pl-6 text-right font-mono"
+                        @input="onStatutoryChange"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Running Subtotal after Stage B -->
+              <div class="pt-2 border-t flex justify-between items-center text-xs">
+                <span class="text-muted-foreground">Balance after Benefits & Loans:</span>
+                <span class="font-mono font-bold text-foreground">
+                  ₱{{ currentRecord.balanceAfterBenefitsAndLoans.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Stage C: Cash Advance & Other Authorized Deductions -->
+            <div class="rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between border-b pb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="size-5 rounded-full bg-rose-500/10 text-rose-600 font-bold text-xs flex items-center justify-center">
+                      C
+                    </span>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Cash Advance & Other Deductions
+                    </h3>
+                  </div>
+                  <div class="text-xs font-mono font-bold text-rose-600 dark:text-rose-400">
+                    -₱{{ (currentRecord.cashAdvance + currentRecord.totalOtherDeductions).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                  </div>
+                </div>
+
+                <!-- Existing Itemized Entries List -->
+                <div class="pt-2 space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                  <div
+                    v-if="!currentRecord.itemizedDeductions || currentRecord.itemizedDeductions.length === 0"
+                    class="py-4 text-center text-xs text-muted-foreground italic border rounded-lg bg-muted/10"
+                  >
+                    No cash advance or itemized deduction recorded for this cutoff.
+                  </div>
+
+                  <div
+                    v-for="(item, idx) in currentRecord.itemizedDeductions"
+                    :key="item.id || idx"
+                    class="flex items-center justify-between gap-2 p-1.5 rounded-lg border bg-background text-xs"
+                  >
+                    <div class="min-w-0 flex-1 flex items-center gap-1.5 truncate">
+                      <Badge variant="outline" class="text-[9px] py-0 px-1 font-mono uppercase shrink-0">
+                        {{ item.category.replace('_', ' ') }}
+                      </Badge>
+                      <span class="truncate font-medium text-foreground">
+                        {{ item.description }}
+                      </span>
+                    </div>
+
+                    <div class="flex items-center gap-2 shrink-0">
+                      <span class="font-mono font-semibold text-rose-600 dark:text-rose-400">
+                        -₱{{ item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        class="size-6 p-0 text-muted-foreground hover:text-destructive cursor-pointer"
+                        title="Remove deduction"
+                        @click="removeDeductionItem(idx)"
+                      >
+                        <Trash2 class="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Add New Item Form -->
+                <div class="mt-3 p-2.5 rounded-lg border bg-muted/20 space-y-2">
+                  <span class="text-[10px] uppercase font-bold text-muted-foreground block">
+                    Add Deduction Entry
                   </span>
-                  <button
-                    type="button"
-                    class="text-muted-foreground hover:text-destructive p-1 rounded transition-colors cursor-pointer"
-                    title="Remove deduction"
-                    @click="removeDeductionItem(item.id)"
-                  >
-                    <Trash2 class="size-3.5" />
-                  </button>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Select v-model="newDeductionCategory">
+                      <SelectTrigger class="h-7 text-xs bg-background">
+                        <SelectValue placeholder="Category" />
+                      </SelectTrigger>
+                      <SelectContent class="text-xs">
+                        <SelectItem value="cash_advance">Cash Advance (CA)</SelectItem>
+                        <SelectItem value="safety_boots">Safety Boots</SelectItem>
+                        <SelectItem value="gloves">Gloves</SelectItem>
+                        <SelectItem value="uniform">Uniform</SelectItem>
+                        <SelectItem value="other">Other Authorized</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Input
+                      v-model="newDeductionDescription"
+                      placeholder="Description / note..."
+                      class="h-7 text-xs bg-background"
+                    />
+
+                    <div class="flex items-center gap-1.5">
+                      <div class="relative flex-1">
+                        <span class="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                        <Input
+                          v-model.number="newDeductionAmount"
+                          type="number"
+                          step="0.01"
+                          placeholder="Amount"
+                          class="h-7 text-xs pl-5 bg-background font-mono"
+                          @keydown.enter="addDeductionItem"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        class="h-7 px-2.5 text-xs gap-1 cursor-pointer"
+                        :disabled="!newDeductionAmount || Number(newDeductionAmount) <= 0"
+                        @click="addDeductionItem"
+                      >
+                        <Plus class="size-3.5" />
+                        <span>Add</span>
+                      </Button>
+                    </div>
+                  </div>
                 </div>
+              </div>
+
+              <!-- Running Subtotal after Stage C -->
+              <div class="pt-2 border-t flex justify-between items-center text-xs">
+                <span class="text-muted-foreground">Balance before Tax:</span>
+                <span class="font-mono font-bold text-foreground">
+                  ₱{{ currentRecord.balanceBeforeTax.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stage D & Stage E Row -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Stage D: Withholding Tax (Manually Editable) -->
+            <div class="rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between border-b pb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="size-5 rounded-full bg-amber-500/10 text-amber-600 font-bold text-xs flex items-center justify-center">
+                      D
+                    </span>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Withholding Tax
+                    </h3>
+                  </div>
+                  <Badge variant="secondary" class="text-[10px] py-0 font-normal">
+                    Manually Editable
+                  </Badge>
+                </div>
+
+                <div class="pt-3 space-y-2 text-xs">
+                  <div class="flex items-center justify-between gap-3">
+                    <label class="font-medium text-foreground">
+                      Withholding Tax Amount:
+                    </label>
+                    <div class="flex items-center gap-1.5">
+                      <div class="relative w-36">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
+                        <Input
+                          v-model.number="currentRecord.withholdingTax"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          class="h-8 text-xs pl-6 text-right font-mono font-bold text-amber-700 dark:text-amber-300"
+                          @input="onTaxChange"
+                        />
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        class="h-8 px-2 text-[11px] text-muted-foreground cursor-pointer"
+                        title="Clear tax to 0"
+                        @click="clearTax"
+                      >
+                        Zero
+                      </Button>
+                    </div>
+                  </div>
+
+                  <p class="text-[11px] text-muted-foreground leading-relaxed pt-1">
+                    Entered manually by authorized payroll staff based on BIR graduated withholding tax brackets or exemption certificate. No fixed tax is applied automatically.
+                  </p>
+                </div>
+              </div>
+
+              <div class="pt-2 border-t flex justify-between items-center text-xs">
+                <span class="text-muted-foreground">Withholding Tax Deducted:</span>
+                <span class="font-mono font-bold text-amber-600 dark:text-amber-400">
+                  -₱{{ currentRecord.withholdingTax.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                </span>
               </div>
             </div>
 
-            <!-- Add new item form -->
-            <div class="pt-2 border-t space-y-2">
-              <div class="text-[11px] font-semibold text-foreground">Add New Deduction Entry:</div>
-              <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                <div class="sm:col-span-4">
-                  <Select v-model="newDeductionCategory">
-                    <SelectTrigger class="h-7 text-xs bg-background">
-                      <SelectValue placeholder="Category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="cash_advance" class="text-xs">Cash Advance (CA)</SelectItem>
-                        <SelectItem value="safety_boots" class="text-xs">Safety Boots</SelectItem>
-                        <SelectItem value="gloves" class="text-xs">Gloves</SelectItem>
-                        <SelectItem value="uniform" class="text-xs">Uniform</SelectItem>
-                        <SelectItem value="other" class="text-xs">Other Authorized</SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
+            <!-- Stage E: Final Net Pay Highlight Card -->
+            <div class="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 shadow-2xs space-y-3 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between border-b border-emerald-500/20 pb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="size-5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold text-xs flex items-center justify-center">
+                      E
+                    </span>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                      Final Net Take-Home Pay
+                    </h3>
+                  </div>
 
-                <div class="sm:col-span-5">
-                  <Input
-                    v-model="newDeductionDescription"
-                    placeholder="Description (e.g. Safety Boots #42)"
-                    class="h-7 text-xs bg-background"
-                  />
-                </div>
-
-                <div class="sm:col-span-3 flex items-center gap-1.5">
-                  <Input
-                    v-model.number="newDeductionAmount"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="₱ Amount"
-                    class="h-7 text-xs font-mono bg-background"
-                  />
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    class="h-7 w-7 p-0 shrink-0 cursor-pointer"
-                    title="Add deduction"
-                    @click="addDeductionItem"
+                  <Badge
+                    :variant="currentRecord.reviewStatus === 'needs_review' ? 'destructive' : 'default'"
+                    class="text-[10px] py-0 uppercase font-semibold"
                   >
-                    <Plus class="size-3.5" />
-                  </Button>
+                    {{ currentRecord.reviewStatus.replace('_', ' ') }}
+                  </Badge>
+                </div>
+
+                <!-- Big Net Pay Display -->
+                <div class="py-3 text-center space-y-1">
+                  <span class="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold block">
+                    Calculated Net Pay
+                  </span>
+                  <div
+                    class="text-2xl sm:text-3xl font-black font-mono tracking-tight"
+                    :class="currentRecord.netPay < 0 ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'"
+                  >
+                    ₱{{ currentRecord.netPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                  </div>
+                  <div class="text-[11px] text-muted-foreground">
+                    Payday on <strong class="text-foreground">{{ currentCutoff?.paydayDisplay }}</strong>
+                  </div>
+                </div>
+
+                <!-- Compact Summary Line -->
+                <div class="text-[11px] text-muted-foreground space-y-1 border-t border-emerald-500/20 pt-2">
+                  <div class="flex justify-between">
+                    <span>Initial Earnings:</span>
+                    <span class="font-mono text-foreground">+₱{{ currentRecord.initialEarnings.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>Total Deductions:</span>
+                    <span class="font-mono text-rose-600 dark:text-rose-400">
+                      -₱{{ (currentRecord.totalBenefitsAndLoans + currentRecord.cashAdvance + currentRecord.totalOtherDeductions + currentRecord.withholdingTax).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <div v-if="newDeductionError" class="text-destructive text-[11px]">
-                {{ newDeductionError }}
+              <!-- Snapshot Status Badge -->
+              <div class="pt-2 border-t border-emerald-500/20 flex justify-between items-center text-xs">
+                <span class="text-muted-foreground">Database Snapshot:</span>
+                <span class="font-mono uppercase font-semibold text-[10px] text-foreground">
+                  {{ currentRecord.batchStatus }}
+                </span>
               </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Modal Footer Action Bar -->
+      <DialogFooter class="px-5 py-3 border-t bg-muted/20 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        <div class="flex items-center gap-2">
+          <!-- Print / View Payslip -->
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs"
+            :disabled="!currentRecord"
+            @click="isPayslipViewOpen = true"
+          >
+            <Printer class="size-3.5 text-primary" />
+            <span>Print Payslip</span>
+          </Button>
+
+          <span v-if="currentRecord" class="text-[11px] text-muted-foreground font-mono hidden sm:inline">
+            Updated: {{ new Date(currentRecord.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-8 text-xs cursor-pointer"
+            @click="emit('update:open', false)"
+          >
+            Close
+          </Button>
+
+          <!-- Save Snapshot as Draft -->
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs"
+            :disabled="isSaving || !currentRecord"
+            @click="saveRecord('draft')"
+          >
+            <Save class="size-3.5 text-muted-foreground" />
+            <span>Save Draft</span>
+          </Button>
+
+          <!-- Approve / Finalize Snapshot -->
+          <Button
+            variant="default"
+            size="sm"
+            class="h-8 gap-1.5 text-xs cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+            :disabled="isSaving || !currentRecord"
+            @click="saveRecord('finalized')"
+          >
+            <ShieldCheck class="size-3.5" />
+            <span>Finalize Snapshot</span>
+          </Button>
+        </div>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <!-- Individual Printable Payslip Modal -->
+  <Dialog :open="isPayslipViewOpen" @update:open="(val) => isPayslipViewOpen = val">
+    <DialogContent class="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
+      <DialogHeader class="px-5 py-3 border-b bg-card shrink-0 flex flex-row items-center justify-between">
+        <div>
+          <DialogTitle class="text-base font-bold text-foreground flex items-center gap-2">
+            <FileText class="size-4 text-primary" />
+            <span>Official Employee Payslip</span>
+          </DialogTitle>
+          <DialogDescription class="text-xs text-muted-foreground">
+            Printable semi-monthly payslip voucher for {{ currentRecord?.employeeName }}.
+          </DialogDescription>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-8 gap-1.5 text-xs cursor-pointer mr-6"
+          @click="triggerPrint"
+        >
+          <Printer class="size-3.5" />
+          <span>Print Voucher</span>
+        </Button>
+      </DialogHeader>
+
+      <div v-if="currentRecord && currentCutoff" class="flex-1 overflow-y-auto p-6 space-y-4 print:p-0 text-xs text-foreground bg-background">
+        <!-- Printable Payslip Header -->
+        <div class="border-b pb-3 text-center space-y-1">
+          <h2 class="text-base font-black tracking-wide uppercase text-foreground">
+            DMBB HOLDINGS INC. — HUMAN RESOURCES
+          </h2>
+          <p class="text-[11px] text-muted-foreground uppercase tracking-widest font-semibold">
+            Confidential Semi-Monthly Employee Payslip
+          </p>
+          <div class="flex justify-center items-center gap-4 text-xs font-medium pt-1">
+            <span>Cut-Off Period: <strong>{{ currentCutoff.label }}</strong></span>
+            <span>•</span>
+            <span>Payday: <strong class="text-emerald-700 dark:text-emerald-400">{{ currentCutoff.paydayDisplay }}</strong></span>
+          </div>
+        </div>
+
+        <!-- Employee Info Grid -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-lg border bg-muted/20 font-mono text-[11px]">
+          <div>
+            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Employee Name</span>
+            <strong class="text-foreground text-xs">{{ currentRecord.employeeName }}</strong>
+          </div>
+          <div>
+            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Employee / Bio ID</span>
+            <strong class="text-foreground">#{{ currentRecord.employeeNumber }}</strong>
+          </div>
+          <div>
+            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Department</span>
+            <strong class="text-foreground">{{ currentRecord.department }}</strong>
+          </div>
+          <div>
+            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Position / Group</span>
+            <strong class="text-foreground">{{ currentRecord.position }}</strong>
+          </div>
+        </div>
+
+        <!-- Earnings & Deductions Tables -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- Earnings Column -->
+          <div class="border rounded-lg p-3 space-y-2">
+            <h4 class="font-bold uppercase tracking-wider text-[11px] text-primary border-b pb-1">
+              Gross Earnings
+            </h4>
+            <div class="space-y-1.5 font-mono text-xs">
+              <div class="flex justify-between">
+                <span>Basic Wage ({{ currentRecord.payableDays }} days):</span>
+                <span>₱{{ currentRecord.earningsBreakdown.basePay.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between">
+                <span>Sunday Duty (+30%):</span>
+                <span>₱{{ currentRecord.earningsBreakdown.sundayDutyPay.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.earningsBreakdown.holidayPay > 0" class="flex justify-between">
+                <span>Holiday Duty:</span>
+                <span>₱{{ currentRecord.earningsBreakdown.holidayPay.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.earningsBreakdown.allowances > 0" class="flex justify-between">
+                <span>Allowances:</span>
+                <span>₱{{ currentRecord.earningsBreakdown.allowances.toFixed(2) }}</span>
+              </div>
+            </div>
+            <div class="border-t pt-1.5 flex justify-between font-bold text-xs">
+              <span>Total Gross:</span>
+              <span class="text-primary font-mono">₱{{ currentRecord.initialEarnings.toFixed(2) }}</span>
+            </div>
+          </div>
+
+          <!-- Deductions Column -->
+          <div class="border rounded-lg p-3 space-y-2">
+            <h4 class="font-bold uppercase tracking-wider text-[11px] text-rose-600 dark:text-rose-400 border-b pb-1">
+              Authorized Deductions
+            </h4>
+            <div class="space-y-1 font-mono text-xs max-h-36 overflow-y-auto">
+              <div v-if="currentRecord.sss > 0" class="flex justify-between">
+                <span>SSS:</span>
+                <span>-₱{{ currentRecord.sss.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.philhealth > 0" class="flex justify-between">
+                <span>PhilHealth:</span>
+                <span>-₱{{ currentRecord.philhealth.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.pagibig > 0" class="flex justify-between">
+                <span>Pag-IBIG:</span>
+                <span>-₱{{ currentRecord.pagibig.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.sssLoan > 0" class="flex justify-between">
+                <span>SSS Loan:</span>
+                <span>-₱{{ currentRecord.sssLoan.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.pagibigLoan > 0" class="flex justify-between">
+                <span>Pag-IBIG Loan:</span>
+                <span>-₱{{ currentRecord.pagibigLoan.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.otherLoan > 0" class="flex justify-between">
+                <span>Other Loan:</span>
+                <span>-₱{{ currentRecord.otherLoan.toFixed(2) }}</span>
+              </div>
+              <div v-for="d in currentRecord.itemizedDeductions" :key="d.id" class="flex justify-between text-[11px]">
+                <span class="truncate max-w-[140px]">{{ d.description }}:</span>
+                <span>-₱{{ d.amount.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.withholdingTax > 0" class="flex justify-between text-amber-700 dark:text-amber-400">
+                <span>Withholding Tax:</span>
+                <span>-₱{{ currentRecord.withholdingTax.toFixed(2) }}</span>
+              </div>
+            </div>
+            <div class="border-t pt-1.5 flex justify-between font-bold text-xs">
+              <span>Total Deductions:</span>
+              <span class="text-rose-600 dark:text-rose-400 font-mono">
+                -₱{{ (currentRecord.totalBenefitsAndLoans + currentRecord.cashAdvance + currentRecord.totalOtherDeductions + currentRecord.withholdingTax).toFixed(2) }}
+              </span>
             </div>
           </div>
         </div>
 
-        <DialogFooter class="p-3 border-t bg-muted/30 flex justify-end">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            class="h-8 text-xs cursor-pointer"
-            @click="showDetailModal = false"
-          >
-            Done
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  </div>
+        <!-- Net Take Home Pay Highlight -->
+        <div class="p-3.5 rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 flex items-center justify-between">
+          <div>
+            <span class="text-[10px] uppercase font-bold tracking-wider text-emerald-800 dark:text-emerald-300 block">
+              Net Amount Received
+            </span>
+            <span class="text-xs text-muted-foreground">
+              Direct transfer / Cash envelope
+            </span>
+          </div>
+          <div class="text-xl sm:text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400">
+            ₱{{ currentRecord.netPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+          </div>
+        </div>
+
+        <!-- Signatures & Acknowledgment -->
+        <div class="grid grid-cols-2 gap-8 pt-8 border-t text-[11px]">
+          <div class="border-t border-muted-foreground/40 pt-1 text-center">
+            <span class="text-muted-foreground block">Prepared & Audited By</span>
+            <strong class="text-foreground">Human Resources / Payroll Officer</strong>
+          </div>
+          <div class="border-t border-muted-foreground/40 pt-1 text-center">
+            <span class="text-muted-foreground block">Received By (Employee Signature)</span>
+            <strong class="text-foreground">{{ currentRecord.employeeName }}</strong>
+          </div>
+        </div>
+      </div>
+
+      <DialogFooter class="px-5 py-2.5 border-t bg-muted/20">
+        <Button variant="ghost" size="sm" class="h-8 text-xs cursor-pointer" @click="isPayslipViewOpen = false">
+          Close Preview
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
