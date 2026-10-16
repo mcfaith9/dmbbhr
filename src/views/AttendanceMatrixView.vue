@@ -17,8 +17,10 @@ import {
   ChevronsUpDown,
   Check,
   Users,
-  Fingerprint
+  Fingerprint,
+  Calculator
 } from '@lucide/vue'
+import PayrollCalculationDialog from '@/components/PayrollCalculationDialog.vue'
 import { employeeService } from '@/services/employees'
 import { attendanceService, type DailyAttendanceRecord } from '@/services/attendance'
 import { holidayService } from '@/services/holidays/holidayService'
@@ -57,6 +59,9 @@ function selectEmployee(bioId: string) {
 // Default period: Current 15-day period (1st to 15th, or 16th to end of month)
 const periodAnchorDate = ref<Date>(new Date())
 const isLoadingAttendance = ref(false)
+
+// Payroll Calculation Modal state
+const showPayrollCalculationModal = ref(false)
 
 // Cached attendance records for selected employee across the current period
 const attendanceRecordsMap = ref<Map<string, DailyAttendanceRecord>>(new Map())
@@ -862,6 +867,20 @@ onMounted(async () => {
           </div>
         </div>
       </div>
+
+      <!-- Action: Payroll Calculation Button (Directly below matrix, aligned to the left side) -->
+      <div class="flex items-center justify-start pt-1">
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          class="h-8 gap-2 text-xs font-semibold shadow-xs cursor-pointer"
+          @click="showPayrollCalculationModal = true"
+        >
+          <Calculator class="size-3.5" />
+          <span>Payroll Calculation</span>
+        </Button>
+      </div>
     </div>
 
     <!-- Section C: Summary and Operational Insights -->
@@ -947,5 +966,11 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- Payroll Calculation Dialog Component -->
+    <PayrollCalculationDialog
+      v-model:open="showPayrollCalculationModal"
+      :period-anchor-date="periodAnchorDate"
+    />
   </div>
 </template>

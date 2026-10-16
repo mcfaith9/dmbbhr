@@ -222,6 +222,59 @@ export interface HrNoticeRecord {
   createdBy?: string
 }
 
+export interface ItemizedDeductionRecord {
+  id: string
+  category: 'cash_advance' | 'safety_boots' | 'gloves' | 'uniform' | 'other'
+  description: string
+  amount: number
+  createdAt: string
+}
+
+export interface PayrollSnapshotRecord {
+  id: string // `${periodId}_${bioId}`
+  periodId: string // e.g. "2026-06-1"
+  bioId: string
+  employeeNumber: string
+  employeeName: string
+  department: string
+  position: string
+  status: string
+  workGroupId: string
+  cutoffStart: string
+  cutoffEnd: string
+  payday: string
+  salaryType: string
+  basicSalary: number
+  dailyRate: number
+  hourlyRate: number
+  payableDays: number
+  presentDays: number
+  sundayWorkDays: number
+  holidayDays: number
+  lateMinutes: number
+  initialEarnings: number
+  sss: number
+  philhealth: number
+  pagibig: number
+  sssLoan: number
+  pagibigLoan: number
+  otherLoan: number
+  totalBenefitsAndLoans: number
+  balanceAfterBenefitsAndLoans: number
+  cashAdvance: number
+  itemizedDeductions: ItemizedDeductionRecord[]
+  totalOtherDeductions: number
+  balanceBeforeTax: number
+  withholdingTax: number
+  netPay: number
+  reviewStatus: 'ready' | 'needs_review' | 'approved' | 'finalized'
+  reviewReasons: string[]
+  batchStatus: 'draft' | 'approved' | 'finalized'
+  finalizedAt?: string
+  finalizedBy?: string
+  updatedAt: string
+}
+
 export class DMBBHRDatabase extends Dexie {
   workGroups!: Table<WorkGroupRecord, string>
   biometricPunches!: Table<BiometricPunchRecord, string>
@@ -235,6 +288,7 @@ export class DMBBHRDatabase extends Dexie {
   manualAdjustments!: Table<ManualAttendanceRecord, string>
   manualAttendanceHistory!: Table<ManualAttendanceHistoryRecord, string>
   hrNotices!: Table<HrNoticeRecord, string>
+  payrollSnapshots!: Table<PayrollSnapshotRecord, string>
 
   constructor() {
     super('DMBBHR_LocalDB')
@@ -259,6 +313,10 @@ export class DMBBHRDatabase extends Dexie {
 
     this.version(7).stores({
       hrNotices: 'id, bioId, enabled, createdAt, [bioId+enabled]'
+    })
+
+    this.version(8).stores({
+      payrollSnapshots: 'id, periodId, bioId, status, batchStatus, [periodId+bioId]'
     })
   }
 }
