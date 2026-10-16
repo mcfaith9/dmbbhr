@@ -120,6 +120,8 @@ export const employeeService = {
       emergencyContactRelationship?: string
       emergencyContactNumber?: string
       hireDate?: string
+      contractDate?: string
+      contract_date?: string
       regularizationDate?: string
       payrollStatus?: 'configured' | 'pending' | 'exempt'
       salaryType?: 'Monthly' | 'Daily' | 'Hourly'
@@ -158,6 +160,7 @@ export const employeeService = {
       department: updates.department,
       position: updates.position,
       hireDate: updates.hire_date ?? updates.hireDate,
+      contractDate: updates.contract_date ?? updates.contractDate,
       regularizationDate: updates.regularization_date ?? updates.regularizationDate,
       status: updates.status,
       payrollStatus: updates.payroll_status ?? updates.payrollStatus,
@@ -175,7 +178,7 @@ export const employeeService = {
       sssNumber: updates.sss_number ?? updates.sssNumber,
       philhealthNumber: updates.philhealth_number ?? updates.philhealthNumber,
       pagibigNumber: updates.pagibig_number ?? updates.pagibigNumber,
-      tin: updates.tin ?? updates.tin,
+      tin: (updates as any).tin_number ?? updates.tin,
       taxStatus: updates.tax_status ?? updates.taxStatus
     })
   },

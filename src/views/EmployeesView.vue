@@ -5,6 +5,7 @@ import {
   Search,
   Fingerprint,
   Users,
+  UserRound,
   UserRoundPen,
   X,
   CheckCircle2,
@@ -49,6 +50,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
 import { DatePicker } from '@/components/ui/date-picker'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Select,
   SelectContent,
@@ -165,9 +167,51 @@ const formWorkGroupId = ref<string>('wg-group-c')
 const formDepartment = ref('')
 const formPosition = ref('')
 const formHireDate = ref('')
+const formContractDate = ref('')
 const formRegularizationDate = ref('')
 const formResignationDate = ref('')
 const formStatus = ref<EmploymentStatus>('active')
+
+// Profile Photo Resolution with graceful error fallback to UserRound icon
+const failedImageBioIds = ref<Set<string>>(new Set())
+const photoAttemptPng = ref<Set<string>>(new Set())
+
+function handleImageError(bioId?: string) {
+  if (!bioId) return
+  const cleanId = String(bioId).trim()
+  if (!photoAttemptPng.value.has(cleanId)) {
+    // Try .png format for this employee photo before falling back
+    const nextPng = new Set(photoAttemptPng.value)
+    nextPng.add(cleanId)
+    photoAttemptPng.value = nextPng
+  } else {
+    // Both .jpg and .png (or custom photo) failed: permanently switch to UserRound icon fallback
+    const nextFailed = new Set(failedImageBioIds.value)
+    nextFailed.add(cleanId)
+    failedImageBioIds.value = nextFailed
+  }
+}
+
+function getEmployeePhotoUrl(emp?: Employee | null): string | null {
+  if (!emp) return null
+  const bioId = emp.biometric_user_id || emp.employee_number
+  if (!bioId) return null
+  const cleanId = String(bioId).trim()
+  if (failedImageBioIds.value.has(cleanId)) {
+    return null
+  }
+  if (emp.photo && typeof emp.photo === 'string' && emp.photo.trim()) {
+    if (photoAttemptPng.value.has(cleanId)) {
+      // Custom photo URL failed
+      return null
+    }
+    return emp.photo.trim()
+  }
+  if (photoAttemptPng.value.has(cleanId)) {
+    return `/employee-photos/${cleanId}.png`
+  }
+  return `/employee-photos/${cleanId}.jpg`
+}
 
 // Complete Payroll Profile Form fields
 const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Monthly')
@@ -279,7 +323,14 @@ const filteredPreviewRows = computed<PeopleImportRowItem[]>(() => {
       r.group.toLowerCase().includes(q) ||
       r.department.toLowerCase().includes(q) ||
       r.status.toLowerCase().includes(q) ||
-      (r.displayStatus && r.displayStatus.toLowerCase().includes(q))
+      (r.displayStatus && r.displayStatus.toLowerCase().includes(q)) ||
+      (r.position && r.position.toLowerCase().includes(q)) ||
+      (r.contractDate && r.contractDate.toLowerCase().includes(q)) ||
+      (r.dateOfBirth && r.dateOfBirth.toLowerCase().includes(q)) ||
+      (r.sssNumber && r.sssNumber.toLowerCase().includes(q)) ||
+      (r.pagibigNumber && r.pagibigNumber.toLowerCase().includes(q)) ||
+      (r.philhealthNumber && r.philhealthNumber.toLowerCase().includes(q)) ||
+      (r.tin && r.tin.toLowerCase().includes(q))
     )
   }
 
@@ -413,9 +464,10 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   formEmergencyNumber.value = emp.emergency_contact_number || ''
   formLocation.value = emp.location || 'DBB CEBU'
   formWorkGroupId.value = emp.work_group_id || 'wg-group-c'
-  formDepartment.value = emp.department || 'Operations'
-  formPosition.value = emp.position || 'Staff'
+  formDepartment.value = emp.department || ''
+  formPosition.value = emp.position || ''
   formHireDate.value = emp.hire_date || ''
+  formContractDate.value = emp.contract_date || ''
   formRegularizationDate.value = emp.regularization_date || ''
   formResignationDate.value = emp.resignation_date || ''
   formStatus.value = (emp.status as any) || 'active'
@@ -482,9 +534,10 @@ async function saveProfile() {
       emergency_contact_number: formEmergencyNumber.value.trim() || undefined,
       location: formLocation.value,
       work_group_id: formWorkGroupId.value,
-      department: formDepartment.value.trim() || 'Operations',
-      position: formPosition.value.trim() || 'Staff',
+      department: formDepartment.value.trim() || undefined,
+      position: formPosition.value.trim() || undefined,
       hire_date: formHireDate.value.trim() || undefined,
+      contract_date: formContractDate.value.trim() || undefined,
       regularization_date: formRegularizationDate.value.trim() || undefined,
       resignation_date: formStatus.value === 'resigned' ? (formResignationDate.value.trim() || undefined) : undefined,
       status: formStatus.value,
@@ -873,9 +926,18 @@ onUnmounted(() => {
               <!-- Employee Name & Avatar -->
               <TableCell>
                 <div class="flex items-center gap-2.5">
-                  <div class="size-7 rounded-full bg-muted flex items-center justify-center font-bold text-xs text-primary shrink-0 border">
-                    {{ emp.full_name.charAt(0).toUpperCase() }}
-                  </div>
+                  <Avatar class="size-7 rounded-full border bg-muted shrink-0 overflow-hidden">
+                    <AvatarImage
+                      v-if="getEmployeePhotoUrl(emp)"
+                      :src="getEmployeePhotoUrl(emp)!"
+                      :alt="emp.full_name"
+                      class="object-cover size-full"
+                      @error="handleImageError(emp.biometric_user_id)"
+                    />
+                    <AvatarFallback class="bg-muted text-muted-foreground flex items-center justify-center size-full">
+                      <UserRound class="size-3.5 text-muted-foreground" />
+                    </AvatarFallback>
+                  </Avatar>
                   <div>
                     <div class="font-semibold text-foreground text-xs leading-snug">
                       {{ emp.full_name }}
@@ -978,9 +1040,18 @@ onUnmounted(() => {
         <!-- Modal Top Header -->
         <div class="p-4 border-b bg-muted/30 flex items-start justify-between gap-3">
           <div class="flex items-center gap-3">
-            <div class="size-12 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg shadow-sm shrink-0">
-              {{ selectedEmployee.full_name.charAt(0).toUpperCase() }}
-            </div>
+            <Avatar class="size-12 rounded-xl border bg-muted shadow-sm shrink-0 overflow-hidden">
+              <AvatarImage
+                v-if="getEmployeePhotoUrl(selectedEmployee)"
+                :src="getEmployeePhotoUrl(selectedEmployee)!"
+                :alt="selectedEmployee.full_name"
+                class="object-cover size-full rounded-xl"
+                @error="handleImageError(selectedEmployee.biometric_user_id)"
+              />
+              <AvatarFallback class="bg-primary/10 text-primary flex items-center justify-center size-full rounded-xl">
+                <UserRound class="size-6 text-primary" />
+              </AvatarFallback>
+            </Avatar>
             <div>
               <div class="flex items-center gap-2 flex-wrap">
                 <h2 class="text-base font-bold text-foreground">
@@ -1202,11 +1273,11 @@ onUnmounted(() => {
                 <div class="grid grid-cols-2 gap-2 text-xs">
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Department</span>
-                    <span class="font-medium text-foreground">{{ selectedEmployee.department || 'Operations' }}</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.department || '—' }}</span>
                   </div>
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Position / Role</span>
-                    <span class="font-medium text-foreground">{{ selectedEmployee.position || 'Staff' }}</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.position || '—' }}</span>
                   </div>
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Work Group Schedule</span>
@@ -1219,8 +1290,16 @@ onUnmounted(() => {
                     <span class="font-medium text-foreground">{{ selectedEmployee.location }}</span>
                   </div>
                   <div>
+                    <span class="text-muted-foreground block text-[11px]">Contract Date</span>
+                    <span class="font-medium text-foreground">{{ selectedEmployee.contract_date || '—' }}</span>
+                  </div>
+                  <div>
                     <span class="text-muted-foreground block text-[11px]">Date Hired</span>
                     <span class="font-medium text-foreground">{{ selectedEmployee.hire_date || '—' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground block text-[11px]">Employment Status</span>
+                    <span class="font-medium text-foreground">{{ formatStatusDisplay(selectedEmployee.status) }}</span>
                   </div>
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Date Regularized</span>
@@ -1601,7 +1680,7 @@ onUnmounted(() => {
                       <Input
                         v-model="formDepartment"
                         type="text"
-                        placeholder="Operations"
+                        placeholder="e.g. Operations, Admin"
                         class="h-8 text-xs"
                       />
                     </div>
@@ -1610,7 +1689,7 @@ onUnmounted(() => {
                       <Input
                         v-model="formPosition"
                         type="text"
-                        placeholder="Staff"
+                        placeholder="e.g. Staff, QA/Lineman"
                         class="h-8 text-xs"
                       />
                     </div>
@@ -1643,6 +1722,14 @@ onUnmounted(() => {
                           </SelectGroup>
                         </SelectContent>
                       </Select>
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Contract Date</label>
+                      <DatePicker
+                        v-model="formContractDate"
+                        placeholder="Pick contract date"
+                        class="w-full h-8 text-xs font-normal"
+                      />
                     </div>
                     <div class="space-y-1">
                       <label class="text-xs font-semibold text-foreground">Date Hired</label>

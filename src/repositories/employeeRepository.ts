@@ -546,7 +546,7 @@ export function parseEmploymentStatus(val: any): EmploymentStatusParseResult | n
   if (upper === 'ON LEAVE' || upper === 'ON_LEAVE' || upper === 'LEAVE') {
     return { status: 'on_leave', isValid: true, display: 'On Leave', raw: str }
   }
-  if (upper === 'INACTIVE') {
+  if (upper === 'INACTIVE' || upper === 'I') {
     return { status: 'inactive', isValid: true, display: 'Inactive', raw: str }
   }
 
@@ -580,44 +580,93 @@ export function parseDateValue(val: any, minYear = 1920, maxYear = 2100): DatePa
   const str = String(val).trim()
   if (str === '' || str === '-' || str === '—' || str.toLowerCase() === 'n/a' || str.toLowerCase() === 'na') return null
 
-  // 1. Numeric Excel serial date (e.g. 45321)
-  if (typeof val === 'number') {
-    if (val > 1000 && val < 100000) {
-      const date = new Date(Math.round((val - 25569) * 86400 * 1000))
-      if (!isNaN(date.getTime())) {
-        const y = date.getUTCFullYear()
-        const m = String(date.getUTCMonth() + 1).padStart(2, '0')
-        const d = String(date.getUTCDate()).padStart(2, '0')
-        return { isValid: true, formatted: `${y}-${m}-${d}`, raw: str }
-      }
+  // 1. Date instance (e.g. from XLSX cell parsing)
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    const y = val.getFullYear()
+    const m = String(val.getMonth() + 1).padStart(2, '0')
+    const d = String(val.getDate()).padStart(2, '0')
+    return { isValid: true, formatted: `${y}-${m}-${d}`, raw: str }
+  }
+
+  // 2. Numeric Excel serial date (e.g. 40508)
+  const numVal = typeof val === 'number' ? val : (typeof val === 'string' && /^\d{4,6}$/.test(str) ? Number(val) : NaN)
+  if (!isNaN(numVal) && numVal > 1000 && numVal < 100000) {
+    const date = new Date(Math.round((numVal - 25569) * 86400 * 1000))
+    if (!isNaN(date.getTime())) {
+      const y = date.getUTCFullYear()
+      const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+      const d = String(date.getUTCDate()).padStart(2, '0')
+      return { isValid: true, formatted: `${y}-${m}-${d}`, raw: str }
     }
   }
 
-  // 2. Reject short status-like codes in date column (e.g. 'R', 'A', 'CSR', 'SUSPENSION')
+  // 3. Reject short status-like codes in date column (e.g. 'R', 'A', 'CSR', 'SUSPENSION')
   const upper = str.toUpperCase()
   if (['R', 'A', 'CSR', 'SUSPENSION', 'SUSPENDED', 'ACTIVE', 'RESIGNED', 'LEAVE', 'ON LEAVE'].includes(upper)) {
     return { isValid: false, isInvalid: true, raw: str }
   }
 
-  // 3. Exact ISO YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    return { isValid: true, formatted: str, raw: str }
-  }
-
-  // 4. Try parsing standard date strings ("July 09, 1996", "March 17,2017", etc.)
-  const timestamp = Date.parse(str)
-  if (!isNaN(timestamp)) {
-    const d = new Date(timestamp)
-    const year = d.getFullYear()
-    if (year >= minYear && year <= maxYear) {
-      const y = d.getFullYear()
-      const m = String(d.getMonth() + 1).padStart(2, '0')
-      const day = String(d.getDate()).padStart(2, '0')
-      return { isValid: true, formatted: `${y}-${m}-${day}`, raw: str }
+  // 4. Exact ISO YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/)
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10)
+    const m = parseInt(isoMatch[2], 10)
+    const d = parseInt(isoMatch[3], 10)
+    if (y >= minYear && y <= maxYear && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return { isValid: true, formatted: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`, raw: str }
     }
   }
 
-  // 5. Try slash or hyphen delimited numeric dates (MM/DD/YYYY or DD/MM/YYYY)
+  // 5. English Month Name Parsing (Timezone-safe: parses tokens directly without Date.parse drift)
+  // Supports "November 26, 2010", "November 26 2010", "Nov 26, 2010", "26 November 2010", "26-Nov-2010"
+  const MONTH_MAP: Record<string, number> = {
+    january: 1, jan: 1,
+    february: 2, feb: 2,
+    march: 3, mar: 3,
+    april: 4, apr: 4,
+    may: 5,
+    june: 6, jun: 6,
+    july: 7, jul: 7,
+    august: 8, aug: 8,
+    september: 9, sep: 9, sept: 9,
+    october: 10, oct: 10,
+    november: 11, nov: 11,
+    december: 12, dec: 12
+  }
+
+  // Format: Month Day, Year (e.g. "November 26, 2010" or "Nov 26 2010")
+  const monthDayYearMatch = str.match(/^([a-zA-Z]+)[\s,\-]+(\d{1,2})(?:st|nd|rd|th)?[\s,\-]+(\d{4})$/)
+  if (monthDayYearMatch) {
+    const mKey = monthDayYearMatch[1].toLowerCase()
+    const monthNum = MONTH_MAP[mKey]
+    const day = parseInt(monthDayYearMatch[2], 10)
+    const year = parseInt(monthDayYearMatch[3], 10)
+    if (monthNum && day >= 1 && day <= 31 && year >= minYear && year <= maxYear) {
+      return {
+        isValid: true,
+        formatted: `${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        raw: str
+      }
+    }
+  }
+
+  // Format: Day Month Year (e.g. "26 November 2010" or "26-Nov-2010")
+  const dayMonthYearMatch = str.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s,\-]+([a-zA-Z]+)[\s,\-]+(\d{4})$/)
+  if (dayMonthYearMatch) {
+    const day = parseInt(dayMonthYearMatch[1], 10)
+    const mKey = dayMonthYearMatch[2].toLowerCase()
+    const monthNum = MONTH_MAP[mKey]
+    const year = parseInt(dayMonthYearMatch[3], 10)
+    if (monthNum && day >= 1 && day <= 31 && year >= minYear && year <= maxYear) {
+      return {
+        isValid: true,
+        formatted: `${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        raw: str
+      }
+    }
+  }
+
+  // 6. Slash or hyphen delimited numeric dates (MM/DD/YYYY or DD/MM/YYYY)
   const slashMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
   if (slashMatch) {
     const p1 = parseInt(slashMatch[1], 10)
@@ -631,6 +680,19 @@ export function parseDateValue(val: any, minYear = 1920, maxYear = 2100): DatePa
         formatted: `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
         raw: str
       }
+    }
+  }
+
+  // 7. Fallback standard Date.parse if non-standard string
+  const timestamp = Date.parse(str)
+  if (!isNaN(timestamp)) {
+    const d = new Date(timestamp)
+    const year = d.getFullYear()
+    if (year >= minYear && year <= maxYear) {
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return { isValid: true, formatted: `${y}-${m}-${day}`, raw: str }
     }
   }
 
@@ -846,10 +908,10 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   // Helper for optional string fields (returns trimmed string or undefined, never dummy values)
   const getOptString = (...vals: any[]): string | undefined => {
     for (const v of vals) {
-      if (v !== undefined && v !== null && typeof v === 'string') {
-        const trimmed = v.trim()
-        if (trimmed && trimmed !== 'not_specified' && trimmed !== 'none' && trimmed !== 'unassigned') {
-          return trimmed
+      if (v !== undefined && v !== null) {
+        const strVal = typeof v === 'string' ? v.trim() : (typeof v === 'number' ? String(v) : '')
+        if (strVal && strVal !== 'not_specified' && strVal !== 'none' && strVal !== 'unassigned' && strVal !== '-' && strVal !== '—') {
+          return strVal
         }
       }
     }
@@ -869,24 +931,24 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     return undefined
   }
 
-  const cleanPreferredName = getOptString(input.preferredName, input.preferred_name)
-  const cleanDob = getOptString(input.dateOfBirth, input.date_of_birth, input.birthday, input.dob)
+  const cleanPreferredName = input.preferred_name !== undefined ? getOptString(input.preferred_name) : getOptString(input.preferredName)
+  const cleanDob = input.date_of_birth !== undefined ? getOptString(input.date_of_birth) : getOptString(input.dateOfBirth, input.birthday, input.dob)
   const cleanGender = getOptString(input.gender)
-  const cleanCivilStatus = getOptString(input.civilStatus, input.civil_status)
+  const cleanCivilStatus = input.civil_status !== undefined ? getOptString(input.civil_status) : getOptString(input.civilStatus)
 
-  const cleanMobile = getOptString(input.mobileNumber, input.mobile_number, input.contactNumber, input.contact_number, input.mobile)
+  const cleanMobile = input.mobile_number !== undefined ? getOptString(input.mobile_number) : getOptString(input.mobileNumber, input.contactNumber, input.contact_number, input.mobile)
   const cleanEmail = getOptString(input.email, input.email_address)
-  const cleanAltNumber = getOptString(input.alternateNumber, input.alternate_number, input.alternateContact, input.alternate_contact)
-  const cleanAddress = getOptString(input.homeAddress, input.home_address, input.address)
+  const cleanAltNumber = input.alternate_number !== undefined ? getOptString(input.alternate_number) : getOptString(input.alternateNumber, input.alternateContact, input.alternate_contact)
+  const cleanAddress = input.home_address !== undefined ? getOptString(input.home_address) : getOptString(input.homeAddress, input.address)
 
-  const cleanEmergencyName = getOptString(input.emergencyContactName, input.emergency_contact_name, input.emergencyName)
-  const cleanEmergencyRel = getOptString(input.emergencyContactRelationship, input.emergency_contact_relationship, input.emergencyRelationship)
-  const cleanEmergencyNumber = getOptString(input.emergencyContactNumber, input.emergency_contact_number, input.emergencyNumber)
+  const cleanEmergencyName = input.emergency_contact_name !== undefined ? getOptString(input.emergency_contact_name) : getOptString(input.emergencyContactName, input.emergencyName)
+  const cleanEmergencyRel = input.emergency_contact_relationship !== undefined ? getOptString(input.emergency_contact_relationship) : getOptString(input.emergencyContactRelationship, input.emergencyRelationship)
+  const cleanEmergencyNumber = input.emergency_contact_number !== undefined ? getOptString(input.emergency_contact_number) : getOptString(input.emergencyContactNumber, input.emergencyNumber)
 
-  const cleanHireDate = getOptString(input.hireDate, input.hire_date, input.dateHired, input.date_hired)
-  const cleanContractDate = getOptString(input.contractDate, input.contract_date, input.contract)
-  const cleanRegDate = getOptString(input.regularizationDate, input.regularization_date, input.dateRegularized, input.date_regularized)
-  const cleanResignationDate = getOptString(input.resignationDate, input.resignation_date, input.dateResigned, input.date_resigned, input.resignedDate, input.resigned_date)
+  const cleanHireDate = input.hire_date !== undefined ? getOptString(input.hire_date) : getOptString(input.hireDate, input.dateHired, input.date_hired)
+  const cleanContractDate = input.contract_date !== undefined ? getOptString(input.contract_date) : getOptString(input.contractDate, input.contract)
+  const cleanRegDate = input.regularization_date !== undefined ? getOptString(input.regularization_date) : getOptString(input.regularizationDate, input.dateRegularized, input.date_regularized)
+  const cleanResignationDate = input.resignation_date !== undefined ? getOptString(input.resignation_date) : getOptString(input.resignationDate, input.dateResigned, input.date_resigned, input.resignedDate, input.resigned_date)
 
   const rawPayrollStatus = getOptString(input.payrollStatus, input.payroll_status)
   let cleanPayrollStatus: 'configured' | 'pending' | 'exempt' | undefined = undefined
@@ -919,10 +981,10 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   const cleanDeMinimis = getOptNumber(input.deMinimis, input.de_minimis)
 
   const cleanSalaryEffectiveDate = getOptString(input.salaryEffectiveDate, input.salary_effective_date, input.effectiveDate, input.effective_date)
-  const cleanSssNumber = getOptString(input.sssNumber, input.sss_number, input.sss)
-  const cleanPhilhealthNumber = getOptString(input.philhealthNumber, input.philhealth_number, input.philhealth)
-  const cleanPagibigNumber = getOptString(input.pagibigNumber, input.pagibig_number, input.pagibig)
-  const cleanTin = getOptString(input.tin, input.tinNumber, input.tin_number)
+  const cleanSssNumber = input.sss_number !== undefined ? getOptString(input.sss_number) : getOptString(input.sssNumber, input.sss)
+  const cleanPhilhealthNumber = input.philhealth_number !== undefined ? getOptString(input.philhealth_number) : getOptString(input.philhealthNumber, input.philhealth)
+  const cleanPagibigNumber = input.pagibig_number !== undefined ? getOptString(input.pagibig_number) : getOptString(input.pagibigNumber, input.pagibig)
+  const cleanTin = input.tin_number !== undefined ? getOptString(input.tin_number) : (input.tin !== undefined ? getOptString(input.tin) : getOptString(input.tinNumber))
   const cleanTaxStatus = getOptString(input.taxStatus, input.tax_status)
 
   // Extract Created / Updated Dates (primitive ISO strings only)
@@ -1135,6 +1197,8 @@ export const employeeRepository = {
       emergency_contact_number?: string
       work_group_id?: string
       hire_date?: string
+      contract_date?: string
+      contractDate?: string
       regularization_date?: string
       payroll_status?: 'configured' | 'pending' | 'exempt'
       salary_type?: 'Monthly' | 'Daily' | 'Hourly'
@@ -1304,12 +1368,18 @@ export const employeeRepository = {
 
     const seenBioIdsInImport = new Set<string>()
 
-    const ID_ALIASES = ['ID', 'Bio ID', 'BioId', 'User ID', 'UserId', 'user_id', 'ID/Bio ID', 'id']
+    const ID_ALIASES = ['ID', 'Bio ID', 'BioId', 'User ID', 'UserId', 'user_id', 'ID/Bio ID', 'id', 'Employee ID', 'Emp ID', 'EMP ID']
     const NAME_ALIASES = ['NAME', 'Name', 'Employee Name', 'Full Name', 'fullName', 'employee_name', 'name']
     const GROUP_ALIASES = ['GROUP', 'Group', 'Work Group', 'WorkGroup', 'Group Name', 'Group Code', 'workGroupId', 'work_group', 'group']
     const DEPT_ALIASES = ['DEPARTMENT', 'Department', 'Dept', 'DEPT', 'department', 'dept']
     const CONTRACT_DATE_ALIASES = ['CONTRACT DATE', 'Contract Date', 'ContractDate', 'CONTRACT_DATE', 'contract_date', 'contractDate', 'Contract', 'Date Hired', 'Hire Date']
     const STATUS_ALIASES = ['STATUS', 'Status', 'Employment Status', 'EMPLOYMENT STATUS', 'employment_status', 'employmentStatus', 'status']
+    const BDAY_ALIASES = ['B-DAY', 'B - DAY', 'B_DAY', 'BDAY', 'B-day', 'Bday', 'BIRTHDAY', 'Birthday', 'DOB', 'Date of Birth', 'DATE OF BIRTH', 'Birth Date', 'date_of_birth', 'dateOfBirth']
+    const POSITION_ALIASES = ['POSITION', 'Position', 'Position / Role', 'Role', 'Title', 'Job Title', 'Job', 'position', 'role']
+    const SSS_ALIASES = ['SSS NO.', 'SSS NO', 'SSS_NO', 'SSS #', 'SSS NUMBER', 'SSS Number', 'SSS', 'sss_number', 'sssNumber', 'sss']
+    const HDMF_ALIASES = ['HDMF NO.', 'HDMF NO', 'HDMF_NO', 'HDMF #', 'HDMF NUMBER', 'HDMF Number', 'HDMF', 'PAGIBIG NO.', 'PAGIBIG NO', 'PAG-IBIG NO.', 'PAG-IBIG NO', 'PAGIBIG', 'PAG-IBIG', 'pagibig_number', 'pagibigNumber', 'pagibig', 'hdmf']
+    const PHIC_ALIASES = ['PHIC NO.', 'PHIC NO', 'PHIC_NO', 'PHIC #', 'PHIC NUMBER', 'PHIC Number', 'PHIC', 'PHILHEALTH NO.', 'PHILHEALTH NO', 'PHILHEALTH', 'philhealth_number', 'philhealthNumber', 'philhealth', 'phic']
+    const TIN_ALIASES = ['TIN NO.', 'TIN NO', 'TIN_NO', 'TIN #', 'TIN NUMBER', 'TIN Number', 'TIN', 'tin_number', 'tinNumber', 'tin']
 
     const matchesAlias = (header: string, aliases: string[]): boolean => {
       const cleanHeader = String(header || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -1349,6 +1419,12 @@ export const employeeRepository = {
       const deptCol = headers.findIndex(h => matchesAlias(h, DEPT_ALIASES))
       const contractDateCol = headers.findIndex(h => matchesAlias(h, CONTRACT_DATE_ALIASES))
       const statusCol = headers.findIndex(h => matchesAlias(h, STATUS_ALIASES))
+      const bdayCol = headers.findIndex(h => matchesAlias(h, BDAY_ALIASES))
+      const positionCol = headers.findIndex(h => matchesAlias(h, POSITION_ALIASES))
+      const sssCol = headers.findIndex(h => matchesAlias(h, SSS_ALIASES))
+      const hdmfCol = headers.findIndex(h => matchesAlias(h, HDMF_ALIASES))
+      const phicCol = headers.findIndex(h => matchesAlias(h, PHIC_ALIASES))
+      const tinCol = headers.findIndex(h => matchesAlias(h, TIN_ALIASES))
 
       parsedRows = []
       for (let r = 1; r < rows.length; r++) {
@@ -1360,7 +1436,13 @@ export const employeeRepository = {
           GROUP: groupCol >= 0 ? rowArr[groupCol] : undefined,
           DEPARTMENT: deptCol >= 0 ? rowArr[deptCol] : undefined,
           'CONTRACT DATE': contractDateCol >= 0 ? rowArr[contractDateCol] : undefined,
-          STATUS: statusCol >= 0 ? rowArr[statusCol] : undefined
+          STATUS: statusCol >= 0 ? rowArr[statusCol] : undefined,
+          'B-DAY': bdayCol >= 0 ? rowArr[bdayCol] : undefined,
+          POSITION: positionCol >= 0 ? rowArr[positionCol] : undefined,
+          'SSS NO.': sssCol >= 0 ? rowArr[sssCol] : undefined,
+          'HDMF NO.': hdmfCol >= 0 ? rowArr[hdmfCol] : undefined,
+          'PHIC NO.': phicCol >= 0 ? rowArr[phicCol] : undefined,
+          'TIN NO.': tinCol >= 0 ? rowArr[tinCol] : undefined
         })
       }
     }
@@ -1406,10 +1488,38 @@ export const employeeRepository = {
       const rawStatus = getRowField(row, STATUS_ALIASES)
       const parsedStatus = parseEmploymentStatus(rawStatus)
 
+      // 7. Extract Birthday (B-DAY)
+      const rawBirthday = getRowField(row, BDAY_ALIASES)
+      const parsedBirthday = parseBirthday(rawBirthday)
+
+      // 8. Extract Position
+      const rawPosition = getRowField(row, POSITION_ALIASES)
+      const cleanPosition = cleanStringField(rawPosition)
+
+      // 9. Extract SSS NO.
+      const rawSss = getRowField(row, SSS_ALIASES)
+      const cleanSss = cleanGovNumber(rawSss)
+
+      // 10. Extract HDMF NO.
+      const rawHdmf = getRowField(row, HDMF_ALIASES)
+      const cleanHdmf = cleanGovNumber(rawHdmf)
+
+      // 11. Extract PHIC NO.
+      const rawPhic = getRowField(row, PHIC_ALIASES)
+      const cleanPhic = cleanGovNumber(rawPhic)
+
+      // 12. Extract TIN NO.
+      const rawTin = getRowField(row, TIN_ALIASES)
+      const cleanTin = cleanGovNumber(rawTin)
+
       const rowWarnings: string[] = []
       if (parsedContractDate && parsedContractDate.isInvalid) {
         warningsCount++
         rowWarnings.push(`Invalid/misaligned Contract Date "${parsedContractDate.raw}" - kept existing contract date`)
+      }
+      if (parsedBirthday && parsedBirthday.isInvalid) {
+        warningsCount++
+        rowWarnings.push(`Invalid Birthday "${parsedBirthday.raw}" - kept existing birthday`)
       }
       if (parsedStatus && parsedStatus.isUnsupported) {
         warningsCount++
@@ -1515,6 +1625,30 @@ export const employeeRepository = {
           ? parsedStatus.status!
           : existingRecord.status
 
+        const targetDateOfBirth = (parsedBirthday && parsedBirthday.isValid)
+          ? parsedBirthday.formatted
+          : existingRecord.dateOfBirth
+
+        const targetPosition = cleanPosition !== undefined
+          ? cleanPosition
+          : (existingRecord.position || 'Staff')
+
+        const targetSss = cleanSss !== undefined
+          ? cleanSss
+          : existingRecord.sssNumber
+
+        const targetHdmf = cleanHdmf !== undefined
+          ? cleanHdmf
+          : existingRecord.pagibigNumber
+
+        const targetPhic = cleanPhic !== undefined
+          ? cleanPhic
+          : existingRecord.philhealthNumber
+
+        const targetTin = cleanTin !== undefined
+          ? cleanTin
+          : existingRecord.tin
+
         const isNameUpdated = cleanName !== '' && cleanName !== existingRecord.fullName
         const isDeptUpdated = cleanDept !== '' && cleanDept !== (existingRecord.department || '')
         const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
@@ -1524,8 +1658,26 @@ export const employeeRepository = {
         const isStatusUpdated = Boolean(
           parsedStatus && parsedStatus.isValid && parsedStatus.status !== existingRecord.status
         )
+        const isBirthdayUpdated = Boolean(
+          parsedBirthday && parsedBirthday.isValid && parsedBirthday.formatted !== (existingRecord.dateOfBirth || '')
+        )
+        const isPositionUpdated = Boolean(
+          cleanPosition !== undefined && cleanPosition !== (existingRecord.position || '')
+        )
+        const isSssUpdated = Boolean(
+          cleanSss !== undefined && cleanSss !== (existingRecord.sssNumber || '')
+        )
+        const isHdmfUpdated = Boolean(
+          cleanHdmf !== undefined && cleanHdmf !== (existingRecord.pagibigNumber || '')
+        )
+        const isPhicUpdated = Boolean(
+          cleanPhic !== undefined && cleanPhic !== (existingRecord.philhealthNumber || '')
+        )
+        const isTinUpdated = Boolean(
+          cleanTin !== undefined && cleanTin !== (existingRecord.tin || '')
+        )
 
-        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isStatusUpdated
+        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isStatusUpdated || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -1547,10 +1699,15 @@ export const employeeRepository = {
           location: existingRecord.location,
           workGroupId: targetWgId,
           department: targetDept,
-          position: existingRecord.position,
+          position: targetPosition,
           contractDate: targetContractDate,
+          dateOfBirth: targetDateOfBirth,
           status: targetStatus,
           resignationDate,
+          sssNumber: targetSss,
+          pagibigNumber: targetHdmf,
+          philhealthNumber: targetPhic,
+          tin: targetTin,
           createdAt: existingRecord.createdAt,
           updatedAt: new Date().toISOString()
         })
@@ -1564,12 +1721,18 @@ export const employeeRepository = {
 
           const changeNotes: string[] = []
           if (isStatusUpdated) {
-            changeNotes.push(`Employment Status changed: ${getStatusDisplayName(existingRecord.status)} → ${getStatusDisplayName(targetStatus)}`)
+            changeNotes.push(`Status: ${getStatusDisplayName(existingRecord.status)} → ${getStatusDisplayName(targetStatus)}`)
           }
           if (isNameUpdated) changeNotes.push(`Name: ${cleanName}`)
           if (isDeptUpdated) changeNotes.push(`Dept: ${cleanDept}`)
           if (isGroupUpdated) changeNotes.push(`Group: ${targetWg.name}`)
           if (isContractDateUpdated) changeNotes.push(`Contract Date: ${targetContractDate}`)
+          if (isBirthdayUpdated) changeNotes.push(`B-Day: ${targetDateOfBirth}`)
+          if (isPositionUpdated) changeNotes.push(`Position: ${targetPosition}`)
+          if (isSssUpdated) changeNotes.push(`SSS: ${targetSss}`)
+          if (isHdmfUpdated) changeNotes.push(`HDMF: ${targetHdmf}`)
+          if (isPhicUpdated) changeNotes.push(`PHIC: ${targetPhic}`)
+          if (isTinUpdated) changeNotes.push(`TIN: ${targetTin}`)
 
           let statusText = changeNotes.join(' • ')
           if (rowWarnings.length > 0) {
@@ -1587,6 +1750,12 @@ export const employeeRepository = {
             group: cleanGroupStr || '',
             department: targetDept,
             contractDate: targetContractDate,
+            dateOfBirth: targetDateOfBirth,
+            position: targetPosition,
+            sssNumber: targetSss,
+            pagibigNumber: targetHdmf,
+            philhealthNumber: targetPhic,
+            tin: targetTin,
             rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
             displayStatus,
             previousStatus: existingRecord.status,
@@ -1640,6 +1809,12 @@ export const employeeRepository = {
             group: cleanGroupStr || '',
             department: existingRecord.department || 'Operations',
             contractDate: existingRecord.contractDate,
+            dateOfBirth: existingRecord.dateOfBirth,
+            position: existingRecord.position,
+            sssNumber: existingRecord.sssNumber,
+            pagibigNumber: existingRecord.pagibigNumber,
+            philhealthNumber: existingRecord.philhealthNumber,
+            tin: existingRecord.tin,
             rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
             displayStatus,
             previousStatus: existingRecord.status,
@@ -1663,6 +1838,10 @@ export const employeeRepository = {
         const targetContractDate = (parsedContractDate && parsedContractDate.isValid)
           ? parsedContractDate.formatted
           : undefined
+        const targetDateOfBirth = (parsedBirthday && parsedBirthday.isValid)
+          ? parsedBirthday.formatted
+          : undefined
+        const targetPosition = cleanPosition || 'Staff'
         const targetStatus: EmploymentStatus = (parsedStatus && parsedStatus.isValid)
           ? parsedStatus.status!
           : 'active'
@@ -1684,10 +1863,15 @@ export const employeeRepository = {
           location: 'DBB CEBU',
           workGroupId: targetWgId,
           department: targetDept,
-          position: 'Staff',
+          position: targetPosition,
           contractDate: targetContractDate,
+          dateOfBirth: targetDateOfBirth,
           status: targetStatus,
           resignationDate,
+          sssNumber: cleanSss,
+          pagibigNumber: cleanHdmf,
+          philhealthNumber: cleanPhic,
+          tin: cleanTin,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         })
@@ -1713,6 +1897,12 @@ export const employeeRepository = {
           group: cleanGroupStr || '',
           department: targetDept,
           contractDate: targetContractDate,
+          dateOfBirth: targetDateOfBirth,
+          position: targetPosition,
+          sssNumber: cleanSss,
+          pagibigNumber: cleanHdmf,
+          philhealthNumber: cleanPhic,
+          tin: cleanTin,
           rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
           displayStatus,
           previousStatus: undefined,
