@@ -312,22 +312,30 @@ function triggerPrint() {
               </div>
             </div>
           </div>
+        </div>
 
+        <!-- Designated Payday & Period Banner -->
+        <div v-if="currentCutoff" class="mt-3 flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-muted/40 border text-xs">
           <!-- Cutoff Period Selector & Quick Actions -->
-          <div class="flex items-center gap-2 flex-wrap">
-            <div class="w-48 sm:w-56">
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="shrink-0 text-muted-foreground font-medium">
+              Cutoff Window:
+            </span>
+
+            <div class="min-w-0 flex-1 sm:flex-none sm:w-56">
               <Select v-model="selectedCutoffId">
-                <SelectTrigger class="h-8 text-xs bg-background font-semibold">
-                  <CalendarDays class="size-3.5 text-primary mr-1.5 shrink-0" />
+                <SelectTrigger class="h-8 w-full min-w-0 bg-background text-xs font-semibold">
+                  <CalendarDays class="mr-1.5 size-3.5 shrink-0 text-primary" />
                   <SelectValue placeholder="Select Cutoff Period..." />
                 </SelectTrigger>
-                <SelectContent class="text-xs max-h-60">
+
+                <SelectContent class="max-h-60 text-xs">
                   <SelectGroup>
                     <SelectItem
                       v-for="c in availableCutoffs"
                       :key="c.id"
                       :value="c.id"
-                      class="text-xs cursor-pointer"
+                      class="cursor-pointer text-xs"
                     >
                       {{ c.label }}
                     </SelectItem>
@@ -335,36 +343,29 @@ function triggerPrint() {
                 </SelectContent>
               </Select>
             </div>
-
+          </div>
+          <div class="flex items-center gap-1.5">
             <Button
               variant="outline"
               size="sm"
-              class="h-8 px-2.5 text-xs gap-1.5 cursor-pointer shadow-2xs"
+              class="h-8 shrink-0 cursor-pointer gap-1.5 px-2.5 text-xs shadow-2xs"
               :disabled="isLoading || !selectedEmployee"
               @click="loadEmployeePayroll"
               title="Refresh attendance records from matrix"
             >
               <RefreshCw :class="['size-3.5', isLoading ? 'animate-spin' : '']" />
-              <span class="hidden sm:inline">Refresh</span>
             </Button>
-          </div>
-        </div>
 
-        <!-- Designated Payday & Period Banner -->
-        <div v-if="currentCutoff" class="mt-3 flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-muted/40 border text-xs">
-          <div class="flex items-center gap-2">
-            <span class="text-muted-foreground font-medium">Cutoff Window:</span>
-            <strong class="font-bold text-foreground">{{ currentCutoff.shortLabel }}</strong>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <Landmark class="size-3.5 text-emerald-600 shrink-0" />
-            <span class="text-muted-foreground font-medium">Designated Payday:</span>
-            <span class="font-bold text-emerald-700 dark:text-emerald-400 font-mono">
-              {{ currentCutoff.paydayDisplay }}
-            </span>
-            <span class="text-[10px] text-muted-foreground font-normal">
-              ({{ currentCutoff.half === 1 ? '20th of the same month' : '5th of following month' }})
-            </span>
+            <!-- Print / View Payslip -->
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs"
+              :disabled="!currentRecord"
+              @click="isPayslipViewOpen = true"
+            >
+              <Printer class="size-3.5 text-primary" />
+            </Button>
           </div>
         </div>
 
@@ -416,11 +417,11 @@ function triggerPrint() {
                   <h2 class="text-sm sm:text-base font-bold text-foreground">
                     {{ currentRecord.employeeName }}
                   </h2>
-                  <Badge variant="outline" class="font-mono text-[10px] py-0 px-1.5 font-semibold">
+                  <!-- <Badge variant="outline" class="font-mono text-[10px] py-0 px-1.5 font-semibold">
                     ID: {{ currentRecord.employeeNumber }}
-                  </Badge>
-                  <Badge variant="secondary" class="text-[10px] py-0 px-1.5">
-                    Bio #{{ currentRecord.bioId }}
+                  </Badge> -->
+                  <Badge variant="secondary" class="text-[11px] py-0 px-1.5">
+                    #{{ currentRecord.bioId }}
                   </Badge>
                 </div>
                 <div class="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
@@ -927,19 +928,7 @@ function triggerPrint() {
 
       <!-- Modal Footer Action Bar -->
       <DialogFooter class="px-5 py-3 border-t bg-muted/20 shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-        <div class="flex items-center gap-2">
-          <!-- Print / View Payslip -->
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs"
-            :disabled="!currentRecord"
-            @click="isPayslipViewOpen = true"
-          >
-            <Printer class="size-3.5 text-primary" />
-            <span>Print Payslip</span>
-          </Button>
-
+        <div class="flex items-center gap-2">   
           <span v-if="currentRecord" class="text-[11px] text-muted-foreground font-mono hidden sm:inline">
             Updated: {{ new Date(currentRecord.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
           </span>
