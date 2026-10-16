@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   CalendarDays,
@@ -7,17 +7,17 @@ import {
   ChevronRight,
   ArrowRight,
   Clock,
-  Coffee,
   CheckCircle2,
-  Layers,
-  Sparkles,
   Users,
   Search,
-  ExternalLink
+  ExternalLink,
+  AlertCircle,
+  RefreshCw
 } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Dialog,
   DialogContent,
@@ -31,20 +31,22 @@ import { attendanceRepository } from '@/repositories/attendanceRepository'
 import { scheduleRepository } from '@/repositories/scheduleRepository'
 import { workGroupRepository } from '@/repositories/workGroupRepository'
 import { employeeRepository } from '@/repositories/employeeRepository'
-import type { DailySummaryRecord, HolidayRecord, LeaveRecord } from '@/db'
+import { db, type DailySummaryRecord, type HolidayRecord, type LeaveRecord } from '@/db'
 import type { WorkGroup } from '@/types'
 import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
 import { getManilaDateString } from '@/services/attendanceEngine'
+import { liveAttendanceService } from '@/services/liveAttendance'
 
 const router = useRouter()
-
-const activeTab = ref<'calendar' | 'workgroups'>('calendar')
 
 // Calendar State
 const now = new Date()
 const currentYear = ref(now.getFullYear())
 const currentMonth = ref(now.getMonth() + 1) // 1-12
 const loadingCalendar = ref(false)
+const calendarError = ref<string | null>(null)
+let currentRequestId = 0
+let unSubLogs: (() => void) | null = null
 
 const monthSummaries = ref<Map<string, DailySummaryRecord>>(new Map())
 const holidays = ref<HolidayRecord[]>([])
@@ -60,26 +62,38 @@ const currentMonthLabel = computed(() => {
 })
 
 async function loadCalendarData() {
+  const reqId = ++currentRequestId
+  const targetYear = currentYear.value
+  const targetMonth = currentMonth.value
+
   loadingCalendar.value = true
+  calendarError.value = null
+
   try {
     const [summaries, holidayList, wgList] = await Promise.all([
-      attendanceRepository.getMonthSummaries(currentYear.value, currentMonth.value),
-      scheduleRepository.getHolidays(currentYear.value),
+      attendanceRepository.getMonthSummaries(targetYear, targetMonth),
+      scheduleRepository.getHolidays(targetYear),
       workGroupRepository.getAll()
     ])
+
+    // Discard stale response if a newer month was selected while awaiting
+    if (reqId !== currentRequestId) {
+      return
+    }
+
     monthSummaries.value = new Map(summaries)
     holidays.value = [...holidayList]
     workGroups.value = [...wgList]
+  } catch (err: any) {
+    if (reqId === currentRequestId) {
+      calendarError.value = err?.message || 'Failed to load attendance calendar data.'
+    }
   } finally {
-    loadingCalendar.value = false
+    if (reqId === currentRequestId) {
+      loadingCalendar.value = false
+    }
   }
 }
-
-watch(activeTab, (tab) => {
-  if (tab === 'calendar') {
-    loadCalendarData()
-  }
-})
 
 function prevMonth() {
   if (currentMonth.value === 1) {
@@ -383,6 +397,13 @@ async function openDayDetails(cell: CalendarDay) {
       }
     }
     selectedDayAbsents.value = absents
+
+    // Ensure the calendar cell immediately reflects this fresh calculation
+    const updatedSummary = await db.dailySummaries.get(cell.dateStr)
+    if (updatedSummary) {
+      monthSummaries.value.set(cell.dateStr, updatedSummary)
+      cell.summary = updatedSummary
+    }
   } finally {
     dialogLoading.value = false
   }
@@ -398,6 +419,17 @@ function navigateToDailyAttendance(dateStr: string) {
 
 onMounted(() => {
   loadCalendarData()
+  // Automatically refresh when new biometric punches arrive or store sync completes
+  unSubLogs = liveAttendanceService.onLogs(() => {
+    loadCalendarData()
+  })
+})
+
+onUnmounted(() => {
+  if (unSubLogs) {
+    unSubLogs()
+    unSubLogs = null
+  }
 })
 </script>
 
@@ -408,99 +440,121 @@ onMounted(() => {
       <div>
         <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
           <CalendarDays class="size-5 text-primary" />
-          <span>Time Management</span>
+          <span>Attendance Calendar</span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Work Group schedules (6am–3pm, 7am–4pm, 8am–5pm) with automatic lunch break exclusion and monthly attendance calendar.
+          Monthly biometric attendance calendar, daily employee presence, tardiness breakdown, and shift verification.
         </p>
-      </div>
-
-      <!-- Tab Switcher -->
-      <div class="flex items-center gap-1.5 p-1 rounded-lg border bg-muted/30">
-        <button
-          type="button"
-          :class="[
-            'px-3 py-1 text-xs font-medium rounded-md transition-colors',
-            activeTab === 'calendar'
-              ? 'bg-card text-foreground shadow-xs'
-              : 'text-muted-foreground hover:text-foreground'
-          ]"
-          @click="activeTab = 'calendar'"
-        >
-          Attendance Calendar
-        </button>
-        <button
-          type="button"
-          :class="[
-            'px-3 py-1 text-xs font-medium rounded-md transition-colors',
-            activeTab === 'workgroups'
-              ? 'bg-card text-foreground shadow-xs'
-              : 'text-muted-foreground hover:text-foreground'
-          ]"
-          @click="activeTab = 'workgroups'"
-        >
-          Work Groups & Schedules
-        </button>
       </div>
     </div>
 
-    <!-- TAB 1: ATTENDANCE CALENDAR -->
-    <div v-if="activeTab === 'calendar'" class="space-y-4">
+    <!-- MAIN ATTENDANCE CALENDAR -->
+    <div class="space-y-4">
       <!-- Calendar Controls & Month Stats -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         <!-- Month Navigator -->
         <div class="rounded-xl border bg-card p-3.5 shadow-xs flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="h-8 w-8 p-0" @click="prevMonth">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 w-8 p-0"
+              :disabled="loadingCalendar"
+              @click="prevMonth"
+            >
               <ChevronLeft class="size-4" />
             </Button>
             <div class="font-bold text-sm text-foreground min-w-[140px] text-center">
               {{ currentMonthLabel }}
             </div>
-            <Button variant="outline" size="sm" class="h-8 w-8 p-0" @click="nextMonth">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 w-8 p-0"
+              :disabled="loadingCalendar"
+              @click="nextMonth"
+            >
               <ChevronRight class="size-4" />
             </Button>
           </div>
 
-          <Button variant="outline" size="sm" class="h-8 text-xs px-2.5" @click="goToToday">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs px-2.5"
+            :disabled="loadingCalendar"
+            @click="goToToday"
+          >
             Today
           </Button>
         </div>
 
         <!-- Monthly Summary Highlights -->
         <div class="rounded-xl border bg-card p-3.5 shadow-xs flex items-center justify-around md:col-span-2 text-xs">
-          <div class="text-center">
+          <!-- Active Workdays -->
+          <div class="text-center flex-1">
             <span class="text-[11px] text-muted-foreground">Active Workdays</span>
-            <div class="text-base font-bold text-foreground font-mono mt-0.5">
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div v-else class="text-base font-bold text-foreground font-mono mt-0.5">
               {{ monthStats.activeDays }} days
             </div>
           </div>
           <div class="h-8 w-px bg-border" />
-          <div class="text-center">
+
+          <!-- Total Present Scans -->
+          <div class="text-center flex-1">
             <span class="text-[11px] text-muted-foreground">Total Present Scans</span>
-            <div class="text-base font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div v-else class="text-base font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
               {{ monthStats.totalPresent.toLocaleString() }}
             </div>
           </div>
           <div class="h-8 w-px bg-border" />
-          <div class="text-center">
+
+          <!-- Total Late Entries -->
+          <div class="text-center flex-1">
             <span class="text-[11px] text-muted-foreground">Total Late Entries</span>
-            <div class="text-base font-bold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div v-else class="text-base font-bold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
               {{ monthStats.totalLate.toLocaleString() }}
             </div>
           </div>
           <div class="h-8 w-px bg-border" />
-          <div class="text-center">
+
+          <!-- Punctuality Rate -->
+          <div class="text-center flex-1">
             <span class="text-[11px] text-muted-foreground">Punctuality Rate</span>
-            <div class="text-base font-bold text-primary font-mono mt-0.5">
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-12" />
+            </div>
+            <div v-else class="text-base font-bold text-primary font-mono mt-0.5">
               {{ monthStats.punctualityRate }}%
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Month Calendar Grid -->
-      <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
+      <!-- Calendar Loading Error State -->
+      <div v-if="calendarError && !loadingCalendar" class="rounded-xl border border-destructive/20 bg-destructive/10 p-6 text-center space-y-3">
+        <AlertCircle class="size-8 mx-auto text-destructive" />
+        <div class="space-y-1">
+          <h3 class="text-sm font-semibold text-foreground">Failed to Load Calendar Data</h3>
+          <p class="text-xs text-muted-foreground max-w-md mx-auto">{{ calendarError }}</p>
+        </div>
+        <Button variant="outline" size="sm" class="h-8 text-xs gap-1.5" @click="loadCalendarData">
+          <RefreshCw class="size-3.5" />
+          <span>Retry</span>
+        </Button>
+      </div>
+
+      <!-- Month Calendar Grid Container -->
+      <div v-else class="rounded-xl border bg-card shadow-xs overflow-hidden">
         <!-- Weekday Headers -->
         <div class="grid grid-cols-7 border-b bg-muted/40 text-center text-xs font-semibold py-2">
           <div class="text-rose-600 dark:text-rose-400">Sun</div>
@@ -512,8 +566,35 @@ onMounted(() => {
           <div class="text-sky-600 dark:text-sky-400">Sat</div>
         </div>
 
-        <!-- Day Cells -->
-        <div class="grid grid-cols-7 divide-x divide-y border-b last:border-b-0">
+        <!-- Skeleton Loading Grid -->
+        <div v-if="loadingCalendar" class="grid grid-cols-7 divide-x divide-y border-b last:border-b-0">
+          <div
+            v-for="i in 35"
+            :key="`cal-skeleton-${i}`"
+            class="min-h-[110px] p-2 flex flex-col justify-between bg-card"
+          >
+            <!-- Day header skeleton -->
+            <div class="flex items-center justify-between">
+              <Skeleton class="size-6 rounded-full" />
+              <Skeleton v-if="i % 6 === 0" class="h-3.5 w-12 rounded" />
+            </div>
+
+            <!-- Attendance stats badges skeleton -->
+            <div class="space-y-1.5 my-2">
+              <Skeleton class="h-4 w-full rounded" />
+              <Skeleton v-if="i % 2 === 0" class="h-4 w-4/5 rounded" />
+              <Skeleton v-if="i % 4 === 0" class="h-3.5 w-3/5 rounded" />
+            </div>
+
+            <!-- Hint skeleton -->
+            <div class="flex justify-end pt-1">
+              <Skeleton class="h-2.5 w-14 rounded" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Real Calendar Day Cells -->
+        <div v-else class="grid grid-cols-7 divide-x divide-y border-b last:border-b-0">
           <div
             v-for="cell in calendarGrid"
             :key="cell.dateStr"
@@ -587,85 +668,6 @@ onMounted(() => {
               <span>View Details</span>
               <ArrowRight class="size-2.5" />
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB 2: WORK GROUPS & SCHEDULE LOGIC -->
-    <div v-if="activeTab === 'workgroups'" class="space-y-4">
-      <div class="rounded-xl border bg-card p-4 shadow-xs space-y-2">
-        <div class="flex items-center gap-2">
-          <Sparkles class="size-4 text-primary" />
-          <h2 class="font-semibold text-sm text-foreground">Dynamic Work Group Schedule Rules</h2>
-        </div>
-        <p class="text-xs text-muted-foreground leading-relaxed">
-          Expected OUT is <strong>automatically calculated</strong> based on Standard IN + 8 Required Working Hours, while <strong>strictly excluding</strong> the configured 1-hour unpaid lunch break (<code class="font-mono font-semibold">12:00 PM – 1:00 PM</code>).
-        </p>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div
-          v-for="wg in workGroups"
-          :key="wg.id"
-          class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-4 flex flex-col justify-between"
-        >
-          <div class="space-y-3">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <Layers class="size-4 text-primary" />
-                <h3 class="font-bold text-base text-foreground">{{ wg.name }}</h3>
-              </div>
-              <Badge variant="outline" class="font-mono text-xs">8.0 hrs Work</Badge>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2.5 text-xs border-t pt-3">
-              <div>
-                <span class="text-muted-foreground text-[10px] uppercase font-semibold">STANDARD IN</span>
-                <div class="font-bold text-foreground mt-0.5 text-sm flex items-center gap-1">
-                  <Clock class="size-3.5 text-emerald-600" />
-                  {{ wg.standard_in }}
-                </div>
-              </div>
-              <div>
-                <span class="text-muted-foreground text-[10px] uppercase font-semibold">CALCULATED OUT</span>
-                <div class="font-bold text-primary mt-0.5 text-sm flex items-center gap-1">
-                  <Clock class="size-3.5 text-blue-600" />
-                  {{ wg.expected_out }}
-                </div>
-              </div>
-              <div>
-                <span class="text-muted-foreground text-[10px] uppercase font-semibold">UNPAID LUNCH</span>
-                <div class="font-medium text-foreground mt-0.5 flex items-center gap-1">
-                  <Coffee class="size-3 text-amber-600" />
-                  {{ wg.lunch_start }} – {{ wg.lunch_end }}
-                </div>
-              </div>
-              <div>
-                <span class="text-muted-foreground text-[10px] uppercase font-semibold">GRACE PERIOD</span>
-                <div class="font-medium text-foreground mt-0.5">
-                  {{ wg.grace_period_minutes }} minutes
-                </div>
-              </div>
-            </div>
-
-            <!-- Mathematical Breakdown of the 8 Working Hours -->
-            <div class="p-2.5 rounded-lg bg-muted/40 text-[11px] text-muted-foreground space-y-1 font-mono">
-              <div class="font-sans font-semibold text-foreground text-[10px] uppercase">Working Hours Breakdown:</div>
-              <div>• Morning: {{ wg.standard_in }} → {{ wg.lunch_start }} = {{ wg.standard_in === '06:00' ? '6.0' : (wg.standard_in === '07:00' ? '5.0' : '4.0') }} hrs</div>
-              <div>• Lunch: {{ wg.lunch_start }} → {{ wg.lunch_end }} = 1.0 hr (Unpaid)</div>
-              <div>• Afternoon: {{ wg.lunch_end }} → {{ wg.expected_out }} = {{ wg.standard_in === '06:00' ? '2.0' : (wg.standard_in === '07:00' ? '3.0' : '4.0') }} hrs</div>
-              <div class="text-emerald-600 dark:text-emerald-400 font-bold font-sans pt-0.5">
-                Total Rendered Work: 8.0 Hours
-              </div>
-            </div>
-          </div>
-
-          <div class="text-[11px] text-muted-foreground pt-2 flex items-center justify-between border-t">
-            <span class="inline-flex items-center gap-1 text-emerald-600 font-medium">
-              <CheckCircle2 class="size-3.5" />
-              Active System Schedule
-            </span>
           </div>
         </div>
       </div>

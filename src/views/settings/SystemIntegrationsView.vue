@@ -263,7 +263,7 @@ onMounted(() => {
           </span>
         </h1>
         <p class="text-xs text-muted-foreground">
-          Manage biometric devices, network configuration, and external system integrations.
+          Manage devices, networks, and integrations.
         </p>
       </div>
 
@@ -276,7 +276,7 @@ onMounted(() => {
           @click="activeTab = 'punch-display'"
         >
           <Sliders class="size-3.5" />
-          <span>Punch Display Preferences</span>
+          <span>Display Preferences</span>
         </button>
         <button
           type="button"

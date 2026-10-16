@@ -15,7 +15,7 @@ import {
   Flame,
   FileQuestion,
   Search,
-  Users,
+  UsersRound,
   X,
   Check,
   ChevronsUpDown,
@@ -311,7 +311,7 @@ function formatShortDate(dateStr: string): string {
               >
                 <div class="flex items-center gap-1.5 truncate mr-1.5">
                   <Fingerprint v-if="selectedEmployeeBioId !== 'all'" class="size-3.5 text-primary shrink-0" />
-                  <Users v-else class="size-3.5 text-muted-foreground shrink-0" />
+                  <UsersRound v-else class="size-3.5 text-muted-foreground shrink-0" />
 
                   <span v-if="selectedEmployeeBioId === 'all'" class="truncate text-foreground font-medium">
                     All Employees
@@ -358,7 +358,7 @@ function formatShortDate(dateStr: string): string {
                   @click="selectEmployee('all')"
                 >
                   <div class="flex items-center gap-2">
-                    <Users class="size-3.5 text-muted-foreground" />
+                    <UsersRound class="size-3.5 text-muted-foreground" />
                     <span>All Employees</span>
                   </div>
                   <Check v-if="selectedEmployeeBioId === 'all'" class="size-3.5 text-primary" />

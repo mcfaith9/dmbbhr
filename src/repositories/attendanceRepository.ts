@@ -172,7 +172,13 @@ export const attendanceRepository = {
     })
 
     // 5. Update cached Daily Summary for high-speed Calendar retrieval
-    await this.updateDailySummaryCache(selectedDate, records).catch(() => {})
+    // ONLY update global cache when this was an unfiltered query for all employees & locations
+    const isUnfiltered = (locationFilter === 'all' || !locationFilter) &&
+      (workGroupFilter === 'all' || !workGroupFilter) &&
+      (!bioIdFilter || !bioIdFilter.trim())
+    if (isUnfiltered) {
+      await this.updateDailySummaryCache(selectedDate, records).catch(() => {})
+    }
 
     return records
   },
@@ -182,13 +188,14 @@ export const attendanceRepository = {
    */
   async updateDailySummaryCache(dateStr: string, records: DailyAttendanceRecord[]): Promise<DailySummaryRecord> {
     const activeRecords = records.filter(r => r.employee_status !== 'resigned')
-    const presentCount = activeRecords.length
-    const onTimeCount = activeRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
-    const lateCount = activeRecords.filter(r => r.late_minutes > 0).length
-    const singlePunchCount = activeRecords.filter(r => r.status.startsWith('Single Punch') || r.status.includes('Missing IN') || r.status.includes('Ambiguous')).length
-    const awaitingOutCount = activeRecords.filter(r => r.status === 'Awaiting OUT').length
-    const leaveCount = activeRecords.filter(r => r.status === 'On Leave').length
-    const holidayCount = activeRecords.filter(r => r.status === 'Holiday').length
+    const presentRecords = activeRecords.filter(r => r.status !== 'Leave' && r.status !== 'On Leave')
+    const presentCount = presentRecords.length
+    const onTimeCount = presentRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+    const lateCount = presentRecords.filter(r => r.late_minutes > 0).length
+    const singlePunchCount = presentRecords.filter(r => r.status.startsWith('Single Punch') || r.status.includes('Missing IN') || r.status.includes('Ambiguous')).length
+    const awaitingOutCount = presentRecords.filter(r => r.status === 'Awaiting OUT').length
+    const leaveCount = activeRecords.filter(r => r.status === 'Leave' || r.status === 'On Leave').length
+    const holidayCount = presentRecords.filter(r => r.status === 'Holiday').length
 
     const summary: DailySummaryRecord = {
       date: dateStr,
@@ -209,7 +216,7 @@ export const attendanceRepository = {
 
   /**
    * Retrieves summary data for all days in a given month (e.g. "2026-09")
-   * O(1) indexed lookup from dailySummaries table.
+   * O(1) indexed lookup from dailySummaries table with self-healing staleness validation.
    */
   async getMonthSummaries(year: number, month: number): Promise<Map<string, DailySummaryRecord>> {
     const mStr = String(month).padStart(2, '0')
@@ -233,12 +240,39 @@ export const attendanceRepository = {
       summaryMap.set(item.date, item)
     }
 
-    // If any dates in this range have raw punches but no summary cached yet, compute on the fly
+    // Inspect raw punches in this date range to detect uncached or corrupted/stale daily summaries
     const allPunchesInMonth = await db.biometricPunches.where('date').between(startDate, endDate, true, true).toArray()
-    const dateGroups = new Set<string>()
+    const punchesByDate = new Map<string, { bioIds: Set<string>; latestImportTime: string }>()
     for (const p of allPunchesInMonth) {
-      if (!summaryMap.has(p.date)) {
-        dateGroups.add(p.date)
+      if (!p.date) continue
+      let group = punchesByDate.get(p.date)
+      if (!group) {
+        group = { bioIds: new Set(), latestImportTime: p.importedAt || p.timestamp || '' }
+        punchesByDate.set(p.date, group)
+      }
+      group.bioIds.add(p.bioId)
+      const pTime = p.importedAt || p.timestamp || ''
+      if (pTime && pTime > group.latestImportTime) {
+        group.latestImportTime = pTime
+      }
+    }
+
+    const dateGroups = new Set<string>()
+
+    // Check dates that have punches
+    for (const [d, group] of punchesByDate.entries()) {
+      const existing = summaryMap.get(d)
+      if (!existing) {
+        dateGroups.add(d)
+      } else {
+        // Detect stale counts (e.g. corrupted by a single-employee filter where presentCount < distinct punched employees)
+        // or where new punches were imported after the summary was cached
+        const distinctPunched = group.bioIds.size
+        const isStaleCount = distinctPunched > 0 && existing.presentCount < distinctPunched
+        const isNewerPunch = group.latestImportTime && existing.updatedAt && group.latestImportTime > existing.updatedAt
+        if (isStaleCount || isNewerPunch) {
+          dateGroups.add(d)
+        }
       }
     }
 
@@ -250,11 +284,19 @@ export const attendanceRepository = {
       }
     }
 
-    for (const d of dateGroups) {
-      const records = await this.getDailyAttendance(d)
-      const summary = await this.updateDailySummaryCache(d, records)
-      if (summary) {
-        summaryMap.set(d, summary)
+    // Compute missing or stale daily summaries concurrently for fast calendar loading
+    if (dateGroups.size > 0) {
+      const computed = await Promise.all(
+        Array.from(dateGroups).map(async (d) => {
+          const records = await this.getDailyAttendance(d)
+          const summary = await this.updateDailySummaryCache(d, records)
+          return { date: d, summary }
+        })
+      )
+      for (const item of computed) {
+        if (item.summary) {
+          summaryMap.set(item.date, item.summary)
+        }
       }
     }
 

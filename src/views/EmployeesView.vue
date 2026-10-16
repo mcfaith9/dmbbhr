@@ -738,10 +738,10 @@ onUnmounted(() => {
         <Button
           variant="outline"
           size="sm"
-          class="h-8 gap-1.5 font-medium border-blue-500/40 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 shadow-xs"
+          class="h-8 gap-1.5 font-medium shadow-xs"
           @click="openHrNoticesModal()"
         >
-          <Bell class="size-3.5 text-blue-500" />
+          <Bell class="size-3.5" />
           <span class="text-xs">Notices</span>
           <span
             v-if="activeHrNoticesCount > 0"
@@ -926,7 +926,7 @@ onUnmounted(() => {
               <!-- Employee Name & Avatar -->
               <TableCell>
                 <div class="flex items-center gap-2.5">
-                  <Avatar class="size-7 rounded-full border bg-muted shrink-0 overflow-hidden">
+                  <Avatar class="size-9 rounded-full border bg-muted shrink-0 overflow-hidden">
                     <AvatarImage
                       v-if="getEmployeePhotoUrl(emp)"
                       :src="getEmployeePhotoUrl(emp)!"
