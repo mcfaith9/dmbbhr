@@ -1,6 +1,7 @@
 import { db, type BiometricPunchRecord } from '@/db'
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta } from '@/types'
 import { getManilaDateString } from '@/services/attendanceEngine'
+import { parseBiometricTimestamp } from '@/utils/attendanceTimestampParser'
 import { employeeRepository } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
 
@@ -149,17 +150,19 @@ export const punchRepository = {
    * Transforms an in-memory or raw log to a database entity
    */
   toRecord(log: Partial<AttendanceLog>): BiometricPunchRecord | null {
-    if (!log.user_id || !log.attendance_time) return null
+    const raw = log as any
+    const bioId = String(log.user_id ?? raw['User ID'] ?? raw.userId ?? '').trim()
+    if (!bioId) return null
 
-    const bioId = String(log.user_id).trim()
-    const tDate = new Date(log.attendance_time)
-    if (isNaN(tDate.getTime())) return null
+    const parsed = parseBiometricTimestamp(log)
+    if (!parsed) return null
 
-    const dateKey = getManilaDateString(tDate)
-    const type = Number(log.type ?? 1)
-    const state = Number(log.state ?? 1)
-    const devId = log.device_id || 'dev-1'
-    const sig = getPunchSignature(bioId, tDate.getTime(), type, state, devId)
+    const tMs = parsed.timestampMs
+    const dateKey = parsed.dateKey
+    const type = Number(raw['Type (Raw)'] ?? log.type ?? raw.Type ?? 1)
+    const state = Number(raw['State (Raw)'] ?? log.state ?? raw.State ?? 1)
+    const devId = log.device_id || raw.deviceId || raw['Device IP'] || 'dev-1'
+    const sig = getPunchSignature(bioId, tMs, type, state, devId)
 
     const id = log.id || getOccurrencePunchId(sig, 1)
 
@@ -167,19 +170,19 @@ export const punchRepository = {
       id,
       bioId,
       date: dateKey,
-      timestamp: log.attendance_time,
-      timestampMs: tDate.getTime(),
+      timestamp: parsed.timestampIso,
+      timestampMs: tMs,
       type,
       state,
-      serialNumber: log.serial_number ?? 0,
+      serialNumber: log.serial_number ?? raw.Serial ?? raw['Serial Number'] ?? 0,
       deviceId: devId,
-      deviceIp: log.device_ip || '192.168.1.201',
-      deviceName: log.device_name || 'BISBIO B-29b',
+      deviceIp: log.device_ip || raw['Device IP'] || raw.IP || '192.168.1.201',
+      deviceName: log.device_name || raw.Device || raw.deviceName || 'BISBIO B-29b',
       locationId: log.location_id || 'loc-cebu',
-      locationName: log.location_name || 'DBB CEBU',
-      employeeName: log.employee_name || `User ${bioId}`,
-      workGroupId: log.work_group_id || 'wg-group-c',
-      isDuplicate: Boolean(log.is_duplicate),
+      locationName: log.location_name || raw.Location || raw.location || 'DBB CEBU',
+      employeeName: log.employee_name || raw['Employee Name'] || raw.Name || `User ${bioId}`,
+      workGroupId: log.work_group_id || raw['Work Group'] || raw.WorkGroup || 'wg-group-c',
+      isDuplicate: Boolean(log.is_duplicate || raw['Is Duplicate Scan'] === 'Yes'),
       importedAt: log.created_at || new Date().toISOString()
     }
   },
@@ -425,25 +428,25 @@ export const punchRepository = {
 
       for (const raw of chunk) {
         const userId = String(raw['User ID'] || raw['userId'] || raw['User_ID'] || raw['ID'] || raw.user_id || '').trim()
-        const rawTime = raw['Date/Time'] || raw['DateTime'] || raw['Date'] || raw['attTime'] || raw['Time'] || raw.attendance_time
-        const rawName = String(raw['Name'] || raw['Employee'] || raw['Employee Name'] || raw.employee_name || '').trim()
+        if (!userId) {
+          invalidCount++
+          continue
+        }
+
+        const parsed = parseBiometricTimestamp(raw)
+        if (!parsed) {
+          invalidCount++
+          continue
+        }
+
+        const tMs = parsed.timestampMs
+        const dateKey = parsed.dateKey
+        const rawName = String(raw['Employee Name'] || raw['Name'] || raw['Employee'] || raw.employee_name || '').trim()
         const rawWg = raw['Work Group'] || raw['WorkGroup'] || raw['Group'] || raw.work_group_id || 'wg-group-c'
-        const devId = raw.device_id || raw.deviceId || 'dev-1'
+        const devId = raw.device_id || raw.deviceId || raw['Device IP'] || 'dev-1'
 
-        if (!userId || !rawTime) {
-          invalidCount++
-          continue
-        }
-
-        const tDate = new Date(rawTime)
-        if (isNaN(tDate.getTime())) {
-          invalidCount++
-          continue
-        }
-
-        const type = Number(raw['Type'] ?? raw.type ?? 1)
-        const state = Number(raw['State'] ?? raw.state ?? 1)
-        const tMs = tDate.getTime()
+        const type = Number(raw['Type (Raw)'] ?? raw['Type'] ?? raw.type ?? 1)
+        const state = Number(raw['State (Raw)'] ?? raw['State'] ?? raw.state ?? 1)
         const sig = getPunchSignature(userId, tMs, type, state, devId)
 
         // Increment occurrence index for this signature in the incoming stream
@@ -469,30 +472,28 @@ export const punchRepository = {
         existingIds.add(resolvedId)
         existingSignatureCounts.set(sig, Math.max(existingCountForSig, occIndex))
 
-        const dateKey = getManilaDateString(tDate)
-
         recordsToInsert.push({
           id: resolvedId,
           bioId: userId,
           date: dateKey,
-          timestamp: tDate.toISOString(),
+          timestamp: parsed.timestampIso,
           timestampMs: tMs,
           type,
           state,
           serialNumber: Number(raw['Serial'] || raw['Serial Number'] || raw.serial_number || raw.sn || 0),
           deviceId: devId,
-          deviceIp: raw['IP'] || raw.device_ip || '192.168.1.201',
-          deviceName: raw.device_name || raw.deviceName || 'BISBIO B-29b',
+          deviceIp: raw['Device IP'] || raw['IP'] || raw.device_ip || '192.168.1.201',
+          deviceName: raw['Device'] || raw.device_name || raw.deviceName || 'BISBIO B-29b',
           locationId: raw.location_id || 'loc-cebu',
-          locationName: raw.location_name || raw.location || 'DBB CEBU',
+          locationName: raw['Location'] || raw.location_name || raw.location || 'DBB CEBU',
           employeeName: rawName || `User ${userId}`,
           workGroupId: rawWg,
-          isDuplicate: false,
+          isDuplicate: Boolean(raw['Is Duplicate Scan'] === 'Yes' || raw.is_duplicate),
           importedAt: new Date().toISOString()
         })
 
         if (rawName && !employeeBatchMap.has(userId)) {
-          employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: 'DBB CEBU', workGroupId: rawWg })
+          employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: raw['Location'] || 'DBB CEBU', workGroupId: rawWg })
         }
       }
 
@@ -590,25 +591,25 @@ export const punchRepository = {
 
     for (const raw of rawRecords) {
       const userId = String(raw['User ID'] || raw['userId'] || raw['User_ID'] || raw['ID'] || raw.user_id || '').trim()
-      const rawTime = raw['Date/Time'] || raw['DateTime'] || raw['Date'] || raw['attTime'] || raw['Time'] || raw.attendance_time
-      const rawName = String(raw['Name'] || raw['Employee'] || raw['Employee Name'] || raw.employee_name || '').trim()
+      if (!userId) {
+        invalidCount++
+        continue
+      }
+
+      const parsed = parseBiometricTimestamp(raw)
+      if (!parsed) {
+        invalidCount++
+        continue
+      }
+
+      const tMs = parsed.timestampMs
+      const dateKey = parsed.dateKey
+      const rawName = String(raw['Employee Name'] || raw['Name'] || raw['Employee'] || raw.employee_name || '').trim()
       const rawWg = raw['Work Group'] || raw['WorkGroup'] || raw['Group'] || raw.work_group_id || 'wg-group-c'
-      const devId = raw.device_id || raw.deviceId || 'dev-1'
+      const devId = raw.device_id || raw.deviceId || raw['Device IP'] || 'dev-1'
 
-      if (!userId || !rawTime) {
-        invalidCount++
-        continue
-      }
-
-      const tDate = new Date(rawTime)
-      if (isNaN(tDate.getTime())) {
-        invalidCount++
-        continue
-      }
-
-      const type = Number(raw['Type'] ?? raw.type ?? 1)
-      const state = Number(raw['State'] ?? raw.state ?? 1)
-      const tMs = tDate.getTime()
+      const type = Number(raw['Type (Raw)'] ?? raw['Type'] ?? raw.type ?? 1)
+      const state = Number(raw['State (Raw)'] ?? raw['State'] ?? raw.state ?? 1)
       const sig = getPunchSignature(userId, tMs, type, state, devId)
 
       const occIndex = (batchOccurrenceMap.get(sig) || 0) + 1
@@ -628,30 +629,28 @@ export const punchRepository = {
       context.existingIds.add(resolvedId)
       context.existingSignatureCounts.set(sig, Math.max(existingCountForSig, occIndex))
 
-      const dateKey = getManilaDateString(tDate)
-
       recordsToInsert.push({
         id: resolvedId,
         bioId: userId,
         date: dateKey,
-        timestamp: tDate.toISOString(),
+        timestamp: parsed.timestampIso,
         timestampMs: tMs,
         type,
         state,
         serialNumber: Number(raw['Serial'] || raw['Serial Number'] || raw.serial_number || raw.sn || 0),
         deviceId: devId,
-        deviceIp: raw['IP'] || raw.device_ip || '192.168.1.201',
-        deviceName: raw.device_name || raw.deviceName || 'BISBIO B-29b',
+        deviceIp: raw['Device IP'] || raw['IP'] || raw.device_ip || '192.168.1.201',
+        deviceName: raw['Device'] || raw.device_name || raw.deviceName || 'BISBIO B-29b',
         locationId: raw.location_id || 'loc-cebu',
-        locationName: raw.location_name || raw.location || 'DBB CEBU',
+        locationName: raw['Location'] || raw.location_name || raw.location || 'DBB CEBU',
         employeeName: rawName || `User ${userId}`,
         workGroupId: rawWg,
-        isDuplicate: false,
+        isDuplicate: Boolean(raw['Is Duplicate Scan'] === 'Yes' || raw.is_duplicate),
         importedAt: new Date().toISOString()
       })
 
       if (rawName && !context.employeeBatchMap.has(userId)) {
-        context.employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: 'DBB CEBU', workGroupId: rawWg })
+        context.employeeBatchMap.set(userId, { bioId: userId, name: rawName, location: raw['Location'] || 'DBB CEBU', workGroupId: rawWg })
       }
     }
 

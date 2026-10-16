@@ -20,6 +20,7 @@
 import type { AttendanceLog, EmploymentStatus } from '@/types'
 import type { ManualAttendanceRecord } from '@/db'
 import { calculateExpectedOutMinutes, formatTime12h } from '@/repositories/workGroupRepository'
+export { parseBiometricTimestamp, type ParsedBiometricTimestamp } from '@/utils/attendanceTimestampParser'
 
 export interface AttendanceEngineConfig {
   duplicatePunchThresholdSeconds: number // e.g. 60s

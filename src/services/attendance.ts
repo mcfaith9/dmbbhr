@@ -24,7 +24,16 @@ import {
   manualAttendanceRepository
 } from '@/repositories'
 
-export { getManilaDateString, formatManilaTime, type DailyAttendanceRecord, type AttendanceEngineConfig }
+import { parseBiometricTimestamp, type ParsedBiometricTimestamp } from '@/utils/attendanceTimestampParser'
+
+export {
+  getManilaDateString,
+  formatManilaTime,
+  parseBiometricTimestamp,
+  type ParsedBiometricTimestamp,
+  type DailyAttendanceRecord,
+  type AttendanceEngineConfig
+}
 
 export const attendanceService = {
   /**

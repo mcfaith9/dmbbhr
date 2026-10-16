@@ -20,6 +20,7 @@ import { attendanceService } from '@/services/attendance'
 import { deviceService } from '@/services/devices'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
+import { parseBiometricTimestamp } from '@/utils/attendanceTimestampParser'
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta, Location, BiometricDevice, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
@@ -388,6 +389,12 @@ function handleFileChange(event: Event) {
   reader.readAsArrayBuffer(importFile.value)
 }
 
+function formatPreviewTimestamp(row: any): string {
+  const parsed = parseBiometricTimestamp(row)
+  if (!parsed) return 'Invalid Time'
+  return `${formatDate(parsed.timestampIso)} ${formatTime(parsed.timestampIso)}`
+}
+
 function validateImportData(rows: any[]) {
   importPreviewData.value = rows.slice(0, 5)
   importValidation.value.totalRecords = rows.length
@@ -397,12 +404,12 @@ function validateImportData(rows: any[]) {
   let duplicates = 0
 
   rows.forEach((row, index) => {
-    const userId = row['User ID'] || row['userId'] || row['User_ID'] || row['ID'] || row.user_id
-    const time = row['Date/Time'] || row['DateTime'] || row['Date'] || row['attTime'] || row['Time'] || row.attendance_time
+    const userId = String(row['User ID'] || row['userId'] || row['User_ID'] || row['ID'] || row.user_id || '').trim()
+    const parsed = parseBiometricTimestamp(row)
 
-    if (!userId || !time) {
+    if (!userId || !parsed) {
       if (importValidation.value.errors.length < 3) {
-        importValidation.value.errors.push(`Row ${index + 1}: Missing User ID or Date/Time`)
+        importValidation.value.errors.push(`Row ${index + 1}: Missing User ID or valid Attendance Timestamp`)
       }
     } else {
       valid++
@@ -1084,8 +1091,8 @@ onUnmounted(() => {
           </div>
 
           <div class="rounded-md bg-muted/40 p-2.5 border text-muted-foreground space-y-1">
-            <span class="font-semibold text-foreground">Expected biometric header columns:</span>
-            <div class="font-mono text-[11px]">User ID, Name, Date/Time, Type, State, Serial, IP</div>
+            <span class="font-semibold text-foreground">Supported biometric header columns:</span>
+            <div class="font-mono text-[11px]">User ID, Employee Name, Work Group, Date, Time, Full Timestamp, Type, State, Serial, Device, Location</div>
           </div>
 
           <div v-if="importFile && importValidation.totalRecords > 0" class="space-y-2 border-t pt-3">
@@ -1105,9 +1112,9 @@ onUnmounted(() => {
                 :key="i"
                 class="px-2 py-1 border-t flex items-center justify-between text-muted-foreground font-mono"
               >
-                <span>ID: {{ row['User ID'] || row['userId'] }}</span>
-                <span>{{ row['Date/Time'] || row['DateTime'] }}</span>
-                <span>State: {{ row['State'] ?? 1 }}</span>
+                <span>ID: {{ row['User ID'] || row['userId'] || row['ID'] || row.user_id }}</span>
+                <span class="font-semibold text-foreground">{{ formatPreviewTimestamp(row) }}</span>
+                <span>State: {{ row['State (Raw)'] ?? row['State'] ?? row.state ?? 1 }}</span>
               </div>
             </div>
           </div>
