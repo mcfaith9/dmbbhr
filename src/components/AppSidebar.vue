@@ -6,9 +6,11 @@ import {
   UsersRound,
   Fingerprint,
   CalendarDays,
-  WalletCards,
+  PhilippinePeso,
   ChartPie,
   Settings,
+  MonitorCog,
+  Atom
 } from "@lucide/vue"
 import { h, ref, computed } from "vue"
 import { useRoute, useRouter } from 'vue-router'
@@ -66,7 +68,7 @@ const navSections: NavItem[] = [
   {
     id: "attendance",
     title: "Attendance",
-    icon: Clock,
+    icon: Fingerprint,
     children: [
       { title: "Daily Attendance", url: "/attendance/daily", description: "Aggregated daily in/out entries" },
       { title: "Attendance Logs", url: "/attendance/logs", description: "Raw biometric scans & auditable logs" },
@@ -82,7 +84,7 @@ const navSections: NavItem[] = [
     id: "devices",
     title: "Biometric Devices",
     url: "/devices",
-    icon: Fingerprint,
+    icon: MonitorCog,
     badge: "",
   },
   {
@@ -100,7 +102,7 @@ const navSections: NavItem[] = [
   {
     id: "payroll",
     title: "Payroll",
-    icon: WalletCards,
+    icon: PhilippinePeso,
     children: [
       { title: "Payroll Periods", url: "/payroll/periods", description: "Cut-offs and batch generation" },
       { title: "Attendance Matrix", url: "/payroll/attendance-matrix", description: "15-day employee attendance matrix and schedule" },
@@ -193,7 +195,7 @@ function isPathActive(url: string): boolean {
             <SidebarMenuButton size="lg" as-child class="md:h-8 md:p-0">
               <router-link to="/dashboard" title="DMBBHR">
                 <div class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                  <Fingerprint class="size-4" />
+                  <Atom class="size-4" />
                 </div>
                 <div class="grid flex-1 text-left text-sm leading-tight">
                   <span class="truncate font-semibold tracking-tight">DMBBHR</span>

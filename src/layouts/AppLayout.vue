@@ -67,13 +67,13 @@ const breadcrumbs = computed(() => {
           <div class="flex items-center gap-3">
             <!-- Active Location Indicator -->
             <!-- BIONETRIC 3 -->
-            <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs">
+            <div class="hidden sm:flex items-center h-8 gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs">
               <span class="size-2 rounded-full bg-gray-500" />
               <span class="font-medium text-xs text-foreground">N/Config</span>
               <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">192.168.x.x:4370</span>
             </div>
             <!-- BIONETRIC 2 -->
-            <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs">
+            <div class="hidden sm:flex items-center h-8 gap-1.5 px-2.5 py-1 rounded-md border bg-muted/40 text-xs">
               <span class="size-2 rounded-full bg-gray-500" />
               <span class="font-medium text-xs text-foreground">N/Config</span>
               <span class="font-mono text-[11px] text-muted-foreground hidden md:inline">192.168.x.x:4370</span>
@@ -81,7 +81,7 @@ const breadcrumbs = computed(() => {
             <!-- Live Biometric Hardware Status (Single Source of Truth) -->
             <router-link
               to="/devices"
-              class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs shadow-xs transition-colors hover:opacity-90"
+              class="flex items-center h-8 gap-1.5 px-2.5 py-1 rounded-md border text-xs shadow-xs transition-colors hover:opacity-90"
               :class="[
                 deviceStatus.status === 'online'
                   ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
