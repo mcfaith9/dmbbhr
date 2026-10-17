@@ -1440,11 +1440,7 @@ onMounted(() => {
             <label class="font-semibold text-foreground text-xs block">
               Attendance Date
             </label>
-            <input
-              v-model="newAdjustmentDate"
-              type="date"
-              class="h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs text-foreground shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-            />
+            <DatePicker v-model="newAdjustmentDate" class="w-full text-xs h-8" />
           </div>
 
           <!-- Original Attendance Display Context -->
