@@ -17,10 +17,11 @@
  * - Later attendance changes do NOT silently mutate approved/finalized payroll
  */
 
-import { db, type PayrollSnapshotRecord, type ItemizedDeductionRecord, type HolidayRecord } from '@/db'
+import { db, type PayrollSnapshotRecord, type ItemizedDeductionRecord, type HolidayRecord, type OvertimeAuthorizationRecord } from '@/db'
 import type { Employee } from '@/types'
 import { getManilaDateString, type DailyAttendanceRecord } from '@/services/attendanceEngine'
-import { attendanceRepository } from '@/repositories'
+import { attendanceRepository, overtimeRepository } from '@/repositories'
+import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateOvertimeDay } from '@/services/overtimePolicy'
 
 export interface PayrollCutoffPeriod {
   id: string // e.g. "2026-06-1" or "2026-06-2"
@@ -61,9 +62,17 @@ export interface EmployeePayrollRecord {
   presentDays: number
   sundayWorkDays: number
   holidayDays: number
+  workedHolidayDays: number
+  unworkedHolidayDays: number
+  specialNonWorkingDays: number
+  specialWorkingDays: number
   absentDays: number
   payableDays: number
   lateMinutes: number
+
+  // Authorized Overtime (Requires Approved Physical Form)
+  overtimeHours: number
+  overtimePay: number
 
   // Stage A: Initial Earnings
   initialEarnings: number
@@ -71,6 +80,7 @@ export interface EmployeePayrollRecord {
     basePay: number
     sundayDutyPay: number
     holidayPay: number
+    overtimePay: number
     allowances: number
   }
 
@@ -203,12 +213,35 @@ export const payrollCalculationService = {
   /**
    * Computes semi-monthly payroll for a single employee for a given cutoff period.
    * Pulls attendance from Attendance Matrix data / IndexedDB and restores any saved snapshot.
+   *
+   * Holiday Pay & Overtime Rules:
+   * 1. Regular Holiday:
+   *    - Unworked (eligible): 100% of daily wage
+   *    - Worked (first 8 hours): 200% of daily wage
+   * 2. Special Non-Working Day:
+   *    - Unworked: 0% ("no work, no pay")
+   *    - Worked (first 8 hours): 130% of daily wage (or 150% if also a rest day)
+   * 3. Special Working Day:
+   *    - Worked (first 8 hours): 100% of daily wage (regular rate)
+   *    - Unworked: 0%
+   * 4. Authorized Overtime:
+   *    - Attendance after 5:00 PM is attendance data only; does NOT automatically authorize overtime
+   *    - Payable ONLY when a corresponding physical overtime form has been submitted and approved
+   *    - If no approved form: ₱0 overtime
+   *    - If approved form exists:
+   *      - Ordinary working day (company policy): one qualifying occurrence pays a flat
+   *        premium of 25% of the daily rate (Daily Rate x 25%), once per occurrence,
+   *        regardless of the approved number of hours
+   *      - Rest day / Special Non-Working: statutory hourly rates (169% / 195% on rest day)
+   *      - Regular Holiday: statutory hourly rates (260% / 338% on rest day)
+   *      - Special Working Day: statutory hourly rate (125%)
    */
   async computeSingleEmployeePayroll(
     period: PayrollCutoffPeriod,
     employee: Employee,
     holidays: HolidayRecord[] = [],
-    dailyAttendanceRecords: DailyAttendanceRecord[] = []
+    dailyAttendanceRecords: DailyAttendanceRecord[] = [],
+    overtimeAuthorizations: OvertimeAuthorizationRecord[] = []
   ): Promise<EmployeePayrollRecord> {
     const rawBioId = String(employee.biometric_user_id || (employee as any).bioId || employee.employee_number || employee.id || '').trim()
     const targetIds = new Set<string>()
@@ -244,7 +277,7 @@ export const payrollCalculationService = {
     }
 
     // Helper: Normalize date strings to YYYY-MM-DD
-    const normalizeDate = (d: string): string => {
+    const normalizeDateStr = (d?: string | null): string => {
       if (!d) return ''
       const trimmed = d.trim()
       if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
@@ -262,7 +295,22 @@ export const payrollCalculationService = {
       return trimmed
     }
 
-    // 3. Obtain daily attendance records for this employee across cutoff period dates
+    // 3. Obtain approved physical overtime forms for this employee in the cutoff
+    if (!overtimeAuthorizations || overtimeAuthorizations.length === 0) {
+      try {
+        overtimeAuthorizations = await overtimeRepository.getApprovedOvertimeForEmployeeAndPeriod(
+          bioId,
+          period.startDate,
+          period.endDate
+        )
+      } catch {
+        overtimeAuthorizations = []
+      }
+    }
+
+    const approvedOtMap = collectApprovedOvertimeByDate(overtimeAuthorizations, targetIds)
+
+    // 4. Obtain daily attendance records for this employee across cutoff period dates
     const empAttendanceMap = new Map<string, DailyAttendanceRecord>()
 
     const registerRecord = (rec: DailyAttendanceRecord) => {
@@ -273,12 +321,12 @@ export const payrollCalculationService = {
       }
       if (rec.raw_date) {
         empAttendanceMap.set(rec.raw_date, rec)
-        const n = normalizeDate(rec.raw_date)
+        const n = normalizeDateStr(rec.raw_date)
         if (n) empAttendanceMap.set(n, rec)
       }
       if (rec.date) {
         empAttendanceMap.set(rec.date, rec)
-        const n = normalizeDate(rec.date)
+        const n = normalizeDateStr(rec.date)
         if (n) empAttendanceMap.set(n, rec)
       }
       if ((rec as any).id) {
@@ -364,94 +412,7 @@ export const payrollCalculationService = {
       }
     }
 
-    const todayStr = getManilaDateString(new Date())
-    let scheduledDays = 0
-    let presentDays = 0
-    let sundayWorkDays = 0
-    let holidayDays = 0
-    let absentDays = 0
-    let lateMinutes = 0
-    let futureScheduledDays = 0
-    let unresolvedDays = 0
-    let leaveDays = 0
-    const attendanceReviewNotes: string[] = []
-
-    for (const dStr of period.dates) {
-      const [y, m, d] = dStr.split('-').map(Number)
-      const dateObj = new Date(Date.UTC(y, m - 1, d))
-      const isSunday = dateObj.getUTCDay() === 0
-      const isHoliday = holidayMap.has(dStr)
-      const hol = holidayMap.get(dStr)
-      const isFuture = dStr > todayStr
-      const att = empAttendanceMap.get(dStr) || empAttendanceMap.get(normalizeDate(dStr))
-
-      const actualIn = att?.actual_in?.trim() || ''
-      const actualOut = att?.actual_out?.trim() || ''
-      const hasValidIn = Boolean(
-        actualIn &&
-        !actualIn.startsWith('Missing') &&
-        actualIn !== '—' &&
-        actualIn !== '-' &&
-        actualIn !== 'None'
-      )
-      const hasValidOut = Boolean(
-        att?.has_valid_out &&
-        actualOut &&
-        !actualOut.startsWith('Missing') &&
-        actualOut !== '—' &&
-        actualOut !== '-'
-      )
-
-      if (!isSunday && !isHoliday) {
-        scheduledDays++
-      }
-
-      if (hasValidIn) {
-        if (isSunday) {
-          sundayWorkDays++
-          if (!hasValidOut) {
-            attendanceReviewNotes.push(`Sunday duty on ${dStr} has missing/awaiting OUT punch`)
-          }
-        } else if (isHoliday) {
-          holidayDays++
-          if (!hasValidOut) {
-            attendanceReviewNotes.push(`Holiday duty on ${dStr} (${hol?.name || 'Holiday'}) has missing/awaiting OUT punch`)
-          }
-        } else {
-          presentDays++
-          if (!hasValidOut) {
-            attendanceReviewNotes.push(`Duty punch on ${dStr} is awaiting or missing OUT punch`)
-          }
-        }
-
-        if (att?.late_minutes && att.late_minutes > 0) {
-          lateMinutes += att.late_minutes
-        }
-      } else if (isSunday) {
-        // Standard unworked Sunday rest day - not an absence
-      } else if (isHoliday) {
-        // Standard unworked calendar holiday
-      } else if (att?.status === 'On Leave' || att?.status === 'Leave') {
-        leaveDays++
-      } else if (isFuture) {
-        futureScheduledDays++
-      } else if (!att && empAttendanceMap.size === 0) {
-        // No attendance records matched at all
-        unresolvedDays++
-      } else {
-        // Date has arrived/passed and verified attendance confirms no duty punch
-        absentDays++
-      }
-    }
-
-    if (unresolvedDays > 0) {
-      attendanceReviewNotes.push(`${unresolvedDays} scheduled date(s) have missing or unverified attendance records`)
-    }
-
-    // Total payable working days
-    const payableDays = presentDays + sundayWorkDays + holidayDays
-
-    // Salary Configuration & Rates
+    // 5. Compute Salary Configuration & Rates
     const salaryType = (employee.salary_type || 'unconfigured') as 'Monthly' | 'Daily' | 'Hourly' | 'unconfigured'
     let basicSalary = typeof employee.basic_salary === 'number' && employee.basic_salary > 0 ? employee.basic_salary : 0
     let dailyRate = typeof employee.daily_rate === 'number' && employee.daily_rate > 0 ? employee.daily_rate : 0
@@ -471,43 +432,266 @@ export const payrollCalculationService = {
       hourlyRate = Math.round((dailyRate / 8) * 100) / 100
     }
 
+    const todayStr = getManilaDateString(new Date())
+    let scheduledDays = 0
+    let presentDays = 0
+    let sundayWorkDays = 0
+    let holidayDays = 0
+    let workedHolidayDays = 0
+    let unworkedHolidayDays = 0
+    let specialNonWorkingDays = 0
+    let specialWorkingDays = 0
+    let absentDays = 0
+    let lateMinutes = 0
+    let futureScheduledDays = 0
+    let unresolvedDays = 0
+    let leaveDays = 0
+
+    // Holiday and Overtime Accumulators
+    let holidayPay = 0
+    let sundayDutyPay = 0
+    let totalOvertimeHours = 0
+    let totalOvertimePay = 0
+    const attendanceReviewNotes: string[] = []
+
+    // Helper: Check unworked regular holiday eligibility under Philippine Labor Code
+    const isEligibleForUnworkedRegularHoliday = (hDateStr: string): boolean => {
+      if (employee.resignation_date && employee.resignation_date < hDateStr) return false
+      if (employee.contract_date && employee.contract_date > hDateStr) return false
+      if (employee.hire_date && employee.hire_date > hDateStr) return false
+
+      const [hy, hm, hd] = hDateStr.split('-').map(Number)
+      const holidayDate = new Date(Date.UTC(hy, hm - 1, hd))
+
+      for (let offset = 1; offset <= 14; offset++) {
+        const prevDateObj = new Date(holidayDate.getTime() - offset * 86400000)
+        const prevY = prevDateObj.getUTCFullYear()
+        const prevM = String(prevDateObj.getUTCMonth() + 1).padStart(2, '0')
+        const prevD = String(prevDateObj.getUTCDate()).padStart(2, '0')
+        const prevDateStr = `${prevY}-${prevM}-${prevD}`
+
+        const isPrevSunday = prevDateObj.getUTCDay() === 0
+        const isPrevHoliday = holidayMap.has(prevDateStr)
+
+        if (isPrevSunday || isPrevHoliday) {
+          continue
+        }
+
+        // Found preceding scheduled workday
+        const prevAtt = empAttendanceMap.get(prevDateStr) || empAttendanceMap.get(normalizeDateStr(prevDateStr))
+        if (!prevAtt) {
+          if (!period.dates.includes(prevDateStr)) {
+            return employee.status === 'active'
+          }
+          return false
+        }
+
+        const prevIn = prevAtt.actual_in?.trim() || ''
+        const hasPrevIn = Boolean(
+          prevIn &&
+          !prevIn.startsWith('Missing') &&
+          prevIn !== '—' &&
+          prevIn !== '-' &&
+          prevIn !== 'None'
+        )
+
+        if (hasPrevIn) return true
+        if (prevAtt.status === 'On Leave' || prevAtt.status === 'Leave') return true
+        return false
+      }
+
+      return employee.status === 'active'
+    }
+
+    for (const dStr of period.dates) {
+      const [y, m, d] = dStr.split('-').map(Number)
+      const dateObj = new Date(Date.UTC(y, m - 1, d))
+      const isSunday = dateObj.getUTCDay() === 0
+      const hol = holidayMap.get(dStr)
+      const isHoliday = Boolean(hol)
+      const holType = hol?.type || 'Regular'
+      const isFuture = dStr > todayStr
+      const att = empAttendanceMap.get(dStr) || empAttendanceMap.get(normalizeDateStr(dStr))
+
+      const actualIn = att?.actual_in?.trim() || ''
+      const actualOut = att?.actual_out?.trim() || ''
+      const hasValidIn = Boolean(
+        actualIn &&
+        !actualIn.startsWith('Missing') &&
+        actualIn !== '—' &&
+        actualIn !== '-' &&
+        actualIn !== 'None'
+      )
+      const hasValidOut = Boolean(
+        att?.has_valid_out &&
+        actualOut &&
+        !actualOut.startsWith('Missing') &&
+        actualOut !== '—' &&
+        actualOut !== '-'
+      )
+      const hasWorked = hasValidIn
+
+      if (!isSunday && !isHoliday) {
+        scheduledDays++
+      }
+
+      // --- A. HOLIDAY PAY RULES (First 8 Hours) ---
+      if (isHoliday) {
+        if (holType === 'Regular') {
+          if (hasWorked) {
+            holidayDays++
+            workedHolidayDays++
+            if (!hasValidOut) {
+              attendanceReviewNotes.push(`Holiday duty on ${dStr} (${hol?.name || 'Regular Holiday'}) has missing/awaiting OUT punch`)
+            }
+            // Worked Regular Holiday (first 8 hours) = 200% of daily wage.
+            // 100% is regular base daily rate (in basePay via payableDays), +100% additional holiday premium:
+            holidayPay += dailyRate * 1.0
+          } else {
+            // Unworked Regular Holiday: Check eligibility
+            const eligible = isEligibleForUnworkedRegularHoliday(dStr)
+            if (eligible) {
+              unworkedHolidayDays++
+              // Eligible unworked regular holiday: 100% of daily wage
+              if (salaryType === 'Daily') {
+                holidayPay += dailyRate * 1.0
+              }
+              // For Monthly: covered in monthly basic salary (0 deduction)
+            } else {
+              // Ineligible: Unworked regular holiday without entitlement
+              if (salaryType === 'Monthly') {
+                absentDays++
+              }
+            }
+          }
+        } else if (holType === 'Special Non-Working' || holType === 'Local Holiday') {
+          if (hasWorked) {
+            specialNonWorkingDays++
+            if (!hasValidOut) {
+              attendanceReviewNotes.push(`Duty on ${dStr} (${hol?.name || 'Special Non-Working Day'}) has missing/awaiting OUT punch`)
+            }
+            if (isSunday) {
+              // Worked Special Non-Working Day and also a Rest Day: 150% of daily wage
+              // 100% is regular base daily rate (in basePay via payableDays), +50% holiday premium:
+              holidayPay += dailyRate * 0.50
+            } else {
+              // Worked Special Non-Working Day on regular day: 130% of daily wage
+              // 100% is regular base daily rate (in basePay via payableDays), +30% holiday premium:
+              holidayPay += dailyRate * 0.30
+            }
+          } else {
+            // Unworked Special Non-Working Day: "No work, no pay" -> 0%
+            // Daily wage worker: ₱0. (Not in payableDays, not in holidayPay).
+          }
+        } else if (holType === 'Special Working') {
+          if (hasWorked) {
+            specialWorkingDays++
+            if (!hasValidOut) {
+              attendanceReviewNotes.push(`Duty on ${dStr} (${hol?.name || 'Special Working Day'}) has missing/awaiting OUT punch`)
+            }
+            // Special Working Day, worked: 100% of daily wage (regular rate, 0% extra premium)
+          } else {
+            // Unworked special working day: 0%
+            if (!isFuture && salaryType === 'Monthly') {
+              absentDays++
+            }
+          }
+        }
+      } else if (isSunday) {
+        // --- B. ORDINARY SUNDAY REST DAY ---
+        if (hasWorked) {
+          sundayWorkDays++
+          if (!hasValidOut) {
+            attendanceReviewNotes.push(`Sunday duty on ${dStr} has missing/awaiting OUT punch`)
+          }
+          // Sunday duty premium (+30% of daily rate under Philippine Labor Code Article 93)
+          sundayDutyPay += dailyRate * 0.30
+        }
+      } else {
+        // --- C. REGULAR WORKING DAY ---
+        if (hasWorked) {
+          presentDays++
+          if (!hasValidOut) {
+            attendanceReviewNotes.push(`Duty punch on ${dStr} is awaiting or missing OUT punch`)
+          }
+        } else if (att?.status === 'On Leave' || att?.status === 'Leave') {
+          leaveDays++
+        } else if (isFuture) {
+          futureScheduledDays++
+        } else if (!att && empAttendanceMap.size === 0) {
+          unresolvedDays++
+        } else {
+          absentDays++
+        }
+      }
+
+      if (hasWorked && att?.late_minutes && att.late_minutes > 0) {
+        lateMinutes += att.late_minutes
+      }
+
+      // --- D. AUTHORIZED OVERTIME (Requires Approved Physical Form) ---
+      // Rule 1: Attendance after 5:00 PM is attendance data only; does NOT automatically authorize overtime.
+      // Rule 2: Overtime is payable ONLY when a corresponding physical overtime form has been submitted and approved.
+      // Rule 3: If no approved overtime form exists, overtime earnings must be ₱0, even if checkout is at 5:30 PM, 6:00 PM, or later.
+      // Rule 4: Ordinary working day pays a flat 25%-of-daily-rate premium per qualifying occurrence (company policy).
+      // Rule 5: Rest day / holiday / special day overtime keeps statutory hourly multipliers.
+      const approvedOt = approvedOtMap.get(dStr) || approvedOtMap.get(normalizeDateStr(dStr))
+      if (approvedOt && approvedOt.status === 'Approved') {
+        const evaluation = evaluateOvertimeDay({
+          dayClass: classifyOvertimeDay(isSunday, isHoliday ? holType : null),
+          dailyRate,
+          hourlyRate,
+          authorizedHours: Number(approvedOt.authorizedHours) || 0,
+          authorizationStatus: approvedOt.status,
+          actualOut,
+          expectedOut: att?.expected_out || '17:00',
+          authorizedStart: approvedOt.startTime,
+          authorizedEnd: approvedOt.endTime,
+          hasValidOut,
+          workedHoursDecimal: Number(att?.total_hours_decimal) || 0,
+          allowOffDayFallback: isSunday || isHoliday
+        })
+
+        if (evaluation.qualifying) {
+          totalOvertimeHours = Math.round((totalOvertimeHours + evaluation.overtimeHours) * 100) / 100
+          totalOvertimePay = Math.round((totalOvertimePay + evaluation.overtimePay) * 100) / 100
+        }
+      }
+    }
+
+    if (unresolvedDays > 0) {
+      attendanceReviewNotes.push(`${unresolvedDays} scheduled date(s) have missing or unverified attendance records`)
+    }
+
+    // Total payable working days (standard 8-hour shifts rendered)
+    const payableDays = presentDays + sundayWorkDays + workedHolidayDays + specialNonWorkingDays + specialWorkingDays
+
     const reviewReasons: string[] = []
 
     // Stage A: Initial Earnings
     let basePay = 0
-    let sundayDutyPay = 0
-    let holidayPay = 0
-    const allowances = typeof employee.allowances === 'number' ? (employee.allowances / 2) : 0 // semi-monthly allowance
+    holidayPay = Math.round(holidayPay * 100) / 100
+    sundayDutyPay = Math.round(sundayDutyPay * 100) / 100
+    const allowances = typeof employee.allowances === 'number' ? (employee.allowances / 2) : 0
 
     if (basicSalary <= 0 && dailyRate <= 0) {
       reviewReasons.push('Salary rate is not configured for this employee')
     } else if (salaryType === 'Daily') {
-      // Daily wage worker: Base working pay is calculated strictly from actual payable days rendered
+      // Daily wage worker: Base working pay is calculated from actual payable days rendered
       basePay = Math.round(payableDays * dailyRate * 100) / 100
-      // Sunday duty premium (+30% of daily rate under Philippine Labor Code Article 93)
-      sundayDutyPay = Math.round(sundayWorkDays * (dailyRate * 0.3) * 100) / 100
-      // Holiday duty premium (100% additional for worked regular holiday = 200% total)
-      holidayPay = Math.round(holidayDays * (dailyRate * 1.0) * 100) / 100
     } else if (salaryType === 'Monthly') {
-      // Semi-monthly basic pay
       const semiMonthlyBasic = Math.round((basicSalary / 2) * 100) / 100
-      // Absences deduction based on confirmed absence days
       const absenceDeduction = Math.round(absentDays * dailyRate * 100) / 100
       basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction) * 100) / 100)
-      // Additional Sunday / Holiday duty premium
-      sundayDutyPay = Math.round(sundayWorkDays * (dailyRate * 0.3) * 100) / 100
-      holidayPay = Math.round(holidayDays * (dailyRate * 1.0) * 100) / 100
     } else if (salaryType === 'Hourly') {
       basePay = Math.round(payableDays * 8 * hourlyRate * 100) / 100
     } else {
-      // Default / fallback: Paid per payable day rendered
       basePay = Math.round(payableDays * dailyRate * 100) / 100
     }
 
-    const initialEarnings = Math.round((basePay + sundayDutyPay + holidayPay + allowances) * 100) / 100
+    const initialEarnings = Math.round((basePay + sundayDutyPay + holidayPay + totalOvertimePay + allowances) * 100) / 100
 
     // Stage B: Statutory Benefits & Loans
-    // Load saved values if draft exists, or establish default editable baselines
     let sss = existingSnap?.sss ?? 0
     let philhealth = existingSnap?.philhealth ?? 0
     let pagibig = existingSnap?.pagibig ?? 0
@@ -515,15 +699,11 @@ export const payrollCalculationService = {
     let pagibigLoan = existingSnap?.pagibigLoan ?? 0
     let otherLoan = existingSnap?.otherLoan ?? 0
 
-    // If no snapshot exists yet, default standard semi-monthly deductions
     if (!existingSnap && initialEarnings > 0) {
-      // Pag-IBIG standard employee share (₱100/cutoff or ₱200/month)
       pagibig = 100
-      // SSS approximate employee share baseline (subject to HR verification & edit)
       if (employee.sss_number) {
         sss = Math.min(1350, Math.max(180, Math.round(initialEarnings * 0.045)))
       }
-      // PhilHealth employee share baseline (2.5% of basic / 2)
       if (employee.philhealth_number) {
         philhealth = Math.round(initialEarnings * 0.025)
       }
@@ -599,14 +779,21 @@ export const payrollCalculationService = {
       presentDays,
       sundayWorkDays,
       holidayDays,
+      workedHolidayDays,
+      unworkedHolidayDays,
+      specialNonWorkingDays,
+      specialWorkingDays,
       absentDays,
       payableDays,
       lateMinutes,
+      overtimeHours: totalOvertimeHours,
+      overtimePay: totalOvertimePay,
       initialEarnings,
       earningsBreakdown: {
         basePay,
         sundayDutyPay,
         holidayPay,
+        overtimePay: totalOvertimePay,
         allowances
       },
       sss,
@@ -633,7 +820,7 @@ export const payrollCalculationService = {
 
   /**
    * Computes the semi-monthly payroll for all active employees for a given cutoff period.
-   * Pulls attendance from Attendance Matrix data / IndexedDB.
+   * Pulls attendance from Attendance Matrix data / IndexedDB and approved physical overtime forms.
    */
   async computePayroll(
     period: PayrollCutoffPeriod,
@@ -644,13 +831,24 @@ export const payrollCalculationService = {
     const targetEmployees = employees.filter(e => e.status !== 'resigned')
     const payrollRecords: EmployeePayrollRecord[] = []
 
+    let allApprovedOt: OvertimeAuthorizationRecord[] = []
+    try {
+      allApprovedOt = await overtimeRepository.getAll('Approved')
+    } catch {
+      allApprovedOt = []
+    }
+
     for (const emp of targetEmployees) {
-      const bioId = emp.biometric_user_id || emp.employee_number
+      const bioId = String(emp.biometric_user_id || emp.employee_number || emp.id || '').trim().toLowerCase()
       const empAttendance = dailyAttendanceRecords.filter(r => {
-        const rBio = r.biometric_user_id || (r as any).bioId
-        return rBio === bioId || rBio === emp.biometric_user_id || rBio === emp.employee_number
+        const rBio = String(r.biometric_user_id || (r as any).bioId || '').trim().toLowerCase()
+        return rBio === bioId || rBio === String(emp.employee_number || '').trim().toLowerCase()
       })
-      const record = await this.computeSingleEmployeePayroll(period, emp, holidays, empAttendance)
+      const empOt = allApprovedOt.filter(ot => {
+        const otBio = String(ot.bioId).trim().toLowerCase()
+        return otBio === bioId || otBio === String(emp.employee_number || '').trim().toLowerCase()
+      })
+      const record = await this.computeSingleEmployeePayroll(period, emp, holidays, empAttendance, empOt)
       payrollRecords.push(record)
     }
 
@@ -775,6 +973,12 @@ export const payrollCalculationService = {
         presentDays: Number(r.presentDays) || 0,
         sundayWorkDays: Number(r.sundayWorkDays) || 0,
         holidayDays: Number(r.holidayDays) || 0,
+        workedHolidayDays: Number(r.workedHolidayDays) || 0,
+        unworkedHolidayDays: Number(r.unworkedHolidayDays) || 0,
+        specialNonWorkingDays: Number(r.specialNonWorkingDays) || 0,
+        specialWorkingDays: Number(r.specialWorkingDays) || 0,
+        overtimeHours: Number(r.overtimeHours) || 0,
+        overtimePay: Number(r.overtimePay) || 0,
         lateMinutes: Number(r.lateMinutes) || 0,
         initialEarnings: Number(r.initialEarnings) || 0,
         sss: Number(r.sss) || 0,
@@ -818,6 +1022,7 @@ export const payrollCalculationService = {
    * Helper to convert database snapshot back to active payroll record.
    */
   snapshotToPayrollRecord(snap: PayrollSnapshotRecord): EmployeePayrollRecord {
+    const otPay = Number(snap.overtimePay) || 0
     return {
       id: snap.id,
       periodId: snap.periodId,
@@ -839,14 +1044,21 @@ export const payrollCalculationService = {
       presentDays: snap.presentDays,
       sundayWorkDays: snap.sundayWorkDays,
       holidayDays: snap.holidayDays,
+      workedHolidayDays: snap.workedHolidayDays || 0,
+      unworkedHolidayDays: snap.unworkedHolidayDays || 0,
+      specialNonWorkingDays: snap.specialNonWorkingDays || 0,
+      specialWorkingDays: snap.specialWorkingDays || 0,
       absentDays: 0,
       payableDays: snap.payableDays,
       lateMinutes: snap.lateMinutes,
+      overtimeHours: snap.overtimeHours || 0,
+      overtimePay: otPay,
       initialEarnings: snap.initialEarnings,
       earningsBreakdown: {
-        basePay: snap.initialEarnings,
+        basePay: Math.round((snap.initialEarnings - otPay) * 100) / 100,
         sundayDutyPay: 0,
         holidayPay: 0,
+        overtimePay: otPay,
         allowances: 0
       },
       sss: snap.sss,

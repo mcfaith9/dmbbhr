@@ -1117,6 +1117,13 @@ export const employeeRepository = {
   },
 
   /**
+   * Retrieves all employees (alias for getEmployees)
+   */
+  async getAll(): Promise<Employee[]> {
+    return this.getEmployees()
+  },
+
+  /**
    * Retrieves all employees with optional location, work group, search, & status filters
    */
   async getEmployees(params: { location?: string; workGroupId?: string; search?: string; status?: string } = {}): Promise<Employee[]> {

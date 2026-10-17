@@ -33,7 +33,8 @@ import {
   RefreshCw,
   ShieldCheck,
   User,
-  FileText
+  FileText,
+  Clock
 } from '@lucide/vue'
 import {
   payrollCalculationService,
@@ -540,6 +541,18 @@ function triggerPrint() {
                 <span>Holiday Duty Premium (Regular / Special):</span>
                 <span class="font-mono font-medium text-foreground">
                   +₱{{ currentRecord.earningsBreakdown.holidayPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                </span>
+              </div>
+              <div v-if="currentRecord.earningsBreakdown.overtimePay > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">
+                <span class="flex items-center gap-1.5">
+                  <Clock class="size-3.5 text-indigo-600" />
+                  <span>
+                    Authorized Overtime Premium
+                    <span class="text-[10px]">({{ currentRecord.overtimeHours }} qualifying hr{{ currentRecord.overtimeHours === 1 ? '' : 's' }})</span>
+                  </span>
+                </span>
+                <span class="font-mono font-medium text-foreground">
+                  +₱{{ currentRecord.earningsBreakdown.overtimePay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                 </span>
               </div>
               <div v-if="currentRecord.earningsBreakdown.allowances > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">
@@ -1049,6 +1062,10 @@ function triggerPrint() {
               <div v-if="currentRecord.earningsBreakdown.holidayPay > 0" class="flex justify-between">
                 <span>Holiday Duty:</span>
                 <span>₱{{ currentRecord.earningsBreakdown.holidayPay.toFixed(2) }}</span>
+              </div>
+              <div v-if="currentRecord.earningsBreakdown.overtimePay > 0" class="flex justify-between">
+                <span>Authorized Overtime:</span>
+                <span>₱{{ currentRecord.earningsBreakdown.overtimePay.toFixed(2) }}</span>
               </div>
               <div v-if="currentRecord.earningsBreakdown.allowances > 0" class="flex justify-between">
                 <span>Allowances:</span>

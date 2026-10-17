@@ -155,7 +155,7 @@ export interface HolidayRecord {
   id: string
   name: string
   date: string // YYYY-MM-DD
-  type: 'Regular' | 'Special Non-Working'
+  type: 'Regular' | 'Special Non-Working' | 'Special Working' | 'Local Holiday'
   isNationwide: boolean
 }
 
@@ -230,6 +230,25 @@ export interface ItemizedDeductionRecord {
   createdAt: string
 }
 
+export interface OvertimeAuthorizationRecord {
+  id: string // e.g. "ot_1729123456"
+  bioId: string // Biometric / Employee ID
+  employeeName: string
+  department?: string
+  date: string // YYYY-MM-DD
+  startTime: string // e.g. "17:00"
+  endTime: string // e.g. "18:00"
+  authorizedHours: number // Approved duration in hours (e.g. 1.0, 2.5)
+  formNumber?: string // Physical Overtime Form No. (e.g. "OT-2026-0842")
+  purpose: string // e.g. "Urgent machine repair", "Inventory count"
+  status: 'Approved' | 'Pending' | 'Rejected'
+  approvedBy?: string // e.g. "HR Manager", "Dept Head"
+  approvedAt?: string // ISO timestamp
+  remarks?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface PayrollSnapshotRecord {
   id: string // `${periodId}_${bioId}`
   periodId: string // e.g. "2026-06-1"
@@ -251,6 +270,12 @@ export interface PayrollSnapshotRecord {
   presentDays: number
   sundayWorkDays: number
   holidayDays: number
+  workedHolidayDays?: number
+  unworkedHolidayDays?: number
+  specialNonWorkingDays?: number
+  specialWorkingDays?: number
+  overtimeHours?: number
+  overtimePay?: number
   lateMinutes: number
   initialEarnings: number
   sss: number
@@ -289,6 +314,7 @@ export class DMBBHRDatabase extends Dexie {
   manualAttendanceHistory!: Table<ManualAttendanceHistoryRecord, string>
   hrNotices!: Table<HrNoticeRecord, string>
   payrollSnapshots!: Table<PayrollSnapshotRecord, string>
+  overtimeAuthorizations!: Table<OvertimeAuthorizationRecord, string>
 
   constructor() {
     super('DMBBHR_LocalDB')
@@ -317,6 +343,10 @@ export class DMBBHRDatabase extends Dexie {
 
     this.version(8).stores({
       payrollSnapshots: 'id, periodId, bioId, status, batchStatus, [periodId+bioId]'
+    })
+
+    this.version(9).stores({
+      overtimeAuthorizations: 'id, bioId, date, status, formNumber, [bioId+date], [status+date]'
     })
   }
 }
