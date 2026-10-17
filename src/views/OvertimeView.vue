@@ -10,8 +10,6 @@ import {
   Search,
   Filter,
   ShieldAlert,
-  Fingerprint,
-  Users,
   ChevronsUpDown,
   Check
 } from '@lucide/vue'

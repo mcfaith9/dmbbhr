@@ -72,9 +72,10 @@ export const router = createRouter({
         },
         {
           path: 'attendance/manual',
+          alias: ['time-management/manual'],
           name: 'attendance-manual',
           component: ManualTimeView,
-          meta: { title: 'Manual Time', breadcrumb: ['Attendance', 'Manual Time'] }
+          meta: { title: 'Manual Time', breadcrumb: ['Time Management', 'Manual Time'] }
         },
         {
           path: 'employees',

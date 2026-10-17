@@ -70,7 +70,6 @@ const navSections: NavItem[] = [
     children: [
       { title: "Daily Attendance", url: "/attendance/daily", description: "Aggregated daily in/out entries" },
       { title: "Attendance Logs", url: "/attendance/logs", description: "Raw biometric scans & auditable logs" },
-      { title: "Manual Time", url: "/attendance/manual", description: "Attendance adjustments & approval requests" },
     ],
   },
   {
@@ -94,6 +93,7 @@ const navSections: NavItem[] = [
       { title: "Schedules", url: "/schedules", description: "Shift assignments & grace periods" },
       { title: "Leave", url: "/leave", description: "Leave requests and approval" },
       { title: "Overtime", url: "/overtime", description: "OT pre-approvals and calculations" },
+      { title: "Manual Time", url: "/attendance/manual", description: "Attendance adjustments & approval requests" },
       { title: "Holidays", url: "/holidays", description: "Regular and special non-working" },
     ],
   },
@@ -131,12 +131,19 @@ const activeSectionId = ref<string>('attendance')
 
 const activeItem = computed(() => {
   const currentPath = route.path
+  if (
+    currentPath.startsWith('/attendance/manual') ||
+    currentPath.startsWith('/time-management/manual') ||
+    currentPath.startsWith('/schedules') ||
+    currentPath.startsWith('/leave') ||
+    currentPath.startsWith('/overtime') ||
+    currentPath.startsWith('/holidays')
+  ) {
+    return navSections.find(s => s.id === 'time_management')!
+  }
   if (currentPath.startsWith('/attendance')) return navSections.find(s => s.id === 'attendance')!
   if (currentPath.startsWith('/employees')) return navSections.find(s => s.id === 'employees')!
   if (currentPath.startsWith('/devices')) return navSections.find(s => s.id === 'devices')!
-  if (currentPath.startsWith('/schedules') || currentPath.startsWith('/leave') || currentPath.startsWith('/overtime') || currentPath.startsWith('/holidays')) {
-    return navSections.find(s => s.id === 'time_management')!
-  }
   if (currentPath.startsWith('/payroll')) return navSections.find(s => s.id === 'payroll')!
   if (currentPath.startsWith('/reports')) return navSections.find(s => s.id === 'reports')!
   if (currentPath.startsWith('/settings') || currentPath.startsWith('/users')) {
