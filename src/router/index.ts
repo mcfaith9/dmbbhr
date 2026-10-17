@@ -115,7 +115,7 @@ export const router = createRouter({
         },
         {
           path: 'payroll',
-          redirect: '/payroll/periods'
+          redirect: '/payroll/attendance-matrix'
         },
         {
           path: 'payroll/periods',
