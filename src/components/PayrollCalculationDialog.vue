@@ -31,7 +31,6 @@ import {
   Trash2,
   Save,
   RefreshCw,
-  Landmark,
   ShieldCheck,
   User,
   FileText
@@ -289,9 +288,9 @@ function triggerPrint() {
 
 <template>
   <Dialog :open="open" @update:open="(val) => emit('update:open', val)">
-    <DialogContent class="sm:max-w-4xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
+    <DialogContent class="sm:max-w-5xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
       <!-- Modal Top Header -->
-      <DialogHeader class="px-5 pt-4 pb-3 border-b bg-card shrink-0">
+      <DialogHeader class="px-5 pt-4 pb-2 border-b bg-card shrink-0">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <!-- Title & Badges -->
           <div>
@@ -315,14 +314,14 @@ function triggerPrint() {
         </div>
 
         <!-- Designated Payday & Period Banner -->
-        <div v-if="currentCutoff" class="mt-3 flex flex-wrap items-center justify-between gap-2 p-2 rounded-lg bg-muted/40 border text-xs">
+        <div v-if="currentCutoff" class="mt-3 flex flex-wrap items-center justify-between gap-2 p-2 text-xs">
           <!-- Cutoff Period Selector & Quick Actions -->
           <div class="flex min-w-0 items-center gap-2">
             <span class="shrink-0 text-muted-foreground font-medium">
               Cutoff Window:
             </span>
 
-            <div class="min-w-0 flex-1 sm:flex-none sm:w-56">
+            <div class="min-w-0 flex-1 sm:flex-none sm:w-58 !gap-1">
               <Select v-model="selectedCutoffId">
                 <SelectTrigger class="h-8 w-full min-w-0 bg-background text-xs font-semibold">
                   <CalendarDays class="mr-1.5 size-3.5 shrink-0 text-primary" />
@@ -381,7 +380,7 @@ function triggerPrint() {
       </DialogHeader>
 
       <!-- Main Body Container -->
-      <div class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+      <div class="flex-1 overflow-y-auto px-4 py-1 space-y-4">
         <!-- Case 1: No Employee Selected -->
         <div v-if="!selectedEmployee" class="p-8 text-center rounded-xl border border-dashed text-xs text-muted-foreground space-y-2">
           <User class="size-8 text-muted-foreground mx-auto opacity-50" />
@@ -559,9 +558,9 @@ function triggerPrint() {
           </div>
 
           <!-- 2-Column Grid: Stage B & Stage C -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
             <!-- Stage B: Statutory Benefits & Loan Repayments -->
-            <div class="rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
+            <div class="md:col-span-2 rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
               <div>
                 <div class="flex items-center justify-between border-b pb-2">
                   <div class="flex items-center gap-2">
@@ -569,7 +568,7 @@ function triggerPrint() {
                       B
                     </span>
                     <h3 class="text-xs font-bold uppercase tracking-wider text-foreground">
-                      Benefits Contributions & Loans
+                      Contributions & Loans
                     </h3>
                   </div>
                   <div class="text-xs font-mono font-bold text-rose-600 dark:text-rose-400">
@@ -681,7 +680,7 @@ function triggerPrint() {
             </div>
 
             <!-- Stage C: Cash Advance & Other Authorized Deductions -->
-            <div class="rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
+            <div class="md:col-span-3 rounded-xl border bg-card p-4 shadow-2xs space-y-3 flex flex-col justify-between">
               <div>
                 <div class="flex items-center justify-between border-b pb-2">
                   <div class="flex items-center gap-2">
@@ -745,7 +744,7 @@ function triggerPrint() {
 
                   <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <Select v-model="newDeductionCategory">
-                      <SelectTrigger class="h-7 text-xs bg-background">
+                      <SelectTrigger class="!h-7 w-full min-w-0 m-0 p-0 px-2 text-xs bg-background">
                         <SelectValue placeholder="Category" />
                       </SelectTrigger>
                       <SelectContent class="text-xs">
@@ -760,18 +759,18 @@ function triggerPrint() {
                     <Input
                       v-model="newDeductionDescription"
                       placeholder="Description / note..."
-                      class="h-7 text-xs bg-background"
+                      class="h-7 min-w-0 w-full text-xs bg-background"
                     />
 
-                    <div class="flex items-center gap-1.5">
-                      <div class="relative flex-1">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <div class="relative flex-1 min-w-0">
                         <span class="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">₱</span>
                         <Input
                           v-model.number="newDeductionAmount"
                           type="number"
                           step="0.01"
                           placeholder="Amount"
-                          class="h-7 text-xs pl-5 bg-background font-mono"
+                          class="h-7 w-full min-w-0 pl-5 text-xs bg-background font-mono"
                           @keydown.enter="addDeductionItem"
                         />
                       </div>
@@ -783,7 +782,6 @@ function triggerPrint() {
                         @click="addDeductionItem"
                       >
                         <Plus class="size-3.5" />
-                        <span>Add</span>
                       </Button>
                     </div>
                   </div>
@@ -960,7 +958,7 @@ function triggerPrint() {
           <Button
             variant="default"
             size="sm"
-            class="h-8 gap-1.5 text-xs cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+            class="h-8 gap-1.5 text-xs cursor-pointer shadow-xs"
             :disabled="isSaving || !currentRecord"
             @click="saveRecord('finalized')"
           >

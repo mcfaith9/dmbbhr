@@ -488,7 +488,7 @@ onMounted(async () => {
     <div class="rounded-xl border bg-card p-3.5 sm:p-4 shadow-xs space-y-3">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <!-- Single Searchable Employee Selector -->
-        <div class="flex-1 min-w-0 max-w-xl space-y-1.5">
+        <div class="flex-1 min-w-0 max-w-md space-y-1.5">
           <label class="text-xs font-semibold text-foreground flex items-center justify-between">
             <span>Select Employee (Excludes Resigned)</span>
             <span class="text-[11px] text-muted-foreground font-normal">
