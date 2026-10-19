@@ -21,7 +21,7 @@ import { db, type PayrollSnapshotRecord, type ItemizedDeductionRecord, type Holi
 import type { Employee } from '@/types'
 import { getManilaDateString, type DailyAttendanceRecord } from '@/services/attendanceEngine'
 import { attendanceRepository, overtimeRepository } from '@/repositories'
-import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateOvertimeDay } from '@/services/overtimePolicy'
+import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateMultipleOvertimeRecordsForDay } from '@/services/overtimePolicy'
 
 export interface PayrollCutoffPeriod {
   id: string // e.g. "2026-06-1" or "2026-06-2"
@@ -220,7 +220,7 @@ export const payrollCalculationService = {
    *    - Worked (first 8 hours): 200% of daily wage
    * 2. Special Non-Working Day:
    *    - Unworked: 0% ("no work, no pay")
-   *    - Worked (first 8 hours): 130% of daily wage (or 150% if also a rest day)
+   *    - Worked (first 8 hours): 130% of daily wage
    * 3. Special Working Day:
    *    - Worked (first 8 hours): 100% of daily wage (regular rate)
    *    - Unworked: 0%
@@ -229,12 +229,11 @@ export const payrollCalculationService = {
    *    - Payable ONLY when a corresponding physical overtime form has been submitted and approved
    *    - If no approved form: ₱0 overtime
    *    - If approved form exists:
-   *      - Ordinary working day (company policy): one qualifying occurrence pays a flat
-   *        premium of 25% of the daily rate (Daily Rate x 25%), once per occurrence,
-   *        regardless of the approved number of hours
-   *      - Rest day / Special Non-Working: statutory hourly rates (169% / 195% on rest day)
-   *      - Regular Holiday: statutory hourly rates (260% / 338% on rest day)
-   *      - Special Working Day: statutory hourly rate (125%)
+   *      - Ordinary working day: 125% of hourly rate per overtime hour (hourlyRate x 1.25)
+   *      - Special Non-Working Holiday: 169% of ordinary hourly rate (130% holiday rate x 130% OT)
+   *      - Regular Holiday: 260% of ordinary hourly rate (200% holiday rate x 130% OT)
+   *      - Special Working Day: 125% of ordinary hourly rate
+   *    - Rest-day duty calculations are excluded for now as per instructions.
    */
   async computeSingleEmployeePayroll(
     period: PayrollCutoffPeriod,
@@ -570,15 +569,10 @@ export const payrollCalculationService = {
             if (!hasValidOut) {
               attendanceReviewNotes.push(`Duty on ${dStr} (${hol?.name || 'Special Non-Working Day'}) has missing/awaiting OUT punch`)
             }
-            if (isSunday) {
-              // Worked Special Non-Working Day and also a Rest Day: 150% of daily wage
-              // 100% is regular base daily rate (in basePay via payableDays), +50% holiday premium:
-              holidayPay += dailyRate * 0.50
-            } else {
-              // Worked Special Non-Working Day on regular day: 130% of daily wage
-              // 100% is regular base daily rate (in basePay via payableDays), +30% holiday premium:
-              holidayPay += dailyRate * 0.30
-            }
+            // Worked Special Non-Working Day (first 8 hours): 130% of daily wage
+            // 100% is regular base daily rate (in basePay via payableDays), +30% holiday premium:
+            // (Rest-day duty calculations are excluded for now as per instructions).
+            holidayPay += dailyRate * 0.30
           } else {
             // Unworked Special Non-Working Day: "No work, no pay" -> 0%
             // Daily wage worker: ₱0. (Not in payableDays, not in holidayPay).
@@ -598,14 +592,14 @@ export const payrollCalculationService = {
           }
         }
       } else if (isSunday) {
-        // --- B. ORDINARY SUNDAY REST DAY ---
+        // --- B. ORDINARY SUNDAY (Rest-day duty calculations excluded for now) ---
         if (hasWorked) {
           sundayWorkDays++
           if (!hasValidOut) {
             attendanceReviewNotes.push(`Sunday duty on ${dStr} has missing/awaiting OUT punch`)
           }
-          // Sunday duty premium (+30% of daily rate under Philippine Labor Code Article 93)
-          sundayDutyPay += dailyRate * 0.30
+          // Rest-day duty premium is excluded for now as per instructions
+          sundayDutyPay += 0
         }
       } else {
         // --- C. REGULAR WORKING DAY ---
@@ -633,23 +627,22 @@ export const payrollCalculationService = {
       // Rule 1: Attendance after 5:00 PM is attendance data only; does NOT automatically authorize overtime.
       // Rule 2: Overtime is payable ONLY when a corresponding physical overtime form has been submitted and approved.
       // Rule 3: If no approved overtime form exists, overtime earnings must be ₱0, even if checkout is at 5:30 PM, 6:00 PM, or later.
-      // Rule 4: Ordinary working day pays a flat 25%-of-daily-rate premium per qualifying occurrence (company policy).
-      // Rule 5: Rest day / holiday / special day overtime keeps statutory hourly multipliers.
-      const approvedOt = approvedOtMap.get(dStr) || approvedOtMap.get(normalizeDateStr(dStr))
-      if (approvedOt && approvedOt.status === 'Approved') {
-        const evaluation = evaluateOvertimeDay({
+      // Rule 4: Ordinary working day overtime: 125% of hourly rate per overtime hour (hourlyRate x 1.25).
+      // Rule 5: Special Non-Working Holiday overtime: 169% of ordinary hourly rate (130% holiday rate x 130% OT).
+      // Rule 6: Regular Holiday overtime: 260% of ordinary hourly rate (200% holiday rate x 130% OT).
+      // Rule 7: Multi-record support: employee can have multiple authorized records on the same or different dates.
+      const approvedOts = approvedOtMap.get(dStr) || approvedOtMap.get(normalizeDateStr(dStr)) || []
+      if (approvedOts.length > 0) {
+        const evaluation = evaluateMultipleOvertimeRecordsForDay({
           dayClass: classifyOvertimeDay(isSunday, isHoliday ? holType : null),
           dailyRate,
           hourlyRate,
-          authorizedHours: Number(approvedOt.authorizedHours) || 0,
-          authorizationStatus: approvedOt.status,
+          records: approvedOts,
           actualOut,
           expectedOut: att?.expected_out || '17:00',
-          authorizedStart: approvedOt.startTime,
-          authorizedEnd: approvedOt.endTime,
           hasValidOut,
           workedHoursDecimal: Number(att?.total_hours_decimal) || 0,
-          allowOffDayFallback: isSunday || isHoliday
+          allowOffDayFallback: isHoliday
         })
 
         if (evaluation.qualifying) {
