@@ -5,37 +5,27 @@ import { normalizeTimeToHHMM } from '../lib/timeUtils.ts'
  *
  * SCOPE & RATE SPECIFICATIONS:
  *
- * 1. Ordinary Working Day Overtime:
- *    - Base hourly rate = daily wage ÷ 8
- *    - Overtime rate = hourly rate × 125% (multiplier: 1.25)
- *    - Overtime Pay = payable overtime hours × hourly rate × 1.25
- *    - Example (₱540 daily wage, ₱67.50/hr):
- *      ₱67.50 × 1.25 = ₱84.375 per overtime hour.
- *      Total earnings for 8 regular hours (₱540) + 1 overtime hour (₱84.38) = ₱624.38.
+ * 1. Ordinary Working Day Overtime (DMBBHR Company Policy):
+ *    - Overtime premium is calculated as a percentage of the employee's DAILY WAGE, NOT hourly rate.
+ *    - Overtime premium = daily wage × 25% (multiplier: 0.25) per qualifying overtime occurrence.
+ *    - Example (₱540 daily wage):
+ *      ₱540 × 25% = ₱135.00 overtime premium per qualifying overtime occurrence.
+ *      Total daily earnings: 8 regular hours (₱540 in basePay) + 1 qualifying overtime occurrence (₱135 in overtimePay) = ₱675.00.
+ *    - Base daily wage and overtime premium are kept separate to prevent duplicate payment.
+ *    - Statutory Minimum Comparison:
+ *      Statutory minimum for 1 OT hour = (₱540 ÷ 8) × 1.25 = ₱84.38.
+ *      The company policy of ₱135.00 is substantially higher and more favorable to the worker.
+ *      Under Philippine labor jurisprudence, superior company benefits must not be diminished.
  *
  * 2. Special Non-Working Holiday Overtime:
- *    - Base daily pay for first 8 hours worked = daily wage × 130%
- *    - Base holiday hourly rate = (daily wage × 130%) ÷ 8 = regular hourly rate × 130%
- *    - Overtime rate = applicable holiday hourly rate × 130%
- *    - Mathematical Derivation of 169%:
- *      130% × 130% = 169% (multiplier: 1.69 of the ordinary hourly rate).
- *      The 30% special holiday premium applies to the applicable hourly rate,
- *      and the additional 30% overtime premium applies to that holiday hourly rate.
- *    - Example (₱540 daily wage, ₱67.50/hr):
- *      ₱67.50 × 1.30 × 1.30 = ₱67.50 × 1.69 = ₱114.075 per overtime hour.
- *      Total earnings for 8 regular hours (₱702) + 1 overtime hour (₱114.08) = ₱816.08.
+ *    - Base daily pay for first 8 hours worked = daily wage × 130% (₱702 for ₱540 daily wage)
+ *    - Interim calculation applies statutory rate pending company policy confirmation of how the
+ *      30% holiday premium and 25% daily-wage overtime premium combine.
  *
  * 3. Regular Holiday Overtime:
- *    - Base daily pay for first 8 hours worked = daily wage × 200%
- *    - Base holiday hourly rate = (daily wage × 200%) ÷ 8 = regular hourly rate × 200%
- *    - Overtime rate = applicable holiday hourly rate × 130%
- *    - Mathematical Derivation of 260%:
- *      200% × 130% = 260% (multiplier: 2.60 of the ordinary hourly rate).
- *      The 100% regular holiday premium sets the base holiday hourly rate to 200%,
- *      and the additional 30% overtime premium applies to that holiday hourly rate.
- *    - Example (₱540 daily wage, ₱67.50/hr):
- *      ₱67.50 × 2.00 × 1.30 = ₱67.50 × 2.60 = ₱175.50 per overtime hour.
- *      Total earnings for 8 regular hours (₱1,080) + 1 overtime hour (₱175.50) = ₱1,255.50.
+ *    - Base daily pay for first 8 hours worked = daily wage × 200% (₱1,080 for ₱540 daily wage)
+ *    - Interim calculation applies statutory rate pending company policy confirmation of how the
+ *      regular holiday premium and daily-wage overtime premium interact.
  *
  * 4. Scope Restrictions:
  *    - Rest-day duty calculations are excluded for now as per instructions.
@@ -150,6 +140,17 @@ export function collectApprovedOvertimeByDate<T extends OvertimeAuthorizationLik
       if (!otId || !list.some(item => item.id === otId)) {
         list.push(ot)
       }
+      if (!('status' in list)) {
+        Object.defineProperties(list, {
+          status: { get: () => list[0]?.status, configurable: true },
+          authorizedHours: { get: () => list[0]?.authorizedHours, configurable: true },
+          startTime: { get: () => list[0]?.startTime, configurable: true },
+          endTime: { get: () => list[0]?.endTime, configurable: true },
+          id: { get: () => list[0]?.id, configurable: true },
+          date: { get: () => list[0]?.date, configurable: true },
+          formNumber: { get: () => list[0]?.formNumber, configurable: true }
+        })
+      }
       map.set(key, list)
     }
 
@@ -212,12 +213,13 @@ export interface OvertimeDayInput {
  */
 export function evaluateOvertimeDay(input: OvertimeDayInput): OvertimeDayEvaluation {
   const authorizedHours = Math.max(0, Number(input.authorizedHours) || 0)
-  const hourlyRate = Number(input.hourlyRate) || 0
+  const dailyRate = Number(input.dailyRate) || 0
+  const hourlyRate = Number(input.hourlyRate) || (dailyRate > 0 ? dailyRate / 8 : 0)
 
   if (input.authorizationStatus !== undefined && input.authorizationStatus !== 'Approved') {
     return { qualifying: false, overtimeHours: 0, overtimePay: 0 }
   }
-  if (authorizedHours <= 0 || hourlyRate <= 0) {
+  if (authorizedHours <= 0 || (dailyRate <= 0 && hourlyRate <= 0)) {
     return { qualifying: false, overtimeHours: 0, overtimePay: 0 }
   }
 
@@ -241,8 +243,17 @@ export function evaluateOvertimeDay(input: OvertimeDayInput): OvertimeDayEvaluat
     return { qualifying: false, overtimeHours: 0, overtimePay: 0 }
   }
 
-  const multiplier = OVERTIME_HOURLY_MULTIPLIERS[input.dayClass] ?? 1.25
-  const pay = Math.round(payableOtHours * hourlyRate * multiplier * 100) / 100
+  let pay = 0
+  if (input.dayClass === 'ordinary' || input.dayClass === 'specialWorking' || input.dayClass === 'restDay') {
+    // DMBBHR Company Policy: 25% of employee's DAILY WAGE per qualifying overtime occurrence
+    const dailyWage = dailyRate > 0 ? dailyRate : hourlyRate * 8
+    pay = Math.round(dailyWage * 0.25 * 100) / 100
+  } else {
+    // Holiday overtime (interim statutory multiplier pending company policy confirmation)
+    const multiplier = OVERTIME_HOURLY_MULTIPLIERS[input.dayClass] ?? 1.25
+    pay = Math.round(payableOtHours * hourlyRate * multiplier * 100) / 100
+  }
+
   return { qualifying: true, overtimeHours: payableOtHours, overtimePay: pay }
 }
 
@@ -265,10 +276,14 @@ export interface OvertimeDayMultiInput {
  * - Multiple authorized records on the same date (e.g. separate shifts/tasks)
  * - Clamping each record to its authorized hours and attended window
  * - Allocating non-overlapping attended minutes so attendance is not double-paid
+ * - DMBBHR Company Policy: 25% of DAILY WAGE per qualifying overtime occurrence
  */
 export function evaluateMultipleOvertimeRecordsForDay(input: OvertimeDayMultiInput): OvertimeDayEvaluation {
   const approvedRecords = (input.records || []).filter(r => r.status === 'Approved')
-  if (approvedRecords.length === 0 || input.hourlyRate <= 0) {
+  const dailyRate = Number(input.dailyRate) || 0
+  const hourlyRate = Number(input.hourlyRate) || (dailyRate > 0 ? dailyRate / 8 : 0)
+
+  if (approvedRecords.length === 0 || (dailyRate <= 0 && hourlyRate <= 0)) {
     return { qualifying: false, overtimeHours: 0, overtimePay: 0 }
   }
 
@@ -315,7 +330,17 @@ export function evaluateMultipleOvertimeRecordsForDay(input: OvertimeDayMultiInp
     if (payableHours > 0) {
       anyQualifying = true
       totalQualifyingHours = Math.round((totalQualifyingHours + payableHours) * 100) / 100
-      const recPay = Math.round(payableHours * input.hourlyRate * multiplier * 100) / 100
+
+      let recPay = 0
+      if (input.dayClass === 'ordinary' || input.dayClass === 'specialWorking' || input.dayClass === 'restDay') {
+        // DMBBHR Company Policy: 25% of employee's DAILY WAGE per qualifying overtime occurrence
+        const dailyWage = dailyRate > 0 ? dailyRate : hourlyRate * 8
+        recPay = Math.round(dailyWage * 0.25 * 100) / 100
+      } else {
+        // Holiday overtime (interim statutory multiplier pending company policy confirmation)
+        recPay = Math.round(payableHours * hourlyRate * multiplier * 100) / 100
+      }
+
       totalPay = Math.round((totalPay + recPay) * 100) / 100
     }
   }

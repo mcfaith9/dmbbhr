@@ -627,9 +627,9 @@ export const payrollCalculationService = {
       // Rule 1: Attendance after 5:00 PM is attendance data only; does NOT automatically authorize overtime.
       // Rule 2: Overtime is payable ONLY when a corresponding physical overtime form has been submitted and approved.
       // Rule 3: If no approved overtime form exists, overtime earnings must be ₱0, even if checkout is at 5:30 PM, 6:00 PM, or later.
-      // Rule 4: Ordinary working day overtime: 125% of hourly rate per overtime hour (hourlyRate x 1.25).
-      // Rule 5: Special Non-Working Holiday overtime: 169% of ordinary hourly rate (130% holiday rate x 130% OT).
-      // Rule 6: Regular Holiday overtime: 260% of ordinary hourly rate (200% holiday rate x 130% OT).
+      // Rule 4: Ordinary working day overtime: 25% of employee's DAILY WAGE per qualifying overtime occurrence (dailyWage x 0.25). E.g. ₱135 for ₱540 daily rate.
+      // Rule 5: Special Non-Working Holiday overtime: interim statutory rate pending company policy confirmation.
+      // Rule 6: Regular Holiday overtime: interim statutory rate pending company policy confirmation.
       // Rule 7: Multi-record support: employee can have multiple authorized records on the same or different dates.
       const approvedOts = approvedOtMap.get(dStr) || approvedOtMap.get(normalizeDateStr(dStr)) || []
       if (approvedOts.length > 0) {
