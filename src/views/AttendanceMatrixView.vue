@@ -22,6 +22,8 @@ import {
   Info
 } from '@lucide/vue'
 import PayrollCalculationDialog from '@/components/PayrollCalculationDialog.vue'
+import OvertimeDialog from '@/components/OvertimeDialog.vue'
+import ManualTimeDialog from '@/components/ManualTimeDialog.vue'
 import { employeeService } from '@/services/employees'
 import { attendanceService, type DailyAttendanceRecord } from '@/services/attendance'
 import { holidayService } from '@/services/holidays/holidayService'
@@ -63,6 +65,44 @@ const isLoadingAttendance = ref(false)
 
 // Payroll Calculation Modal state
 const showPayrollCalculationModal = ref(false)
+
+// Overtime and Manual Time Dialogs state
+const isOvertimeModalOpen = ref(false)
+const isManualTimeModalOpen = ref(false)
+const modalSelectedDate = ref('')
+const modalSelectedBioId = ref('')
+
+function handleCellClick(cell: DutyCellData) {
+  if (!selectedEmployee.value) return
+
+  modalSelectedDate.value = cell.date
+  modalSelectedBioId.value = selectedEmployee.value.biometric_user_id || selectedBioId.value
+
+  // Decision rule:
+  // Both valid Time In and Time Out exist -> Overtime dialog
+  // Time In is missing OR Time Out is missing -> Manual Time dialog
+  const hasIn = Boolean(cell.timeIn && !cell.timeIn.startsWith('Missing') && cell.timeIn !== '—' && cell.timeIn !== '-')
+  const hasOut = Boolean(cell.timeOut && cell.timeOut !== '—' && cell.timeOut !== '-')
+
+  if (hasIn && hasOut) {
+    isOvertimeModalOpen.value = true
+  } else {
+    isManualTimeModalOpen.value = true
+  }
+}
+
+function getCellTooltip(cell: DutyCellData): string {
+  const hasIn = Boolean(cell.timeIn && !cell.timeIn.startsWith('Missing') && cell.timeIn !== '—' && cell.timeIn !== '-')
+  const hasOut = Boolean(cell.timeOut && cell.timeOut !== '—' && cell.timeOut !== '-')
+  if (hasIn && hasOut) {
+    return `${cell.date} (${cell.dayOfWeek}): Time IN and OUT present. Click to open Overtime Authorization.`
+  }
+  return `${cell.date} (${cell.dayOfWeek}): Missing Time IN or OUT. Click to open Manual Time Adjustment.`
+}
+
+async function onDialogSaved() {
+  await loadEmployeePeriodAttendance()
+}
 
 // Cached attendance records for selected employee across the current period
 const attendanceRecordsMap = ref<Map<string, DailyAttendanceRecord>>(new Map())
@@ -465,7 +505,7 @@ onMounted(async () => {
           </h1>
         </div>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Fifteen-day semi-monthly attendance matrix, shift compliance, and rest day calendar for payroll verification.
+          Fifteen-day semi-monthly attendance matrix, shift compliance, and rest day calendar for payroll verification. Click any cell to record overtime or adjust missing time.
         </p>
       </div>
 
@@ -726,7 +766,9 @@ onMounted(async () => {
             <div
               v-for="cell in dutyCells"
               :key="`cell-${cell.date}`"
-              class="p-2 flex flex-col justify-between transition-colors hover:bg-muted/10 group relative"
+              role="button"
+              tabindex="0"
+              class="p-2 flex flex-col justify-between transition-all cursor-pointer hover:bg-muted/30 hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary select-none group relative"
               :class="[
                 cell.isToday ? 'bg-primary/5' : '',
                 cell.statusCategory === 'present' ? 'bg-emerald-500/[0.03]' : '',
@@ -734,6 +776,10 @@ onMounted(async () => {
                 cell.statusCategory === 'rest_day' ? 'bg-muted/30' : '',
                 cell.statusCategory === 'holiday' ? 'bg-amber-500/[0.04]' : ''
               ]"
+              :title="getCellTooltip(cell)"
+              @click="handleCellClick(cell)"
+              @keydown.enter="handleCellClick(cell)"
+              @keydown.space.prevent="handleCellClick(cell)"
             >
               <!-- Top: Status Indicator Pill -->
               <div class="flex justify-center mb-1.5">
@@ -869,24 +915,29 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- Action: Payroll Calculation Button (Directly below matrix, aligned to the left side) -->
-      <div class="flex flex-wrap items-center justify-start gap-3 pt-1">
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          class="h-8 gap-2 text-xs font-semibold shadow-xs cursor-pointer"
-          :disabled="!selectedEmployee"
-          :title="!selectedEmployee ? 'Please select an employee first' : `Calculate payroll for ${selectedEmployee.full_name}`"
-          @click="showPayrollCalculationModal = true"
-        >
-          <Calculator class="size-3.5" />
-          <span>Payroll Calculation</span>
-        </Button>
-        <span v-if="!selectedEmployee" class="text-xs text-muted-foreground italic flex items-center gap-1.5">
-          <Info class="size-3 text-muted-foreground/70" />
-          <span>Select an employee above to calculate semi-monthly payroll.</span>
-        </span>
+      <!-- Helper Note for Clickable Cells & Action Buttons -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t">
+        <div class="flex items-center gap-2 text-xs text-muted-foreground">
+          <Info class="size-3.5 text-primary shrink-0" />
+          <span>
+            Click any cell above to open <strong>Overtime</strong> (if Time IN &amp; OUT exist) or <strong>Manual Time</strong> (if missing IN or OUT).
+          </span>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            class="h-8 gap-2 text-xs font-semibold shadow-xs cursor-pointer"
+            :disabled="!selectedEmployee"
+            :title="!selectedEmployee ? 'Please select an employee first' : `Calculate payroll for ${selectedEmployee.full_name}`"
+            @click="showPayrollCalculationModal = true"
+          >
+            <Calculator class="size-3.5" />
+            <span>Payroll Calculation</span>
+          </Button>
+        </div>
       </div>
     </div>
 
@@ -981,6 +1032,24 @@ onMounted(async () => {
       :period-anchor-date="periodAnchorDate"
       :attendance-records="Array.from(attendanceRecordsMap.values())"
       :holidays-list="Array.from(holidaysMap.entries()).map(([date, h]) => ({ id: `hol-${date}`, name: h.name, date, type: h.type as any, isNationwide: true }))"
+    />
+
+    <!-- Overtime Authorization Dialog Component -->
+    <OvertimeDialog
+      v-model:open="isOvertimeModalOpen"
+      :initial-employee-id="modalSelectedBioId"
+      :initial-date="modalSelectedDate"
+      :employees="employees"
+      @saved="onDialogSaved"
+    />
+
+    <!-- Manual Time Adjustment Dialog Component -->
+    <ManualTimeDialog
+      v-model:open="isManualTimeModalOpen"
+      :initial-employee-id="modalSelectedBioId"
+      :initial-date="modalSelectedDate"
+      :employees="employees"
+      @saved="onDialogSaved"
     />
   </div>
 </template>
