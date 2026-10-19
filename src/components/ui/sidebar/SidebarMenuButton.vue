@@ -37,7 +37,7 @@ const delegatedProps = reactiveOmit(props, "tooltip")
     <TooltipContent
       side="right"
       align="center"
-      :hidden="state !== 'collapsed' || isMobile"
+      :hidden="isMobile"
     >
       <template v-if="typeof tooltip === 'string'">
         {{ tooltip }}
