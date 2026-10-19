@@ -1,4 +1,5 @@
 import { db, type OvertimeAuthorizationRecord } from '@/db'
+import { collectEmployeeIdKeys, recordMatchesEmployee } from '@/lib/employeeIdentity'
 import { normalizeDateString } from '@/services/overtimePolicy'
 
 export const overtimeRepository = {
@@ -97,6 +98,31 @@ export const overtimeRepository = {
       map.set(cleanKey, r)
     }
     return map
+  },
+
+  /**
+   * Retrieves all overtime records for an employee on a specific date (any status).
+   * Does not assume a single overtime record per day.
+   */
+  async getForEmployeeAndDate(
+    bioIdOrIds: string | string[] | Set<string> | Record<string, unknown>,
+    date: string
+  ): Promise<OvertimeAuthorizationRecord[]> {
+    const keys = collectEmployeeIdKeys(bioIdOrIds)
+    const cleanDate = normalizeDateString(date) || String(date || '').trim()
+    if (!cleanDate || keys.size === 0) return []
+
+    const all = await db.overtimeAuthorizations.toArray()
+    const list = all.filter(r => {
+      const rDate = normalizeDateString(r.date) || String(r.date || '').trim()
+      return rDate === cleanDate && recordMatchesEmployee(r.bioId, keys)
+    })
+
+    return list.sort((a, b) => {
+      const startDiff = String(a.startTime || '').localeCompare(String(b.startTime || ''))
+      if (startDiff !== 0) return startDiff
+      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+    })
   },
 
   /**

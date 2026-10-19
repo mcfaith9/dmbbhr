@@ -27,7 +27,18 @@ import ManualTimeDialog from '@/components/ManualTimeDialog.vue'
 import { employeeService } from '@/services/employees'
 import { attendanceService, type DailyAttendanceRecord } from '@/services/attendance'
 import { holidayService } from '@/services/holidays/holidayService'
+import { overtimeRepository } from '@/repositories/overtimeRepository'
+import { collectEmployeeIdKeys } from '@/lib/employeeIdentity'
+import type { ManualAttendanceRecord, OvertimeAuthorizationRecord } from '@/db'
 import type { Employee, WorkGroup } from '@/types'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -69,18 +80,20 @@ const showPayrollCalculationModal = ref(false)
 // Overtime and Manual Time Dialogs state
 const isOvertimeModalOpen = ref(false)
 const isManualTimeModalOpen = ref(false)
+const isOvertimePickerOpen = ref(false)
 const modalSelectedDate = ref('')
 const modalSelectedBioId = ref('')
+const editingManualRecord = ref<ManualAttendanceRecord | null>(null)
+const editingOvertimeRecord = ref<OvertimeAuthorizationRecord | null>(null)
+const overtimeChoices = ref<OvertimeAuthorizationRecord[]>([])
 
-function handleCellClick(cell: DutyCellData) {
-  if (!selectedEmployee.value) return
+function resetDialogRecords() {
+  editingManualRecord.value = null
+  editingOvertimeRecord.value = null
+  overtimeChoices.value = []
+}
 
-  modalSelectedDate.value = cell.date
-  modalSelectedBioId.value = selectedEmployee.value.biometric_user_id || selectedBioId.value
-
-  // Decision rule:
-  // Both valid Time In and Time Out exist -> Overtime dialog
-  // Time In is missing OR Time Out is missing -> Manual Time dialog
+function openCreateDialogForCell(cell: DutyCellData) {
   const hasIn = Boolean(cell.timeIn && !cell.timeIn.startsWith('Missing') && cell.timeIn !== '—' && cell.timeIn !== '-')
   const hasOut = Boolean(cell.timeOut && cell.timeOut !== '—' && cell.timeOut !== '-')
 
@@ -89,6 +102,57 @@ function handleCellClick(cell: DutyCellData) {
   } else {
     isManualTimeModalOpen.value = true
   }
+}
+
+async function handleCellClick(cell: DutyCellData) {
+  if (!selectedEmployee.value) return
+
+  modalSelectedDate.value = cell.date
+  modalSelectedBioId.value = selectedEmployee.value.biometric_user_id || selectedEmployee.value.employee_number || selectedBioId.value
+  resetDialogRecords()
+
+  try {
+    const employeeKeys = collectEmployeeIdKeys(selectedEmployee.value, modalSelectedBioId.value)
+
+    const existingManual = await attendanceService.getManualTimeForEmployeeAndDate(
+      employeeKeys,
+      cell.date
+    )
+    if (existingManual) {
+      editingManualRecord.value = existingManual
+      isManualTimeModalOpen.value = true
+      return
+    }
+
+    const existingOvertime = await overtimeRepository.getForEmployeeAndDate(
+      employeeKeys,
+      cell.date
+    )
+    if (existingOvertime.length === 1) {
+      editingOvertimeRecord.value = existingOvertime[0]
+      isOvertimeModalOpen.value = true
+      return
+    }
+    if (existingOvertime.length > 1) {
+      overtimeChoices.value = existingOvertime
+      isOvertimePickerOpen.value = true
+      return
+    }
+  } catch (err) {
+    console.error('Failed to look up existing Manual Time or Overtime records:', err)
+  }
+
+  openCreateDialogForCell(cell)
+}
+
+function selectOvertimeChoice(record: OvertimeAuthorizationRecord) {
+  if (!record?.id) {
+    console.error('Cannot edit overtime: the selected record is missing its ID.')
+    return
+  }
+  editingOvertimeRecord.value = record
+  isOvertimePickerOpen.value = false
+  isOvertimeModalOpen.value = true
 }
 
 function getCellTooltip(cell: DutyCellData): string {
@@ -768,7 +832,7 @@ onMounted(async () => {
               :key="`cell-${cell.date}`"
               role="button"
               tabindex="0"
-              class="p-2 flex flex-col justify-between transition-all cursor-pointer hover:bg-muted/30 hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary select-none group relative"
+              class="group relative isolate flex flex-col justify-between p-2 min-w-0 cursor-pointer select-none"
               :class="[
                 cell.isToday ? 'bg-primary/5' : '',
                 cell.statusCategory === 'present' ? 'bg-emerald-500/[0.03]' : '',
@@ -781,6 +845,10 @@ onMounted(async () => {
               @keydown.enter="handleCellClick(cell)"
               @keydown.space.prevent="handleCellClick(cell)"
             >
+              <span
+                class="pointer-events-none absolute inset-0 -z-10 bg-transparent transition-colors duration-150 group-hover:bg-[#171717]/[0.08] group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring"
+                aria-hidden="true"
+              ></span>
               <!-- Top: Status Indicator Pill -->
               <div class="flex justify-center mb-1.5">
                 <Badge
@@ -1039,6 +1107,7 @@ onMounted(async () => {
       v-model:open="isOvertimeModalOpen"
       :initial-employee-id="modalSelectedBioId"
       :initial-date="modalSelectedDate"
+      :editing-record="editingOvertimeRecord"
       :employees="employees"
       @saved="onDialogSaved"
     />
@@ -1048,8 +1117,54 @@ onMounted(async () => {
       v-model:open="isManualTimeModalOpen"
       :initial-employee-id="modalSelectedBioId"
       :initial-date="modalSelectedDate"
+      :editing-record="editingManualRecord"
       :employees="employees"
       @saved="onDialogSaved"
     />
+
+    <!-- Multiple overtime records on the same date -->
+    <Dialog v-model:open="isOvertimePickerOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="text-base">Select Overtime Record</DialogTitle>
+          <DialogDescription class="text-xs">
+            This employee has more than one overtime record on {{ modalSelectedDate }}. Choose which record to edit.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-1.5 py-1">
+          <button
+            v-for="record in overtimeChoices"
+            :key="record.id"
+            type="button"
+            class="flex w-full flex-col gap-0.5 rounded-md border bg-card px-3 py-2.5 text-left text-xs transition-colors hover:bg-muted cursor-pointer"
+            @click="selectOvertimeChoice(record)"
+          >
+            <span class="font-semibold text-foreground">
+              {{ record.startTime || '—' }} → {{ record.endTime || '—' }}
+              <span class="font-mono font-normal text-muted-foreground">
+                ({{ Number(record.authorizedHours) || 0 }} hrs)
+              </span>
+            </span>
+            <span class="text-[11px] text-muted-foreground">
+              {{ record.status || 'Pending' }}
+              <template v-if="record.formNumber"> · {{ record.formNumber }}</template>
+              <template v-if="record.purpose"> · {{ record.purpose }}</template>
+            </span>
+          </button>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs cursor-pointer"
+            @click="isOvertimePickerOpen = false"
+          >
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

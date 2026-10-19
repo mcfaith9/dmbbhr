@@ -63,7 +63,7 @@ const isOpen = computed({
   set: (val: boolean) => emit('update:open', val)
 })
 
-const isEditing = computed(() => Boolean(props.editingRecord && props.editingRecord.id))
+const isEditing = computed(() => props.editingRecord != null)
 const localEmployees = ref<Employee[]>([])
 
 const formNumber = ref('')
@@ -160,6 +160,9 @@ function onEndTimeChange() {
 function initializeForm() {
   saveError.value = ''
   if (props.editingRecord) {
+    if (!props.editingRecord.id) {
+      saveError.value = 'Cannot update overtime: the selected record is missing its ID.'
+    }
     const rec = props.editingRecord
     formNumber.value = rec.formNumber || ''
     selectedBioId.value = rec.bioId
@@ -222,8 +225,12 @@ async function handleSaveAuthorization() {
     const dept = selectedEmp?.department || 'Operations'
     const targetDate = otDate.value.trim()
 
-    if (isEditing.value && props.editingRecord) {
+    if (isEditing.value) {
       const existing = props.editingRecord
+      if (!existing?.id) {
+        saveError.value = 'Cannot update overtime: the selected record is missing its ID.'
+        return
+      }
       const record: OvertimeAuthorizationRecord = {
         id: existing.id,
         bioId: selectedBioId.value,

@@ -5,6 +5,7 @@ import { attendanceService } from '@/services/attendance'
 import { authService } from '@/services/auth'
 import { employeeService } from '@/services/employees'
 import { getManilaDateString } from '@/services/attendanceEngine'
+import type { ManualAttendanceRecord } from '@/db'
 import type { Employee } from '@/types'
 import { Button } from '@/components/ui/button'
 import { DatePicker } from '@/components/ui/date-picker'
@@ -37,12 +38,14 @@ interface Props {
   open: boolean
   initialEmployeeId?: string
   initialDate?: string
+  editingRecord?: ManualAttendanceRecord | null
   employees?: Employee[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
   initialEmployeeId: '',
   initialDate: '',
+  editingRecord: null,
   employees: () => []
 })
 
@@ -71,6 +74,7 @@ const errorMsg = ref('')
 const successMsg = ref('')
 
 const currentUser = authService.currentUser
+const isEditing = computed(() => props.editingRecord != null)
 
 async function loadEmployeesIfNeeded() {
   if (props.employees && props.employees.length > 0) {
@@ -129,6 +133,23 @@ function initializeForm() {
   origOut.value = '—'
   schedule.value = ''
 
+  if (isEditing.value) {
+    const rec = props.editingRecord
+    if (!rec?.id) {
+      errorMsg.value = 'Cannot edit manual time: the selected record is missing its ID.'
+      return
+    }
+    employeeId.value = String(rec.bioId)
+    attendanceDate.value = rec.date
+    origIn.value = rec.originalIn || '—'
+    origOut.value = rec.originalOut || '—'
+    schedule.value = rec.scheduleContext || ''
+    adjustmentIn.value = normalizeTimeToHHMM(rec.manualIn) || ''
+    adjustmentOut.value = normalizeTimeToHHMM(rec.manualOut) || ''
+    adjustmentNotes.value = rec.notes || rec.reason || ''
+    return
+  }
+
   attendanceDate.value = props.initialDate || getManilaDateString(new Date())
 
   if (props.initialEmployeeId) {
@@ -154,7 +175,7 @@ watch(
 )
 
 watch(
-  () => [props.initialEmployeeId, props.initialDate],
+  () => [props.editingRecord, props.initialEmployeeId, props.initialDate],
   () => {
     if (props.open) {
       initializeForm()
@@ -165,7 +186,7 @@ watch(
 watch(
   () => [employeeId.value, attendanceDate.value],
   () => {
-    if (props.open) {
+    if (props.open && !isEditing.value) {
       fetchOriginalAttendance()
     }
   }
@@ -216,6 +237,7 @@ const canSubmit = computed(() => {
   if (!employeeId.value || !attendanceDate.value) return false
   if (hasInvalidTime.value) return false
   if (!adjustmentIn.value.trim() && !adjustmentOut.value.trim()) return false
+  if (isEditing.value) return true
   return hasChange.value
 })
 
@@ -251,7 +273,7 @@ async function submitAdjustment() {
   const inChanged = inVal ? hasTimeChanged(origIn.value, inVal) : false
   const outChanged = outVal ? hasTimeChanged(origOut.value, outVal) : false
 
-  if (!inChanged && !outChanged) {
+  if (!isEditing.value && !inChanged && !outChanged) {
     errorMsg.value = 'No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.'
     return
   }
@@ -264,8 +286,7 @@ async function submitAdjustment() {
 
     const formattedIn = inVal ? formatHHMMTo12Hour(inVal) : undefined
     const formattedOut = outVal ? formatHHMMTo12Hour(outVal) : undefined
-
-    await attendanceService.submitManualTimeRequest({
+    const payload = {
       bioId: employeeId.value,
       employeeName: empName,
       date: attendanceDate.value,
@@ -276,9 +297,20 @@ async function submitAdjustment() {
       manualOut: formattedOut,
       notes: adjustmentNotes.value.trim() || 'Manual attendance adjustment request',
       requestedBy: requesterName
-    })
+    }
 
-    successMsg.value = 'Manual adjustment request submitted successfully.'
+    if (isEditing.value) {
+      if (!props.editingRecord?.id) {
+        errorMsg.value = 'Cannot update manual time: the selected record is missing its ID.'
+        return
+      }
+      await attendanceService.updateManualTimeRequest(props.editingRecord.id, payload)
+      successMsg.value = 'Manual adjustment updated successfully.'
+    } else {
+      await attendanceService.submitManualTimeRequest(payload)
+      successMsg.value = 'Manual adjustment request submitted successfully.'
+    }
+
     emit('saved')
     setTimeout(() => {
       isOpen.value = false
@@ -301,10 +333,10 @@ function handleClose() {
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2 font-bold text-base">
           <Clock class="size-5 text-primary" />
-          <span>Create Manual Time Adjustment</span>
+          <span>{{ isEditing ? 'Edit Manual Time Adjustment' : 'Create Manual Time Adjustment' }}</span>
         </DialogTitle>
         <DialogDescription class="text-xs">
-          Submit an attendance time adjustment request for HR/Admin approval.
+          {{ isEditing ? 'Update the existing attendance time adjustment. The original record ID is preserved.' : 'Submit an attendance time adjustment request for HR/Admin approval.' }}
         </DialogDescription>
       </DialogHeader>
 
@@ -314,7 +346,7 @@ function handleClose() {
           <label class="font-semibold text-foreground text-xs block">
             Select Employee
           </label>
-          <Select v-model="employeeId">
+          <Select v-model="employeeId" :disabled="isEditing">
             <SelectTrigger class="h-8 text-xs w-full bg-background">
               <SelectValue placeholder="Choose an employee..." />
             </SelectTrigger>
@@ -337,7 +369,7 @@ function handleClose() {
           <label class="font-semibold text-foreground text-xs block">
             Attendance Date
           </label>
-          <DatePicker v-model="attendanceDate" class="w-full text-xs h-8" />
+          <DatePicker v-model="attendanceDate" class="w-full text-xs h-8" :disabled="isEditing" />
         </div>
 
         <!-- Original Attendance Display Context -->
@@ -455,12 +487,12 @@ function handleClose() {
         </div>
 
         <!-- Unchanged Notice if both valid but no change -->
-        <div
-          v-if="!hasChange && (adjustmentIn || adjustmentOut) && !hasInvalidTime"
+        <!-- <div
+          v-if="!isEditing && !hasChange && (adjustmentIn || adjustmentOut) && !hasInvalidTime"
           class="p-2.5 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-1.5"
         >
           <span>No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.</span>
-        </div>
+        </div> -->
 
         <!-- Reason / Notes -->
         <div class="space-y-1.5">
@@ -494,7 +526,7 @@ function handleClose() {
           @click="submitAdjustment"
         >
           <Send class="size-3.5" />
-          <span>{{ isSubmitting ? 'Submitting...' : 'Submit Adjustment' }}</span>
+          <span>{{ isSubmitting ? 'Saving...' : (isEditing ? 'Update Adjustment' : 'Submit Adjustment') }}</span>
         </Button>
       </DialogFooter>
     </DialogContent>

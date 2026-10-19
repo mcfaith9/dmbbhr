@@ -1,4 +1,6 @@
 import { db, type ManualAttendanceRecord, type ManualAttendanceHistoryRecord } from '@/db'
+import { collectEmployeeIdKeys, recordMatchesEmployee } from '@/lib/employeeIdentity'
+import { normalizeDateString } from '@/services/overtimePolicy'
 
 export const manualAttendanceRepository = {
   /**
@@ -7,6 +9,30 @@ export const manualAttendanceRepository = {
   async getAdjustment(bioId: string, date: string): Promise<ManualAttendanceRecord | undefined> {
     const id = `${bioId}_${date}`
     return db.manualAdjustments.get(id)
+  },
+
+  /**
+   * Finds the existing manual time record for an employee and date.
+   * Manual Time is stored with id `${bioId}_${date}` (one record per employee per day).
+   */
+  async getForEmployeeAndDate(
+    bioIdOrIds: string | string[] | Set<string> | Record<string, unknown>,
+    date: string
+  ): Promise<ManualAttendanceRecord | undefined> {
+    const keys = collectEmployeeIdKeys(bioIdOrIds)
+    const cleanDate = normalizeDateString(date) || String(date || '').trim()
+    if (!cleanDate || keys.size === 0) return undefined
+
+    for (const key of keys) {
+      const byId = await db.manualAdjustments.get(`${key}_${cleanDate}`)
+      if (byId) return byId
+    }
+
+    const all = await db.manualAdjustments.toArray()
+    return all.find(r => {
+      const rDate = normalizeDateString(r.date) || String(r.date || '').trim()
+      return rDate === cleanDate && recordMatchesEmployee(r.bioId, keys)
+    })
   },
 
   /**
@@ -82,6 +108,58 @@ export const manualAttendanceRepository = {
       requestedBy: data.requestedBy || 'Admin',
       requestedAt: now,
       createdAt: existing?.createdAt || now,
+      updatedAt: now
+    }
+
+    await db.manualAdjustments.put(record)
+    return record
+  },
+
+  /**
+   * Updates an existing manual time record in place. Requires the original ID.
+   * Does not insert a new record or change employee/date identity.
+   */
+  async updateRequest(
+    id: string,
+    data: {
+      employeeName?: string
+      scheduleContext?: string
+      originalIn?: string
+      originalOut?: string
+      manualIn?: string
+      manualOut?: string
+      reason?: string
+      notes?: string
+    }
+  ): Promise<ManualAttendanceRecord> {
+    const cleanId = String(id || '').trim()
+    if (!cleanId) {
+      throw new Error('Cannot update manual time: the selected record is missing its ID.')
+    }
+
+    const existing = await db.manualAdjustments.get(cleanId)
+    if (!existing) {
+      throw new Error('Cannot update manual time: the selected record was not found.')
+    }
+
+    const now = new Date().toISOString()
+    const record: ManualAttendanceRecord = {
+      ...existing,
+      id: existing.id,
+      bioId: existing.bioId,
+      date: existing.date,
+      employeeName: data.employeeName || existing.employeeName,
+      scheduleContext: data.scheduleContext ?? existing.scheduleContext,
+      originalIn: data.originalIn ?? existing.originalIn,
+      originalOut: data.originalOut ?? existing.originalOut,
+      manualIn: Object.prototype.hasOwnProperty.call(data, 'manualIn')
+        ? (data.manualIn ? data.manualIn.trim() : undefined)
+        : existing.manualIn,
+      manualOut: Object.prototype.hasOwnProperty.call(data, 'manualOut')
+        ? (data.manualOut ? data.manualOut.trim() : undefined)
+        : existing.manualOut,
+      reason: (data.notes || data.reason || existing.reason || 'Manual attendance adjustment request').trim(),
+      notes: (data.notes ?? existing.notes ?? '').trim(),
       updatedAt: now
     }
 

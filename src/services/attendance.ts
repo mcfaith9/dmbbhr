@@ -86,6 +86,29 @@ export const attendanceService = {
     return manualAttendanceRepository.submitRequest(data)
   },
 
+  async getManualTimeForEmployeeAndDate(
+    bioIdOrIds: string | string[] | Set<string> | Record<string, unknown>,
+    date: string
+  ) {
+    return manualAttendanceRepository.getForEmployeeAndDate(bioIdOrIds, date)
+  },
+
+  async updateManualTimeRequest(
+    id: string,
+    data: {
+      employeeName?: string
+      scheduleContext?: string
+      originalIn?: string
+      originalOut?: string
+      manualIn?: string
+      manualOut?: string
+      reason?: string
+      notes?: string
+    }
+  ) {
+    return manualAttendanceRepository.updateRequest(id, data)
+  },
+
   /**
    * Retrieves all manual time requests (with optional status filter: 'all', 'Pending', 'Approved', 'Rejected')
    */
