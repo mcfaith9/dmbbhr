@@ -209,8 +209,8 @@ async function returnForCorrection(snap: any) {
 </script>
 
 <style scoped>
-.btn { @apply bg-gray-100 border rounded px-2 py-1 text-sm }
+.btn { @apply bg-muted border border-input rounded px-2 py-1 text-sm }
 .btn-primary { @apply bg-primary text-white }
-.btn-warning { @apply bg-yellow-400 text-black }
+.btn-warning { @apply bg-amber-400 text-black }
 .btn-sm { @apply px-2 py-0.5 text-xs }
 </style>
