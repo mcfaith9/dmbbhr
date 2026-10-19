@@ -105,6 +105,7 @@ const navSections: NavItem[] = [
     icon: PhilippinePeso,
     children: [
       { title: "Attendance Matrix", url: "/payroll/attendance-matrix", description: "15-day employee attendance matrix and schedule" },
+      { title: "Payroll Approval", url: "/payroll/approval", description: "Review finalized payroll snapshots before approval" },
       { title: "Payroll Periods", url: "/payroll/periods", description: "Cut-offs and batch generation" },
       { title: "Payroll Records", url: "/payroll/records", description: "Audited payroll sheets" },
     ],
