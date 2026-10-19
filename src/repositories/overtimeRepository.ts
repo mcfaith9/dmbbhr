@@ -1,4 +1,5 @@
 import { db, type OvertimeAuthorizationRecord } from '@/db'
+import { normalizeDateString } from '@/services/overtimePolicy'
 
 export const overtimeRepository = {
   /**
@@ -11,29 +12,51 @@ export const overtimeRepository = {
   /**
    * Retrieves approved overtime authorization for a specific employee and date.
    * Strictly returns undefined if status is NOT 'Approved'.
+   * Matches case-insensitively and normalizes dates.
    */
   async getApprovedOvertime(bioId: string, date: string): Promise<OvertimeAuthorizationRecord | undefined> {
-    const records = await db.overtimeAuthorizations
-      .where('[bioId+date]')
-      .equals([bioId, date])
-      .toArray()
-    return records.find(r => r.status === 'Approved')
+    const cleanBio = String(bioId || '').trim().toLowerCase()
+    const cleanDate = normalizeDateString(date) || String(date || '').trim()
+    const all = await db.overtimeAuthorizations.toArray()
+    return all.find(r => {
+      const rBio = String(r.bioId || '').trim().toLowerCase()
+      const rDate = normalizeDateString(r.date) || String(r.date || '').trim()
+      return rBio === cleanBio && rDate === cleanDate && r.status === 'Approved'
+    })
   },
 
   /**
-   * Retrieves all approved overtime authorizations for an employee within a date range
+   * Retrieves all approved overtime authorizations for an employee within a date range.
+   * Supports single bioId, array of IDs, or Set of targetIds (biometric_user_id, employee_number, id).
+   * Supports historical dates, current date, and future dates within the window.
    */
   async getApprovedOvertimeForEmployeeAndPeriod(
-    bioId: string,
+    bioIdOrIds: string | string[] | Set<string>,
     startDate: string,
     endDate: string
   ): Promise<OvertimeAuthorizationRecord[]> {
-    const list = await db.overtimeAuthorizations
-      .where('bioId')
-      .equals(bioId)
-      .filter(r => r.status === 'Approved' && r.date >= startDate && r.date <= endDate)
-      .toArray()
-    return list.sort((a, b) => a.date.localeCompare(b.date))
+    const ids = Array.isArray(bioIdOrIds)
+      ? new Set(bioIdOrIds.map(s => String(s).trim().toLowerCase()))
+      : bioIdOrIds instanceof Set
+      ? new Set(Array.from(bioIdOrIds).map(s => String(s).trim().toLowerCase()))
+      : new Set([String(bioIdOrIds).trim().toLowerCase()])
+
+    const cleanStart = normalizeDateString(startDate) || startDate
+    const cleanEnd = normalizeDateString(endDate) || endDate
+
+    const all = await db.overtimeAuthorizations.toArray()
+    const list = all.filter(r => {
+      if (r.status !== 'Approved') return false
+      const rBio = String(r.bioId || '').trim().toLowerCase()
+      if (!ids.has(rBio)) return false
+      const d = normalizeDateString(r.date) || String(r.date || '').trim()
+      return d >= cleanStart && d <= cleanEnd
+    })
+    return list.sort((a, b) => {
+      const da = normalizeDateString(a.date) || a.date
+      const dbDate = normalizeDateString(b.date) || b.date
+      return da.localeCompare(dbDate)
+    })
   },
 
   /**
@@ -41,21 +64,27 @@ export const overtimeRepository = {
    * Key: `${bioId.toLowerCase()}_${date}`
    */
   async getApprovedOvertimeMapForDates(dates: string[]): Promise<Map<string, OvertimeAuthorizationRecord>> {
-    const dateSet = new Set(dates)
+    const dateSet = new Set(dates.map(d => normalizeDateString(d) || d))
     const records = await db.overtimeAuthorizations
-      .filter(r => r.status === 'Approved' && dateSet.has(r.date))
+      .filter(r => {
+        if (r.status !== 'Approved') return false
+        const d = normalizeDateString(r.date) || r.date
+        return dateSet.has(d)
+      })
       .toArray()
 
     const map = new Map<string, OvertimeAuthorizationRecord>()
     for (const r of records) {
-      const key = `${r.bioId.trim().toLowerCase()}_${r.date}`
+      const d = normalizeDateString(r.date) || r.date
+      const key = `${String(r.bioId).trim().toLowerCase()}_${d}`
       map.set(key, r)
     }
     return map
   },
 
   /**
-   * Retrieves all overtime authorization records with optional filtering
+   * Retrieves all overtime authorization records with optional filtering.
+   * Sorted by OT date descending, then createdAt descending.
    */
   async getAll(statusFilter: string = 'all'): Promise<OvertimeAuthorizationRecord[]> {
     let list: OvertimeAuthorizationRecord[] = []
@@ -64,19 +93,27 @@ export const overtimeRepository = {
     } else {
       list = await db.overtimeAuthorizations.toArray()
     }
-    return list.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime())
+    return list.sort((a, b) => {
+      const da = normalizeDateString(a.date) || a.date
+      const dbDate = normalizeDateString(b.date) || b.date
+      const dateDiff = dbDate.localeCompare(da)
+      if (dateDiff !== 0) return dateDiff
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    })
   },
 
   /**
-   * Saves or updates an overtime authorization record
+   * Saves or updates an overtime authorization record.
+   * Preserves existing id and createdAt if updating.
    */
   async saveAuthorization(record: OvertimeAuthorizationRecord): Promise<void> {
     const now = new Date().toISOString()
+    const normalizedDate = normalizeDateString(record.date) || String(record.date || '').trim()
     const cleanRecord: OvertimeAuthorizationRecord = {
       ...record,
       id: record.id || `ot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      bioId: String(record.bioId).trim(),
-      date: record.date.trim(),
+      bioId: String(record.bioId || '').trim(),
+      date: normalizedDate,
       status: record.status || 'Pending',
       authorizedHours: Number(record.authorizedHours) || 0,
       createdAt: record.createdAt || now,

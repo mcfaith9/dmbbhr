@@ -299,7 +299,7 @@ export const payrollCalculationService = {
     if (!overtimeAuthorizations || overtimeAuthorizations.length === 0) {
       try {
         overtimeAuthorizations = await overtimeRepository.getApprovedOvertimeForEmployeeAndPeriod(
-          bioId,
+          targetIds.size > 0 ? targetIds : bioId,
           period.startDate,
           period.endDate
         )
@@ -846,7 +846,11 @@ export const payrollCalculationService = {
       })
       const empOt = allApprovedOt.filter(ot => {
         const otBio = String(ot.bioId).trim().toLowerCase()
-        return otBio === bioId || otBio === String(emp.employee_number || '').trim().toLowerCase()
+        return (
+          otBio === bioId ||
+          otBio === String(emp.employee_number || '').trim().toLowerCase() ||
+          otBio === String(emp.id || '').trim().toLowerCase()
+        )
       })
       const record = await this.computeSingleEmployeePayroll(period, emp, holidays, empAttendance, empOt)
       payrollRecords.push(record)

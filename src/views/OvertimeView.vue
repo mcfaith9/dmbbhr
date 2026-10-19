@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import {
   FileText,
   Plus,
+  Pencil,
   CheckCircle,
   XCircle,
   Clock,
@@ -31,7 +32,6 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-  DialogTrigger,
   DialogClose
 } from '@/components/ui/dialog'
 import {
@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/popover'
 import { overtimeRepository } from '@/repositories/overtimeRepository'
 import { employeeRepository } from '@/repositories/employeeRepository'
+import { getManilaDateString } from '@/services/attendanceEngine'
 import type { OvertimeAuthorizationRecord } from '@/db'
 import type { Employee } from '@/types'
 
@@ -59,8 +60,11 @@ const isLoading = ref(true)
 const searchQuery = ref('')
 const statusFilter = ref<'all' | 'Approved' | 'Pending' | 'Rejected'>('all')
 
-// Dialog state
+// Dialog & Edit state
 const isDialogOpen = ref(false)
+const isEditing = ref(false)
+const editingRecordId = ref<string | null>(null)
+
 const formNumber = ref('')
 const selectedBioId = ref('')
 const isEmployeeSelectorOpen = ref(false)
@@ -101,7 +105,7 @@ function selectEmployee(employeeId: string | number) {
   employeeSearchQuery.value = ''
 }
 
-const otDate = ref(new Date().toISOString().slice(0, 10))
+const otDate = ref(getManilaDateString(new Date()))
 const startTime = ref('17:00')
 const endTime = ref('18:00')
 const authorizedHours = ref<number>(1.0)
@@ -119,31 +123,6 @@ async function loadData() {
     ])
     overtimeList.value = ots
     employees.value = emps
-
-    // Seed initial realistic approved physical overtime form if database is empty
-    if (ots.length === 0 && emps.length > 0) {
-      const sampleEmp = emps.find((e: Employee) => e.biometric_user_id === '25065' || e.full_name.includes('Cabigas')) || emps[0]
-      const sampleRecord: OvertimeAuthorizationRecord = {
-        id: `ot_${Date.now()}`,
-        bioId: sampleEmp.biometric_user_id || sampleEmp.employee_number || '25065',
-        employeeName: sampleEmp.full_name,
-        department: sampleEmp.department || 'Operations',
-        date: '2026-10-06',
-        startTime: '17:00',
-        endTime: '18:00',
-        authorizedHours: 1.0,
-        formNumber: 'OT-2026-1006-01',
-        purpose: 'Authorized emergency equipment inspection',
-        status: 'Approved',
-        approvedBy: 'HR Supervisor',
-        approvedAt: new Date().toISOString(),
-        remarks: 'Physical form signed and verified on file.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-      await overtimeRepository.saveAuthorization(sampleRecord)
-      overtimeList.value = [sampleRecord]
-    }
   } catch (err) {
     console.error('Error loading overtime records:', err)
   } finally {
@@ -178,7 +157,8 @@ const filteredList = computed(() => {
       const bioMatch = item.bioId.toLowerCase().includes(q)
       const formMatch = (item.formNumber || '').toLowerCase().includes(q)
       const purposeMatch = (item.purpose || '').toLowerCase().includes(q)
-      return nameMatch || bioMatch || formMatch || purposeMatch
+      const dateMatch = (item.date || '').toLowerCase().includes(q)
+      return nameMatch || bioMatch || formMatch || purposeMatch || dateMatch
     }
     return true
   })
@@ -206,36 +186,94 @@ function calculateDuration() {
   }
 }
 
-async function handleSaveNewAuthorization() {
+function openCreateDialog() {
+  isEditing.value = false
+  editingRecordId.value = null
+  formNumber.value = ''
+  selectedBioId.value = ''
+  otDate.value = getManilaDateString(new Date())
+  startTime.value = '17:00'
+  endTime.value = '18:00'
+  authorizedHours.value = 1.0
+  purpose.value = ''
+  approvedBy.value = 'HR Operations'
+  initialStatus.value = 'Approved'
+  remarks.value = ''
+  isDialogOpen.value = true
+}
+
+function openEditDialog(record: OvertimeAuthorizationRecord) {
+  isEditing.value = true
+  editingRecordId.value = record.id
+  formNumber.value = record.formNumber || ''
+  selectedBioId.value = record.bioId
+  otDate.value = record.date || getManilaDateString(new Date())
+  startTime.value = record.startTime || '17:00'
+  endTime.value = record.endTime || '18:00'
+  authorizedHours.value = Number(record.authorizedHours) || 1.0
+  purpose.value = record.purpose || ''
+  approvedBy.value = record.approvedBy || 'HR Operations'
+  initialStatus.value = record.status === 'Approved' ? 'Approved' : 'Pending'
+  remarks.value = record.remarks || ''
+  isDialogOpen.value = true
+}
+
+async function handleSaveAuthorization() {
   if (!selectedBioId.value) return
 
   const selectedEmp = employees.value.find(
-    e => e.biometric_user_id === selectedBioId.value || e.employee_number === selectedBioId.value || e.id === selectedBioId.value
+    e => String(e.biometric_user_id || e.employee_number || e.id) === selectedBioId.value
   )
   const empName = selectedEmp ? selectedEmp.full_name : 'Staff'
   const dept = selectedEmp?.department || 'Operations'
+  const targetDate = otDate.value.trim()
 
-  const record: OvertimeAuthorizationRecord = {
-    id: `ot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    bioId: selectedBioId.value,
-    employeeName: empName,
-    department: dept,
-    date: otDate.value,
-    startTime: startTime.value,
-    endTime: endTime.value,
-    authorizedHours: Number(authorizedHours.value) || 1.0,
-    formNumber: formNumber.value.trim() || `OT-${otDate.value.replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`,
-    purpose: purpose.value.trim() || 'Scheduled authorized extension',
-    status: initialStatus.value,
-    approvedBy: initialStatus.value === 'Approved' ? (approvedBy.value.trim() || 'HR Department') : undefined,
-    approvedAt: initialStatus.value === 'Approved' ? new Date().toISOString() : undefined,
-    remarks: remarks.value.trim(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+  if (isEditing.value && editingRecordId.value) {
+    const existing = overtimeList.value.find(r => r.id === editingRecordId.value)
+    const record: OvertimeAuthorizationRecord = {
+      id: editingRecordId.value,
+      bioId: selectedBioId.value,
+      employeeName: empName,
+      department: dept,
+      date: targetDate,
+      startTime: startTime.value,
+      endTime: endTime.value,
+      authorizedHours: Number(authorizedHours.value) || 1.0,
+      formNumber: formNumber.value.trim() || (existing?.formNumber || `OT-${targetDate.replace(/-/g, '')}`),
+      purpose: purpose.value.trim() || 'Scheduled authorized extension',
+      status: initialStatus.value,
+      approvedBy: initialStatus.value === 'Approved' ? (approvedBy.value.trim() || 'HR Operations') : undefined,
+      approvedAt: initialStatus.value === 'Approved' ? (existing?.approvedAt || new Date().toISOString()) : undefined,
+      remarks: remarks.value.trim(),
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    await overtimeRepository.saveAuthorization(record)
+  } else {
+    const record: OvertimeAuthorizationRecord = {
+      id: `ot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      bioId: selectedBioId.value,
+      employeeName: empName,
+      department: dept,
+      date: targetDate,
+      startTime: startTime.value,
+      endTime: endTime.value,
+      authorizedHours: Number(authorizedHours.value) || 1.0,
+      formNumber: formNumber.value.trim() || `OT-${targetDate.replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`,
+      purpose: purpose.value.trim() || 'Scheduled authorized extension',
+      status: initialStatus.value,
+      approvedBy: initialStatus.value === 'Approved' ? (approvedBy.value.trim() || 'HR Operations') : undefined,
+      approvedAt: initialStatus.value === 'Approved' ? new Date().toISOString() : undefined,
+      remarks: remarks.value.trim(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    await overtimeRepository.saveAuthorization(record)
   }
 
-  await overtimeRepository.saveAuthorization(record)
   isDialogOpen.value = false
+  isEditing.value = false
+  editingRecordId.value = null
   // Reset form
   formNumber.value = ''
   selectedBioId.value = ''
@@ -276,28 +314,25 @@ async function handleDelete(id: string) {
         </p>
       </div>
 
-      <Dialog v-model:open="isDialogOpen">
-        <DialogTrigger as-child>
-          <Button size="sm" class="h-8 gap-1.5 text-xs text-white">
-            <Plus class="size-3.5" />
-            Record Physical OT Form
-          </Button>
-        </DialogTrigger>
+      <Button size="sm" class="h-8 gap-1.5 text-xs text-white" @click="openCreateDialog">
+        <Plus class="size-3.5" />
+        Record Physical OT Form
+      </Button>
 
+      <Dialog v-model:open="isDialogOpen">
         <DialogContent class="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle class="text-base flex items-center gap-2">
-              <FileText class="size-4" />
-              New Physical Overtime Authorization
+              <component :is="isEditing ? Pencil : FileText" class="size-4 text-indigo-600" />
+              {{ isEditing ? 'Edit Physical Overtime Authorization' : 'New Physical Overtime Authorization' }}
             </DialogTitle>
 
             <DialogDescription class="text-xs">
-              Record the employee, approved overtime schedule, and details from the
-              signed physical overtime authorization form.
+              {{ isEditing ? 'Update authorized schedule, employee, or status for this audited physical overtime form.' : 'Record the employee, approved overtime schedule, and details from the signed physical overtime authorization form.' }}
             </DialogDescription>
           </DialogHeader>
 
-          <form @submit.prevent="handleSaveNewAuthorization" class="space-y-3.5 py-2 text-xs">
+          <form @submit.prevent="handleSaveAuthorization" class="space-y-3.5 py-2 text-xs">
             <div class="flex flex-col gap-1.5">
               <label class="font-medium text-foreground">
                 Physical Form / Permit Number
@@ -504,7 +539,7 @@ async function handleDelete(id: string) {
                 </Button>
               </DialogClose>
               <Button type="submit" size="sm" class="h-8 text-xs text-white">
-                Save Authorization
+                {{ isEditing ? 'Update Authorization' : 'Save Authorization' }}
               </Button>
             </DialogFooter>
           </form>
@@ -643,6 +678,15 @@ async function handleDelete(id: string) {
             </TableCell>
             <TableCell class="text-right">
               <div class="flex items-center justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-7 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                  title="Edit Authorization"
+                  @click="openEditDialog(ot)"
+                >
+                  <Pencil class="size-3.5" />
+                </Button>
                 <Button
                   v-if="ot.status !== 'Approved'"
                   variant="ghost"
