@@ -244,13 +244,21 @@ export const payrollCalculationService = {
   ): Promise<EmployeePayrollRecord> {
     const rawBioId = String(employee.biometric_user_id || (employee as any).bioId || employee.employee_number || employee.id || '').trim()
     const targetIds = new Set<string>()
-    if (employee.biometric_user_id) targetIds.add(String(employee.biometric_user_id).trim().toLowerCase())
-    if ((employee as any).bioId) targetIds.add(String((employee as any).bioId).trim().toLowerCase())
-    if (employee.employee_number) targetIds.add(String(employee.employee_number).trim().toLowerCase())
-    if (employee.id) targetIds.add(String(employee.id).trim().toLowerCase())
-    if (rawBioId) targetIds.add(rawBioId.toLowerCase())
+    const addTargetId = (val?: string | number | null) => {
+      if (!val) return
+      const s = String(val).trim().toLowerCase()
+      targetIds.add(s)
+      const unprefixed = s.replace(/^emp[-_]/i, '')
+      targetIds.add(unprefixed)
+      if (!s.startsWith('emp-')) targetIds.add(`emp-${s}`)
+    }
+    addTargetId(employee.biometric_user_id)
+    addTargetId((employee as any).bioId)
+    addTargetId(employee.employee_number)
+    addTargetId(employee.id)
+    addTargetId(rawBioId)
 
-    const bioId = employee.biometric_user_id || employee.employee_number || rawBioId
+    const bioId = employee.biometric_user_id || (employee as any).bioId || employee.employee_number || rawBioId
 
     // 1. Check if a saved snapshot exists in IndexedDB for this period and employee
     const existingSnap = await db.payrollSnapshots.get(`${period.id}_${bioId}`)
@@ -275,11 +283,12 @@ export const payrollCalculationService = {
       }
     }
 
-    // Helper: Normalize date strings to YYYY-MM-DD
+    // Helper: Normalize date strings to YYYY-MM-DD (immune to local timezone drift)
     const normalizeDateStr = (d?: string | null): string => {
       if (!d) return ''
       const trimmed = d.trim()
       if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+      if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10)
       try {
         const dt = new Date(trimmed)
         if (!isNaN(dt.getTime())) {
@@ -512,8 +521,8 @@ export const payrollCalculationService = {
       const isFuture = dStr > todayStr
       const att = empAttendanceMap.get(dStr) || empAttendanceMap.get(normalizeDateStr(dStr))
 
-      const actualIn = att?.actual_in?.trim() || ''
-      const actualOut = att?.actual_out?.trim() || ''
+      const actualIn = (att?.actual_in || (att as any)?.actualIn || '').trim()
+      const actualOut = (att?.actual_out || (att as any)?.actualOut || '').trim()
       const hasValidIn = Boolean(
         actualIn &&
         !actualIn.startsWith('Missing') &&
@@ -522,7 +531,7 @@ export const payrollCalculationService = {
         actualIn !== 'None'
       )
       const hasValidOut = Boolean(
-        att?.has_valid_out &&
+        (att?.has_valid_out ?? (att as any)?.hasValidOut ?? true) &&
         actualOut &&
         !actualOut.startsWith('Missing') &&
         actualOut !== '—' &&
@@ -832,18 +841,30 @@ export const payrollCalculationService = {
     }
 
     for (const emp of targetEmployees) {
-      const bioId = String(emp.biometric_user_id || emp.employee_number || emp.id || '').trim().toLowerCase()
+      const bioId = String(emp.biometric_user_id || (emp as any).bioId || emp.employee_number || emp.id || '').trim().toLowerCase()
+      const empIds = new Set<string>()
+      const addEmpId = (val?: string | number | null) => {
+        if (!val) return
+        const s = String(val).trim().toLowerCase()
+        empIds.add(s)
+        empIds.add(s.replace(/^emp[-_]/i, ''))
+        if (!s.startsWith('emp-')) empIds.add(`emp-${s}`)
+      }
+      addEmpId(emp.biometric_user_id)
+      addEmpId((emp as any).bioId)
+      addEmpId(emp.employee_number)
+      addEmpId(emp.id)
+      addEmpId(bioId)
+
       const empAttendance = dailyAttendanceRecords.filter(r => {
         const rBio = String(r.biometric_user_id || (r as any).bioId || '').trim().toLowerCase()
-        return rBio === bioId || rBio === String(emp.employee_number || '').trim().toLowerCase()
+        const rBioClean = rBio.replace(/^emp[-_]/i, '')
+        return empIds.has(rBio) || empIds.has(rBioClean)
       })
       const empOt = allApprovedOt.filter(ot => {
         const otBio = String(ot.bioId).trim().toLowerCase()
-        return (
-          otBio === bioId ||
-          otBio === String(emp.employee_number || '').trim().toLowerCase() ||
-          otBio === String(emp.id || '').trim().toLowerCase()
-        )
+        const otBioClean = otBio.replace(/^emp[-_]/i, '')
+        return empIds.has(otBio) || empIds.has(otBioClean)
       })
       const record = await this.computeSingleEmployeePayroll(period, emp, holidays, empAttendance, empOt)
       payrollRecords.push(record)

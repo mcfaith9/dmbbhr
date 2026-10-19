@@ -127,10 +127,18 @@ export function collectApprovedOvertimeByDate<T extends OvertimeAuthorizationLik
   targetIds: Set<string>
 ): Map<string, T[]> {
   const map = new Map<string, T[]>()
+  const normTargetIds = new Set<string>()
+  for (const tid of targetIds) {
+    const s = String(tid).trim().toLowerCase()
+    normTargetIds.add(s)
+    normTargetIds.add(s.replace(/^emp[-_]/i, ''))
+  }
+
   for (const ot of records) {
-    if (ot.status !== 'Approved') continue
+    if ((ot.status || '').trim().toLowerCase() !== 'approved') continue
     const otBio = String(ot.bioId).trim().toLowerCase()
-    if (targetIds.size > 0 && !targetIds.has(otBio)) continue
+    const otBioUnprefixed = otBio.replace(/^emp[-_]/i, '')
+    if (normTargetIds.size > 0 && !normTargetIds.has(otBio) && !normTargetIds.has(otBioUnprefixed)) continue
     const date = String(ot.date || '').trim()
     if (!date) continue
 
@@ -167,6 +175,7 @@ export function normalizeDateString(d?: string | null): string {
   if (!d) return ''
   const trimmed = d.trim()
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10)
   try {
     const dt = new Date(trimmed)
     if (!isNaN(dt.getTime())) {
