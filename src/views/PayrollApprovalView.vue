@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-4">
+  <div class="space-y-4 w-full max-w-full min-w-0">
     <!-- Action Feedback Toast Banner -->
     <transition
       enter-active-class="transition duration-200 ease-out"
@@ -11,19 +11,19 @@
     >
       <div
         v-if="actionNotice"
-        class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border text-xs shadow-xs"
+        class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border text-xs shadow-xs w-full max-w-full min-w-0"
         :class="actionNotice.type === 'success' 
           ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300' 
           : 'bg-amber-500/10 border-amber-500/20 text-amber-800 dark:text-amber-300'"
       >
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 min-w-0">
           <CheckCircle2 v-if="actionNotice.type === 'success'" class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <AlertCircle v-else class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <span class="font-medium">{{ actionNotice.message }}</span>
+          <span class="font-medium truncate">{{ actionNotice.message }}</span>
         </div>
         <button
           type="button"
-          class="text-muted-foreground hover:text-foreground transition-colors"
+          class="text-muted-foreground hover:text-foreground transition-colors shrink-0"
           @click="actionNotice = null"
         >
           <X class="size-3.5" />
@@ -32,34 +32,38 @@
     </transition>
 
     <!-- Page Header Section -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-      <div>
-        <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full max-w-full min-w-0">
+      <div class="min-w-0">
+        <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2 truncate">
           Payroll Approval
         </h1>
-        <p class="text-xs text-muted-foreground mt-0.5">
+        <p class="text-xs text-muted-foreground mt-0.5 break-words">
           Review employee payroll snapshots, audit compensation and deduction details, and authorize cutoff disbursements.
         </p>
       </div>
 
-      <!-- Controls & Cutoff Selector -->
-      <div class="flex items-center gap-2 flex-wrap">
-        <select
-          v-model="selectedPeriod"
-          :disabled="isLoading"
-          class="h-8 rounded-md border border-input bg-background px-2.5 text-xs text-foreground font-medium focus:outline-hidden disabled:opacity-50"
-          @change="onPeriodChange"
-        >
-          <option value="">All Cutoffs</option>
-          <option v-for="p in cutoffs" :key="p.id" :value="p.id">
-            {{ p.label }}
-          </option>
-        </select>
+      <!-- Controls & Cutoff Selector (shadcn-vue Select) -->
+      <div class="flex items-center gap-2 flex-wrap min-w-0">
+        <div class="w-full sm:w-[220px] max-w-full min-w-0">
+          <Select v-model="selectedPeriod" :disabled="isLoading">
+            <SelectTrigger class="h-8 text-xs font-medium w-full min-w-0 bg-background truncate">
+              <SelectValue placeholder="All Cutoffs" />
+            </SelectTrigger>
+            <SelectContent class="max-h-64 overflow-y-auto">
+              <SelectGroup>
+                <SelectItem value="all">All Cutoffs</SelectItem>
+                <SelectItem v-for="p in cutoffs" :key="p.id" :value="p.id">
+                  {{ p.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
 
         <Button
           variant="outline"
           size="sm"
-          class="h-8 gap-1.5 text-xs"
+          class="h-8 gap-1.5 text-xs shrink-0"
           :disabled="isLoading"
           @click="reload"
         >
@@ -68,7 +72,7 @@
         </Button>
 
         <!-- Reviewer indicator -->
-        <div class="hidden lg:flex items-center gap-2 pl-2 border-l border-border text-xs text-muted-foreground">
+        <div class="hidden xl:flex items-center gap-2 pl-2 border-l border-border text-xs text-muted-foreground shrink-0">
           <div class="size-7 rounded bg-muted/60 border border-border flex items-center justify-center font-semibold text-[11px] text-foreground">
             {{ reviewerInitials }}
           </div>
@@ -83,16 +87,16 @@
     <!-- Error Alert Banner if fetch fails -->
     <div
       v-if="loadError"
-      class="rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs text-destructive flex items-center justify-between gap-3"
+      class="rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs text-destructive flex items-center justify-between gap-3 w-full max-w-full min-w-0"
     >
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 min-w-0">
         <AlertCircle class="size-4 shrink-0 text-destructive" />
-        <span>{{ loadError }}</span>
+        <span class="truncate">{{ loadError }}</span>
       </div>
       <Button
         variant="outline"
         size="sm"
-        class="h-7 text-xs border-destructive/40 hover:bg-destructive/15 text-destructive"
+        class="h-7 text-xs border-destructive/40 hover:bg-destructive/15 text-destructive shrink-0"
         @click="reload"
       >
         Retry
@@ -100,22 +104,22 @@
     </div>
 
     <!-- Payroll Summary Cards -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full max-w-full min-w-0">
       <!-- Card 1: Awaiting Approval (Pending) -->
-      <div class="rounded-xl border bg-card p-3 shadow-xs">
+      <div class="rounded-xl border bg-card p-3 shadow-xs min-w-0">
         <div class="text-[11px] font-medium text-muted-foreground flex items-center justify-between">
-          <span>Awaiting Approval</span>
-          <Clock class="size-3.5 text-amber-600 dark:text-amber-400" />
+          <span class="truncate">Awaiting Approval</span>
+          <Clock class="size-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
         </div>
         <div v-if="isLoading" class="mt-1 space-y-1">
           <Skeleton class="h-6 w-28" />
           <Skeleton class="h-3 w-16" />
         </div>
         <div v-else>
-          <div class="text-xl font-bold mt-1 text-amber-600 dark:text-amber-400 font-mono tabular-nums">
+          <div class="text-xl font-bold mt-1 text-amber-600 dark:text-amber-400 font-mono tabular-nums truncate">
             {{ formatPeso(summaryStats.pendingNetPay) }}
           </div>
-          <div class="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+          <div class="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1 truncate">
             <span class="font-semibold text-foreground">{{ summaryStats.pendingCount }}</span>
             <span>employees pending review</span>
           </div>
@@ -123,20 +127,20 @@
       </div>
 
       <!-- Card 2: Approved Payroll -->
-      <div class="rounded-xl border bg-card p-3 shadow-xs">
+      <div class="rounded-xl border bg-card p-3 shadow-xs min-w-0">
         <div class="text-[11px] font-medium text-muted-foreground flex items-center justify-between">
-          <span>Approved Disbursements</span>
-          <CheckCircle2 class="size-3.5 text-emerald-600 dark:text-emerald-400" />
+          <span class="truncate">Approved Disbursements</span>
+          <CheckCircle2 class="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
         </div>
         <div v-if="isLoading" class="mt-1 space-y-1">
           <Skeleton class="h-6 w-28" />
           <Skeleton class="h-3 w-16" />
         </div>
         <div v-else>
-          <div class="text-xl font-bold mt-1 text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
+          <div class="text-xl font-bold mt-1 text-emerald-600 dark:text-emerald-400 font-mono tabular-nums truncate">
             {{ formatPeso(summaryStats.approvedNetPay) }}
           </div>
-          <div class="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
+          <div class="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1 truncate">
             <span class="font-semibold text-foreground">{{ summaryStats.approvedCount }}</span>
             <span>employees approved</span>
           </div>
@@ -144,40 +148,40 @@
       </div>
 
       <!-- Card 3: Returned for Correction -->
-      <div class="rounded-xl border bg-card p-3 shadow-xs">
+      <div class="rounded-xl border bg-card p-3 shadow-xs min-w-0">
         <div class="text-[11px] font-medium text-muted-foreground flex items-center justify-between">
-          <span>Needs Correction</span>
-          <RotateCcw class="size-3.5 text-rose-600 dark:text-rose-400" />
+          <span class="truncate">Needs Correction</span>
+          <RotateCcw class="size-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
         </div>
         <div v-if="isLoading" class="mt-1 space-y-1">
           <Skeleton class="h-6 w-16" />
           <Skeleton class="h-3 w-24" />
         </div>
         <div v-else>
-          <div class="text-xl font-bold mt-1 text-foreground font-mono tabular-nums" :class="{ 'text-rose-600 dark:text-rose-400': summaryStats.returnedCount > 0 }">
+          <div class="text-xl font-bold mt-1 text-foreground font-mono tabular-nums truncate" :class="{ 'text-rose-600 dark:text-rose-400': summaryStats.returnedCount > 0 }">
             {{ summaryStats.returnedCount }}
           </div>
-          <div class="text-[10px] text-muted-foreground mt-0.5">
+          <div class="text-[10px] text-muted-foreground mt-0.5 truncate">
             {{ summaryStats.returnedCount === 0 ? 'No records returned' : 'Requires matrix recalculation' }}
           </div>
         </div>
       </div>
 
       <!-- Card 4: Total Batch Snapshot Records -->
-      <div class="rounded-xl border bg-card p-3 shadow-xs">
+      <div class="rounded-xl border bg-card p-3 shadow-xs min-w-0">
         <div class="text-[11px] font-medium text-muted-foreground flex items-center justify-between">
-          <span>Total Batch Records</span>
-          <Users class="size-3.5 text-blue-600 dark:text-blue-400" />
+          <span class="truncate">Total Batch Records</span>
+          <Users class="size-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
         </div>
         <div v-if="isLoading" class="mt-1 space-y-1">
           <Skeleton class="h-6 w-16" />
           <Skeleton class="h-3 w-28" />
         </div>
         <div v-else>
-          <div class="text-xl font-bold mt-1 text-foreground font-mono tabular-nums">
+          <div class="text-xl font-bold mt-1 text-foreground font-mono tabular-nums truncate">
             {{ summaryStats.totalCount }}
           </div>
-          <div class="text-[10px] text-muted-foreground mt-0.5 font-mono tabular-nums">
+          <div class="text-[10px] text-muted-foreground mt-0.5 font-mono tabular-nums truncate">
             Net: {{ formatPeso(summaryStats.totalNetPay) }}
           </div>
         </div>
@@ -185,16 +189,16 @@
     </div>
 
     <!-- Search and Filters Toolbar -->
-    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 max-w-2xl">
+    <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 w-full max-w-full min-w-0">
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 min-w-0">
         <!-- Search Input -->
-        <div class="relative flex-1">
+        <div class="relative flex-1 min-w-0 sm:max-w-xs md:max-w-sm">
           <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground pointer-events-none" />
           <Input
             v-model="query"
             type="text"
-            placeholder="Search by employee name, Bio ID, or employee ID..."
-            class="pl-8 pr-8 h-8 text-xs bg-card"
+            placeholder="Search by name, Bio ID, or employee ID..."
+            class="pl-8 pr-8 h-8 text-xs bg-card w-full min-w-0"
             :disabled="isLoading && snapshots.length === 0"
             @input="onSearchInput"
           />
@@ -209,21 +213,26 @@
           </button>
         </div>
 
-        <!-- Approval Status Filter -->
-        <select
-          v-model="statusFilter"
-          class="h-8 rounded-md border border-input bg-card px-2.5 text-xs text-foreground font-medium focus:outline-hidden"
-          @change="onFilterChange"
-        >
-          <option value="">All Statuses</option>
-          <option value="ready">Pending Review</option>
-          <option value="approved">Approved</option>
-          <option value="needs_review">Returned for Correction</option>
-        </select>
+        <!-- Approval Status Filter (shadcn-vue Select) -->
+        <div class="w-full sm:w-[190px] shrink-0 min-w-0">
+          <Select v-model="statusFilter">
+            <SelectTrigger class="h-8 text-xs font-medium w-full min-w-0 bg-card truncate">
+              <SelectValue placeholder="All Statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="ready">Pending Review</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="needs_review">Returned for Correction</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
 
         <!-- Clear all filters button if active -->
         <Button
-          v-if="query || statusFilter"
+          v-if="query || (statusFilter && statusFilter !== 'all')"
           variant="ghost"
           size="sm"
           class="h-8 text-xs text-muted-foreground hover:text-foreground shrink-0"
@@ -234,12 +243,12 @@
       </div>
 
       <!-- Result Counter Display -->
-      <div class="flex items-center gap-2 self-start sm:self-center text-xs text-muted-foreground">
+      <div class="flex items-center gap-2 self-start md:self-center text-xs text-muted-foreground shrink-0">
         <template v-if="isLoading">
           <Skeleton class="h-5 w-28 rounded-md" />
         </template>
         <template v-else-if="snapshots.length > 0">
-          <span v-if="query.trim() || statusFilter" class="inline-flex items-center gap-1.5 font-medium">
+          <span v-if="query.trim() || (statusFilter && statusFilter !== 'all')" class="inline-flex items-center gap-1.5 font-medium">
             <span class="text-foreground font-semibold">{{ filtered.length }}</span>
             <span>of</span>
             <span>{{ batchSnapshots.length }} records</span>
@@ -252,10 +261,11 @@
       </div>
     </div>
 
-    <!-- Employee Payroll Approval Table Container -->
-    <div class="rounded-xl border bg-card shadow-xs overflow-hidden">
-      <div class="overflow-x-auto">
-        <Table>
+    <!-- Employee Payroll Approval Table Container with Dedicated Scroll Wrapper -->
+    <div class="rounded-xl border bg-card shadow-xs overflow-hidden w-full max-w-full min-w-0">
+      <!-- Dedicated Table Wrapper containing horizontal overflow safely -->
+      <div class="w-full max-w-full overflow-x-auto overscroll-x-contain">
+        <Table class="w-full min-w-[860px]">
           <TableHeader>
             <TableRow class="bg-muted/40">
               <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[70px]">Bio ID</TableHead>
@@ -332,7 +342,7 @@
                     No payroll records match the selected filters
                   </div>
                   <div class="text-[11px] max-w-sm">
-                    No records matched "{{ query }}" with the current status filter. Try clearing filters.
+                    No records matched "{{ query }}" with the current status filter. Try resetting filters.
                   </div>
                   <Button
                     variant="outline"
@@ -340,7 +350,7 @@
                     class="h-7 text-xs mt-1"
                     @click="clearAllFilters"
                   >
-                    Clear Filters
+                    Reset Filters
                   </Button>
                 </div>
               </TableCell>
@@ -451,7 +461,7 @@
       </div>
 
       <!-- Pagination Footer -->
-      <div v-if="!isLoading && filtered.length > 0" class="border-t bg-muted/20 p-2 sm:p-3">
+      <div v-if="!isLoading && filtered.length > 0" class="border-t bg-muted/20 p-2 sm:p-3 w-full min-w-0">
         <Pagination
           :current-page="currentPage"
           :total-pages="totalPages"
@@ -467,17 +477,17 @@
     <!-- DIALOG 1: Detailed Snapshot Review Modal                          -->
     <!-- ================================================================= -->
     <Dialog :open="isDetailDialogOpen" @update:open="(val: boolean) => isDetailDialogOpen = val">
-      <DialogContent class="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent class="w-full max-w-md sm:max-w-xl md:max-w-3xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader v-if="activeSnap">
           <div class="flex items-start justify-between gap-4">
-            <div>
-              <DialogTitle class="text-lg font-bold flex items-center gap-2">
-                <span>{{ activeSnap.employeeName }}</span>
-                <Badge :variant="badgeVariant(activeSnap.reviewStatus)" class="text-[10px]">
+            <div class="min-w-0">
+              <DialogTitle class="text-lg font-bold flex items-center gap-2 truncate">
+                <span class="truncate">{{ activeSnap.employeeName }}</span>
+                <Badge :variant="badgeVariant(activeSnap.reviewStatus)" class="text-[10px] shrink-0">
                   {{ humanStatus(activeSnap.reviewStatus) }}
                 </Badge>
               </DialogTitle>
-              <DialogDescription class="text-xs text-muted-foreground mt-1">
+              <DialogDescription class="text-xs text-muted-foreground mt-1 break-words">
                 Bio ID: <span class="font-mono font-medium text-foreground">{{ activeSnap.bioId }}</span>
                 <span class="mx-1.5">·</span>
                 Emp ID: <span class="font-mono font-medium text-foreground">{{ activeSnap.employeeNumber || '—' }}</span>
@@ -492,22 +502,22 @@
 
         <div v-if="activeSnap" class="space-y-4 py-2 text-xs">
           <!-- Quick 3-Metric Highlight Strip -->
-          <div class="grid grid-cols-3 gap-2 p-3 rounded-lg border bg-muted/20">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 p-3 rounded-lg border bg-muted/20">
             <div>
               <div class="text-[10px] text-muted-foreground">Gross Earnings</div>
-              <div class="text-base font-bold font-mono tabular-nums text-foreground mt-0.5">
+              <div class="text-base font-bold font-mono tabular-nums text-foreground mt-0.5 truncate">
                 {{ formatPeso(activeSnap.initialEarnings) }}
               </div>
             </div>
             <div>
               <div class="text-[10px] text-muted-foreground">Total Deductions</div>
-              <div class="text-base font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400 mt-0.5">
+              <div class="text-base font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400 mt-0.5 truncate">
                 -{{ formatPeso(getSnapshotDeductions(activeSnap)) }}
               </div>
             </div>
             <div>
               <div class="text-[10px] text-muted-foreground">Net Pay Disbursement</div>
-              <div class="text-base font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 mt-0.5">
+              <div class="text-base font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 mt-0.5 truncate">
                 {{ formatPeso(activeSnap.netPay) }}
               </div>
             </div>
@@ -640,7 +650,7 @@
                     v-else
                     v-for="(r, idx) in activeSnap.reviewReasons"
                     :key="idx"
-                    class="p-2 rounded bg-muted/30 border border-border/50 text-[11px] leading-relaxed"
+                    class="p-2 rounded bg-muted/30 border border-border/50 text-[11px] leading-relaxed break-words"
                   >
                     <div class="text-foreground">{{ r }}</div>
                   </div>
@@ -650,7 +660,7 @@
           </div>
         </div>
 
-        <DialogFooter v-if="activeSnap" class="flex items-center justify-between sm:justify-between border-t pt-3">
+        <DialogFooter v-if="activeSnap" class="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-2 border-t pt-3">
           <Button variant="outline" size="sm" @click="isDetailDialogOpen = false">
             Close
           </Button>
@@ -686,10 +696,10 @@
     <!-- DIALOG 2: Confirm Approval Modal                                  -->
     <!-- ================================================================= -->
     <Dialog :open="isApproveDialogOpen" @update:open="(val: boolean) => isApproveDialogOpen = val">
-      <DialogContent class="max-w-md">
+      <DialogContent class="w-full max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle class="text-base font-bold flex items-center gap-2 text-foreground">
-            <ShieldCheck class="size-5 text-blue-600 dark:text-blue-400" />
+            <ShieldCheck class="size-5 text-blue-600 dark:text-blue-400 shrink-0" />
             <span>Confirm Payroll Approval</span>
           </DialogTitle>
           <DialogDescription class="text-xs text-muted-foreground">
@@ -699,20 +709,20 @@
 
         <div v-if="targetForApprove" class="space-y-3 py-2 text-xs">
           <div class="p-3 rounded-lg border bg-muted/20 space-y-1.5">
-            <div class="flex justify-between">
-              <span class="text-muted-foreground">Employee</span>
-              <span class="font-semibold text-foreground">{{ targetForApprove.employeeName }}</span>
+            <div class="flex justify-between gap-2">
+              <span class="text-muted-foreground shrink-0">Employee</span>
+              <span class="font-semibold text-foreground text-right truncate">{{ targetForApprove.employeeName }}</span>
             </div>
-            <div class="flex justify-between">
-              <span class="text-muted-foreground">Bio ID / Emp ID</span>
-              <span class="font-mono text-muted-foreground">{{ targetForApprove.bioId }} / {{ targetForApprove.employeeNumber || '—' }}</span>
+            <div class="flex justify-between gap-2">
+              <span class="text-muted-foreground shrink-0">Bio ID / Emp ID</span>
+              <span class="font-mono text-muted-foreground text-right truncate">{{ targetForApprove.bioId }} / {{ targetForApprove.employeeNumber || '—' }}</span>
             </div>
-            <div class="flex justify-between">
-              <span class="text-muted-foreground">Cutoff Period</span>
-              <span class="font-mono text-muted-foreground">{{ targetForApprove.periodId }}</span>
+            <div class="flex justify-between gap-2">
+              <span class="text-muted-foreground shrink-0">Cutoff Period</span>
+              <span class="font-mono text-muted-foreground text-right truncate">{{ targetForApprove.periodId }}</span>
             </div>
             <div class="flex justify-between items-center pt-2 border-t font-semibold">
-              <span class="text-foreground">Net Pay Authorization</span>
+              <span class="text-foreground shrink-0">Net Pay Authorization</span>
               <span class="font-mono text-base font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
                 {{ formatPeso(targetForApprove.netPay) }}
               </span>
@@ -748,10 +758,10 @@
     <!-- DIALOG 3: Return for Correction Modal                             -->
     <!-- ================================================================= -->
     <Dialog :open="isReturnDialogOpen" @update:open="(val: boolean) => isReturnDialogOpen = val">
-      <DialogContent class="max-w-md">
+      <DialogContent class="w-full max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle class="text-base font-bold flex items-center gap-2 text-foreground">
-            <RotateCcw class="size-5 text-rose-600 dark:text-rose-400" />
+            <RotateCcw class="size-5 text-rose-600 dark:text-rose-400 shrink-0" />
             <span>Return Payroll for Correction</span>
           </DialogTitle>
           <DialogDescription class="text-xs text-muted-foreground">
@@ -761,8 +771,8 @@
 
         <div v-if="targetForReturn" class="space-y-3 py-2 text-xs">
           <div class="p-2.5 rounded-lg border bg-muted/20">
-            <div class="font-semibold text-foreground">{{ targetForReturn.employeeName }}</div>
-            <div class="text-[11px] text-muted-foreground font-mono">
+            <div class="font-semibold text-foreground truncate">{{ targetForReturn.employeeName }}</div>
+            <div class="text-[11px] text-muted-foreground font-mono truncate">
               Bio ID: {{ targetForReturn.bioId }} · Period: {{ targetForReturn.periodId }}
             </div>
           </div>
@@ -777,7 +787,7 @@
               rows="3"
               maxlength="200"
               placeholder="e.g., Unverified 2.0 hrs overtime on June 12; please check signed OT authorization form with operations head..."
-              class="text-xs"
+              class="text-xs w-full"
               :class="{ 'border-destructive focus-visible:ring-destructive': returnReasonError }"
               @input="returnReasonError = ''"
             />
@@ -813,7 +823,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Search,
@@ -839,6 +849,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Pagination } from '@/components/ui/pagination'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -859,8 +877,8 @@ const router = useRouter()
 
 // Cutoffs list
 const cutoffs = payrollCalculationService.getAvailableCutoffs(new Date(), 24)
-const selectedPeriod = ref('')
-const statusFilter = ref('')
+const selectedPeriod = ref('all')
+const statusFilter = ref('all')
 const query = ref('')
 
 // Raw snapshots loaded from IndexedDB
@@ -871,6 +889,15 @@ const loadError = ref<string | null>(null)
 // Pagination state
 const currentPage = ref(1)
 const pageSize = ref(25)
+
+// Watchers for resets on filter change
+watch(selectedPeriod, () => {
+  currentPage.value = 1
+})
+
+watch(statusFilter, () => {
+  currentPage.value = 1
+})
 
 // Modal state
 const activeSnap = ref<PayrollApprovalDetailRecord | null>(null)
@@ -983,7 +1010,7 @@ function goToAttendanceMatrix() {
 
 // Current batch of snapshots for the selected period
 const batchSnapshots = computed(() => {
-  if (!selectedPeriod.value) return snapshots.value
+  if (!selectedPeriod.value || selectedPeriod.value === 'all') return snapshots.value
   return snapshots.value.filter(s => s.periodId === selectedPeriod.value)
 })
 
@@ -1019,7 +1046,7 @@ const summaryStats = computed(() => {
 const filtered = computed(() => {
   return batchSnapshots.value
     .filter(snap => {
-      if (statusFilter.value) {
+      if (statusFilter.value && statusFilter.value !== 'all') {
         const currentStatus = snap.reviewStatus || 'ready'
         if (currentStatus !== statusFilter.value) return false
       }
@@ -1046,14 +1073,6 @@ const paginatedRecords = computed(() => {
   return filtered.value.slice(start, start + pageSize.value)
 })
 
-function onPeriodChange() {
-  currentPage.value = 1
-}
-
-function onFilterChange() {
-  currentPage.value = 1
-}
-
 function onSearchInput() {
   currentPage.value = 1
 }
@@ -1065,7 +1084,7 @@ function clearQuery() {
 
 function clearAllFilters() {
   query.value = ''
-  statusFilter.value = ''
+  statusFilter.value = 'all'
   currentPage.value = 1
 }
 
