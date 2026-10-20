@@ -274,6 +274,7 @@ export interface PayrollSnapshotRecord {
   unworkedHolidayDays?: number
   specialNonWorkingDays?: number
   specialWorkingDays?: number
+  holidayPay?: number
   overtimeHours?: number
   overtimePay?: number
   lateMinutes: number
@@ -295,6 +296,8 @@ export interface PayrollSnapshotRecord {
   reviewStatus: 'ready' | 'needs_review' | 'approved' | 'finalized'
   reviewReasons: string[]
   batchStatus: 'draft' | 'approved' | 'finalized'
+  approvedBy?: string
+  approvedAt?: string
   finalizedAt?: string
   finalizedBy?: string
   updatedAt: string

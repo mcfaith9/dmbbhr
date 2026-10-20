@@ -177,18 +177,25 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { db } from '@/db'
-import { payrollCalculationService } from '@/services/payrollCalculation'
+import { db, type PayrollSnapshotRecord } from '@/db'
+import { payrollCalculationService, type EmployeePayrollRecord } from '@/services/payrollCalculation'
 import { authService } from '@/services/auth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+
+export interface PayrollApprovalDetailRecord extends EmployeePayrollRecord {
+  basicSalaryDisplay: string
+  holidayPay: number
+  approvedBy?: string
+  approvedAt?: string
+}
 
 const cutoffs = payrollCalculationService.getAvailableCutoffs(new Date(), 24)
 const selectedPeriod = ref('')
 const statusFilter = ref('')
 const query = ref('')
-const snapshots = ref([] as any[])
-const activeSnap = ref<any | null>(null)
+const snapshots = ref<PayrollSnapshotRecord[]>([])
+const activeSnap = ref<PayrollApprovalDetailRecord | null>(null)
 const isLoading = ref(false)
 
 // simple debounce for skeleton to avoid flicker on fast loads
@@ -253,14 +260,20 @@ const filtered = computed(() => {
     .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''))
 })
 
-function openRecord(snap: any) {
+function openRecord(snap: PayrollSnapshotRecord) {
   const rec = payrollCalculationService.snapshotToPayrollRecord(snap)
-  rec.basicSalaryDisplay = (snap.basicSalary || 0).toFixed(2)
-  rec.holidayPay = snap.holidayPay || 0
-  rec.overtimePay = snap.overtimePay || 0
-  rec.itemizedDeductions = snap.itemizedDeductions || []
-  rec.totalOtherDeductions = snap.totalOtherDeductions || 0
-  activeSnap.value = { ...snap, ...rec }
+  const holidayPay = snap.holidayPay ?? rec.earningsBreakdown?.holidayPay ?? 0
+  activeSnap.value = {
+    ...snap,
+    ...rec,
+    basicSalaryDisplay: (snap.basicSalary || 0).toFixed(2),
+    holidayPay,
+    overtimePay: snap.overtimePay ?? rec.overtimePay ?? 0,
+    itemizedDeductions: snap.itemizedDeductions || [],
+    totalOtherDeductions: snap.totalOtherDeductions || 0,
+    approvedBy: snap.approvedBy,
+    approvedAt: snap.approvedAt
+  }
 }
 
 function closeRecord() {
@@ -276,31 +289,35 @@ function formatDate(s?: string) {
   }
 }
 
-async function doApprove(snap: any) {
+async function doApprove(snap: PayrollSnapshotRecord | PayrollApprovalDetailRecord) {
   const user = authService.currentUser.value
   const approvedBy = user?.username || user?.name || 'unknown'
   const approvedAt = new Date().toISOString()
+  const reasons = Array.isArray(snap.reviewReasons) ? [...snap.reviewReasons] : []
+  reasons.push(`Approved by ${approvedBy} at ${new Date(approvedAt).toLocaleString()}`)
 
   await db.payrollSnapshots.update(snap.id, {
     reviewStatus: 'approved',
     approvedBy,
-    approvedAt
+    approvedAt,
+    reviewReasons: reasons
   })
   await loadSnapshots()
   if (activeSnap.value && activeSnap.value.id === snap.id) {
     activeSnap.value.reviewStatus = 'approved'
     activeSnap.value.approvedBy = approvedBy
     activeSnap.value.approvedAt = approvedAt
+    activeSnap.value.reviewReasons = reasons
   }
 }
 
-function confirmApprove(snap: any) {
+function confirmApprove(snap: PayrollSnapshotRecord | PayrollApprovalDetailRecord) {
   const ok = window.confirm(`Approve payroll for ${snap.employeeName}?`)
   if (!ok) return
   doApprove(snap)
 }
 
-async function promptReturn(snap: any) {
+async function promptReturn(snap: PayrollSnapshotRecord | PayrollApprovalDetailRecord) {
   const reason = window.prompt('Please provide a reason for returning this payroll for correction:')
   if (!reason) return
   const reasons = Array.isArray(snap.reviewReasons) ? [...snap.reviewReasons] : []
