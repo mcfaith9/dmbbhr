@@ -240,7 +240,8 @@ export const payrollCalculationService = {
     employee: Employee,
     holidays: HolidayRecord[] = [],
     dailyAttendanceRecords: DailyAttendanceRecord[] = [],
-    overtimeAuthorizations: OvertimeAuthorizationRecord[] = []
+    overtimeAuthorizations: OvertimeAuthorizationRecord[] = [],
+    options: { attendancePrefetched?: boolean; existingSnapshot?: PayrollSnapshotRecord | null } = {}
   ): Promise<EmployeePayrollRecord> {
     const rawBioId = String(employee.biometric_user_id || (employee as any).bioId || employee.employee_number || employee.id || '').trim()
     const targetIds = new Set<string>()
@@ -261,7 +262,9 @@ export const payrollCalculationService = {
     const bioId = employee.biometric_user_id || (employee as any).bioId || employee.employee_number || rawBioId
 
     // 1. Check if a saved snapshot exists in IndexedDB for this period and employee
-    const existingSnap = await db.payrollSnapshots.get(`${period.id}_${bioId}`)
+    const existingSnap = options.existingSnapshot !== undefined
+      ? options.existingSnapshot
+      : await db.payrollSnapshots.get(`${period.id}_${bioId}`)
 
     // If an existing finalized snapshot exists, preserve it completely as an immutable historical record
     if (existingSnap && existingSnap.batchStatus === 'finalized') {
@@ -355,7 +358,7 @@ export const payrollCalculationService = {
     }
 
     // If attendance records were not passed or incomplete, query the repository for this employee
-    if (empAttendanceMap.size === 0) {
+    if (empAttendanceMap.size === 0 && !options.attendancePrefetched) {
       const results = await Promise.all(
         period.dates.map(d => attendanceRepository.getDailyAttendance(d, 'all', 'all', {}, bioId))
       )
@@ -833,6 +836,31 @@ export const payrollCalculationService = {
     const targetEmployees = employees.filter(e => e.status !== 'resigned')
     const payrollRecords: EmployeePayrollRecord[] = []
 
+    // 1. Pre-fetch holidays once for the batch
+    if (holidays.length === 0) {
+      try {
+        holidays = await db.holidays.toArray()
+      } catch {
+        holidays = []
+      }
+    }
+
+    // 2. Pre-fetch existing payroll snapshots once for this period
+    const snapshotMap = new Map<string, PayrollSnapshotRecord>()
+    try {
+      const periodSnaps = await db.payrollSnapshots.where('periodId').equals(period.id).toArray()
+      for (const snap of periodSnaps) {
+        if (snap.bioId) {
+          const sBio = String(snap.bioId).trim().toLowerCase()
+          snapshotMap.set(sBio, snap)
+          snapshotMap.set(sBio.replace(/^emp[-_]/i, ''), snap)
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 3. Pre-fetch approved overtime authorizations once
     let allApprovedOt: OvertimeAuthorizationRecord[] = []
     try {
       allApprovedOt = await overtimeRepository.getAll('Approved')
@@ -840,33 +868,75 @@ export const payrollCalculationService = {
       allApprovedOt = []
     }
 
+    // 4. Pre-fetch daily attendance for the cutoff dates in 1 parallel batch
+    let attendancePrefetched = false
+    if (dailyAttendanceRecords.length === 0 && period.dates && period.dates.length > 0) {
+      try {
+        const dailyResults = await Promise.all(
+          period.dates.map(d => attendanceRepository.getDailyAttendance(d))
+        )
+        dailyAttendanceRecords = dailyResults.flat()
+        attendancePrefetched = true
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('Batch daily attendance prefetch encountered error:', err)
+      }
+    } else if (dailyAttendanceRecords.length > 0) {
+      attendancePrefetched = true
+    }
+
+    // Index attendance by bioId for fast lookup
+    const attendanceByBioId = new Map<string, DailyAttendanceRecord[]>()
+    for (const rec of dailyAttendanceRecords) {
+      const recBio = String(rec.biometric_user_id || (rec as any).bioId || (rec as any).user_id || '').trim().toLowerCase()
+      if (recBio) {
+        const cleanBio = recBio.replace(/^emp[-_]/i, '')
+        if (!attendanceByBioId.has(recBio)) attendanceByBioId.set(recBio, [])
+        attendanceByBioId.get(recBio)!.push(rec)
+        if (cleanBio !== recBio) {
+          if (!attendanceByBioId.has(cleanBio)) attendanceByBioId.set(cleanBio, [])
+          attendanceByBioId.get(cleanBio)!.push(rec)
+        }
+      }
+    }
+
+    // Index approved OT by bioId for fast lookup
+    const otByBioId = new Map<string, OvertimeAuthorizationRecord[]>()
+    for (const ot of allApprovedOt) {
+      const otBio = String(ot.bioId).trim().toLowerCase()
+      if (otBio) {
+        const cleanBio = otBio.replace(/^emp[-_]/i, '')
+        if (!otByBioId.has(otBio)) otByBioId.set(otBio, [])
+        otByBioId.get(otBio)!.push(ot)
+        if (cleanBio !== otBio) {
+          if (!otByBioId.has(cleanBio)) otByBioId.set(cleanBio, [])
+          otByBioId.get(cleanBio)!.push(ot)
+        }
+      }
+    }
+
     for (const emp of targetEmployees) {
       const bioId = String(emp.biometric_user_id || (emp as any).bioId || emp.employee_number || emp.id || '').trim().toLowerCase()
-      const empIds = new Set<string>()
-      const addEmpId = (val?: string | number | null) => {
-        if (!val) return
-        const s = String(val).trim().toLowerCase()
-        empIds.add(s)
-        empIds.add(s.replace(/^emp[-_]/i, ''))
-        if (!s.startsWith('emp-')) empIds.add(`emp-${s}`)
-      }
-      addEmpId(emp.biometric_user_id)
-      addEmpId((emp as any).bioId)
-      addEmpId(emp.employee_number)
-      addEmpId(emp.id)
-      addEmpId(bioId)
+      const cleanBio = bioId.replace(/^emp[-_]/i, '')
 
-      const empAttendance = dailyAttendanceRecords.filter(r => {
-        const rBio = String(r.biometric_user_id || (r as any).bioId || '').trim().toLowerCase()
-        const rBioClean = rBio.replace(/^emp[-_]/i, '')
-        return empIds.has(rBio) || empIds.has(rBioClean)
-      })
-      const empOt = allApprovedOt.filter(ot => {
-        const otBio = String(ot.bioId).trim().toLowerCase()
-        const otBioClean = otBio.replace(/^emp[-_]/i, '')
-        return empIds.has(otBio) || empIds.has(otBioClean)
-      })
-      const record = await this.computeSingleEmployeePayroll(period, emp, holidays, empAttendance, empOt)
+      const empAttendance = [
+        ...(attendanceByBioId.get(bioId) || []),
+        ...(cleanBio !== bioId ? (attendanceByBioId.get(cleanBio) || []) : [])
+      ]
+      const empOt = [
+        ...(otByBioId.get(bioId) || []),
+        ...(cleanBio !== bioId ? (otByBioId.get(cleanBio) || []) : [])
+      ]
+      const snap = snapshotMap.get(bioId) || snapshotMap.get(cleanBio) || null
+
+      const record = await this.computeSingleEmployeePayroll(
+        period,
+        emp,
+        holidays,
+        empAttendance,
+        empOt,
+        { attendancePrefetched, existingSnapshot: snap }
+      )
       payrollRecords.push(record)
     }
 
