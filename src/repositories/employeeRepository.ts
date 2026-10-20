@@ -958,8 +958,11 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
 
   const rawSalaryType = getOptString(input.salaryType, input.salary_type)
   let cleanSalaryType: 'Monthly' | 'Daily' | 'Hourly' | undefined = undefined
-  if (rawSalaryType === 'Monthly' || rawSalaryType === 'Daily' || rawSalaryType === 'Hourly') {
-    cleanSalaryType = rawSalaryType
+  if (rawSalaryType) {
+    const s = rawSalaryType.trim().toLowerCase()
+    if (s === 'monthly') cleanSalaryType = 'Monthly'
+    else if (s === 'daily') cleanSalaryType = 'Daily'
+    else if (s === 'hourly') cleanSalaryType = 'Hourly'
   }
 
   const cleanBasicSalary = getOptNumber(input.basicSalary, input.basic_salary, input.salaryRate, input.salary_rate)

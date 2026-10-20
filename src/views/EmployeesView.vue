@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, toRaw } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Search,
@@ -214,7 +214,8 @@ function getEmployeePhotoUrl(emp?: Employee | null): string | null {
 }
 
 // Complete Payroll Profile Form fields
-const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Monthly')
+const isInitializingProfileForm = ref(false)
+const formSalaryType = ref<'Monthly' | 'Daily' | 'Hourly'>('Daily')
 const formBasicSalary = ref<number | ''>('')
 const formDailyRate = ref<number | ''>('')
 const formHourlyRate = ref<number | ''>('')
@@ -231,20 +232,109 @@ const formAllowances = ref<number | ''>('')
 const formDeMinimis = ref<number | ''>('')
 const formPayrollStatus = ref<'configured' | 'pending' | 'exempt'>('configured')
 
-function autoCalculateRates() {
-  if (typeof formBasicSalary.value === 'number' && formBasicSalary.value > 0) {
-    if (formSalaryType.value === 'Monthly') {
-      const daily = Math.round((formBasicSalary.value / 26) * 100) / 100
-      formDailyRate.value = daily
-      formHourlyRate.value = Math.round((daily / 8) * 100) / 100
-    } else if (formSalaryType.value === 'Daily') {
-      formDailyRate.value = formBasicSalary.value
-      formHourlyRate.value = Math.round((formBasicSalary.value / 8) * 100) / 100
-    } else if (formSalaryType.value === 'Hourly') {
-      formHourlyRate.value = formBasicSalary.value
-      formDailyRate.value = Math.round((formBasicSalary.value * 8) * 100) / 100
-    }
+function normalizeSalaryType(val?: string | null): 'Monthly' | 'Daily' | 'Hourly' {
+  if (!val) return 'Daily'
+  const s = val.trim().toLowerCase()
+  if (s === 'monthly') return 'Monthly'
+  if (s === 'hourly') return 'Hourly'
+  if (s === 'daily') return 'Daily'
+  return 'Daily'
+}
+
+function parseSalaryNumber(val: unknown): number {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val
+  if (typeof val === 'string') {
+    const clean = val.replace(/,/g, '').trim()
+    const n = Number(clean)
+    return isNaN(n) ? 0 : n
   }
+  return 0
+}
+
+function parseOptionalNumber(val: unknown): number | undefined {
+  if (typeof val === 'number') return isNaN(val) ? undefined : val
+  if (typeof val === 'string') {
+    const clean = val.replace(/,/g, '').trim()
+    if (!clean) return undefined
+    const n = Number(clean)
+    return isNaN(n) ? undefined : n
+  }
+  return undefined
+}
+
+function autoCalculateRates() {
+  if (isInitializingProfileForm.value) return
+
+  const basic = parseSalaryNumber(formBasicSalary.value)
+  if (basic <= 0) {
+    return
+  }
+
+  if (formSalaryType.value === 'Monthly') {
+    const daily = Math.round((basic / 26) * 100) / 100
+    formDailyRate.value = daily
+    formHourlyRate.value = Math.round((daily / 8) * 100) / 100
+  } else if (formSalaryType.value === 'Daily') {
+    const daily = Math.round(basic * 100) / 100
+    formDailyRate.value = daily
+    formHourlyRate.value = Math.round((daily / 8) * 100) / 100
+  } else if (formSalaryType.value === 'Hourly') {
+    const hourly = Math.round(basic * 100) / 100
+    formHourlyRate.value = hourly
+    formDailyRate.value = Math.round((hourly * 8) * 100) / 100
+  }
+}
+
+// Watch both formSalaryType and formBasicSalary for reactive rate recalculations
+watch([formSalaryType, formBasicSalary], () => {
+  if (!isInitializingProfileForm.value) {
+    autoCalculateRates()
+  }
+})
+
+function resetEmployeeForm() {
+  isInitializingProfileForm.value = true
+  formBioId.value = ''
+  formName.value = ''
+  formPreferredName.value = ''
+  formDateOfBirth.value = ''
+  formGender.value = 'not_specified'
+  formCivilStatus.value = 'not_specified'
+  formMobileNumber.value = ''
+  formEmail.value = ''
+  formAlternateNumber.value = ''
+  formHomeAddress.value = ''
+  formEmergencyName.value = ''
+  formEmergencyRelationship.value = ''
+  formEmergencyNumber.value = ''
+  formLocation.value = 'DBB CEBU'
+  formWorkGroupId.value = 'wg-group-c'
+  formDepartment.value = ''
+  formPosition.value = ''
+  formHireDate.value = ''
+  formContractDate.value = ''
+  formRegularizationDate.value = ''
+  formResignationDate.value = ''
+  formStatus.value = 'active'
+  formSalaryType.value = 'Daily'
+  formBasicSalary.value = ''
+  formDailyRate.value = ''
+  formHourlyRate.value = ''
+  formPayFrequency.value = 'Semi-Monthly'
+  formPaymentMethod.value = 'Bank Transfer'
+  formBankName.value = ''
+  formBankAccountNumber.value = ''
+  formTin.value = ''
+  formSssNumber.value = ''
+  formPhilhealthNumber.value = ''
+  formPagibigNumber.value = ''
+  formTaxStatus.value = 'Standard'
+  formAllowances.value = ''
+  formDeMinimis.value = ''
+  formPayrollStatus.value = 'configured'
+  nextTick(() => {
+    isInitializingProfileForm.value = false
+  })
 }
 
 const profileSaving = ref(false)
@@ -444,6 +534,7 @@ function onPageChange(page: number) {
 }
 
 function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initialSection: EditSection = 'people') {
+  isInitializingProfileForm.value = true
   selectedEmployee.value = emp
   activeProfileTab.value = tab
   activeEditSection.value = initialSection
@@ -471,7 +562,7 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   formRegularizationDate.value = emp.regularization_date || ''
   formResignationDate.value = emp.resignation_date || ''
   formStatus.value = (emp.status as any) || 'active'
-  formSalaryType.value = (emp.salary_type as any) || 'Monthly'
+  formSalaryType.value = normalizeSalaryType(emp.salary_type)
   formBasicSalary.value = typeof emp.basic_salary === 'number' ? emp.basic_salary : ''
   formDailyRate.value = typeof emp.daily_rate === 'number' ? emp.daily_rate : ''
   formHourlyRate.value = typeof emp.hourly_rate === 'number' ? emp.hourly_rate : ''
@@ -491,12 +582,17 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
   showProfileModal.value = true
+
+  nextTick(() => {
+    isInitializingProfileForm.value = false
+  })
 }
 
 function closeProfileModal() {
   showProfileModal.value = false
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
+  resetEmployeeForm()
 }
 
 async function saveProfile() {
@@ -542,9 +638,9 @@ async function saveProfile() {
       resignation_date: formStatus.value === 'resigned' ? (formResignationDate.value.trim() || undefined) : undefined,
       status: formStatus.value,
       salary_type: formSalaryType.value,
-      basic_salary: typeof formBasicSalary.value === 'number' && !isNaN(formBasicSalary.value) ? formBasicSalary.value : undefined,
-      daily_rate: typeof formDailyRate.value === 'number' && !isNaN(formDailyRate.value) ? formDailyRate.value : undefined,
-      hourly_rate: typeof formHourlyRate.value === 'number' && !isNaN(formHourlyRate.value) ? formHourlyRate.value : undefined,
+      basic_salary: parseOptionalNumber(formBasicSalary.value),
+      daily_rate: parseOptionalNumber(formDailyRate.value),
+      hourly_rate: parseOptionalNumber(formHourlyRate.value),
       pay_frequency: formPayFrequency.value,
       payment_method: formPaymentMethod.value,
       bank_name: formBankName.value.trim() || undefined,
@@ -554,8 +650,8 @@ async function saveProfile() {
       philhealth_number: formPhilhealthNumber.value.trim() || undefined,
       pagibig_number: formPagibigNumber.value.trim() || undefined,
       tax_status: formTaxStatus.value.trim() || 'Standard',
-      allowances: typeof formAllowances.value === 'number' && !isNaN(formAllowances.value) ? formAllowances.value : undefined,
-      de_minimis: typeof formDeMinimis.value === 'number' && !isNaN(formDeMinimis.value) ? formDeMinimis.value : undefined,
+      allowances: parseOptionalNumber(formAllowances.value),
+      de_minimis: parseOptionalNumber(formDeMinimis.value),
       payroll_status: formPayrollStatus.value
     })
 
@@ -1423,7 +1519,7 @@ onUnmounted(() => {
                   <span class="font-bold text-foreground font-mono">
                     {{ typeof selectedEmployee.basic_salary === 'number' ? `₱${selectedEmployee.basic_salary.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—' }}
                   </span>
-                  <span class="text-[10px] text-muted-foreground block">({{ selectedEmployee.salary_type || 'Monthly' }})</span>
+                  <span class="text-[10px] text-muted-foreground block">({{ selectedEmployee.salary_type || 'Daily' }})</span>
                 </div>
                 <div>
                   <span class="text-muted-foreground block text-[11px]">Daily Rate</span>
@@ -1813,8 +1909,8 @@ onUnmounted(() => {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectGroup>
-                            <SelectItem value="Monthly">Monthly Salary</SelectItem>
                             <SelectItem value="Daily">Daily Wage</SelectItem>
+                            <SelectItem value="Monthly">Monthly Salary</SelectItem>
                             <SelectItem value="Hourly">Hourly Rate</SelectItem>
                           </SelectGroup>
                         </SelectContent>
@@ -1834,7 +1930,6 @@ onUnmounted(() => {
                           min="0"
                           placeholder="0.00"
                           class="h-8 text-xs pl-6 font-mono"
-                          @change="autoCalculateRates"
                         />
                       </div>
                     </div>
@@ -1856,7 +1951,12 @@ onUnmounted(() => {
                     </div>
 
                     <div class="space-y-1">
-                      <label class="text-xs font-semibold text-foreground">Daily Rate</label>
+                      <div class="flex items-center justify-between">
+                        <label class="text-xs font-semibold text-foreground">Daily Rate</label>
+                        <span v-if="typeof formDailyRate === 'number' && !isNaN(formDailyRate)" class="text-[11px] font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                          ₱{{ formDailyRate.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                        </span>
+                      </div>
                       <div class="relative">
                         <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
                         <Input
@@ -1871,7 +1971,12 @@ onUnmounted(() => {
                     </div>
 
                     <div class="space-y-1">
-                      <label class="text-xs font-semibold text-foreground">Hourly Rate</label>
+                      <div class="flex items-center justify-between">
+                        <label class="text-xs font-semibold text-foreground">Hourly Rate</label>
+                        <span v-if="typeof formHourlyRate === 'number' && !isNaN(formHourlyRate)" class="text-[11px] font-mono font-medium text-indigo-600 dark:text-indigo-400">
+                          ₱{{ formHourlyRate.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                        </span>
+                      </div>
                       <div class="relative">
                         <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
                         <Input
