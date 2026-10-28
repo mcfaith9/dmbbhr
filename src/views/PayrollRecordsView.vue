@@ -11,6 +11,14 @@ import {
   AlertCircle,
   Users
 } from '@lucide/vue'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -241,16 +249,31 @@ const totalHolidayPay = computed(() => {
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">
-        <select
-          v-model="selectedPeriodId"
-          :disabled="isLoading"
-          @change="onPeriodChange"
-          class="h-8 rounded-md border border-input bg-background px-2.5 text-xs text-foreground font-medium focus:outline-hidden disabled:opacity-50"
-        >
-          <option v-for="p in availableCutoffs" :key="p.id" :value="p.id">
-            {{ p.label }}
-          </option>
-        </select>
+        <div class="w-full sm:w-[220px] max-w-full min-w-0">
+          <Select
+            v-model="selectedPeriodId"
+            :disabled="isLoading"
+            @update:model-value="onPeriodChange"
+          >
+            <SelectTrigger
+              class="h-8 w-full min-w-0 bg-background text-xs font-medium"
+            >
+              <SelectValue placeholder="Select Cutoff" />
+            </SelectTrigger>
+
+            <SelectContent class="max-h-64 overflow-y-auto">
+              <SelectGroup>
+                <SelectItem
+                  v-for="p in availableCutoffs"
+                  :key="p.id"
+                  :value="p.id"
+                >
+                  {{ p.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
 
         <Button
           variant="outline"
@@ -260,7 +283,6 @@ const totalHolidayPay = computed(() => {
           @click="refreshRecords"
         >
           <RefreshCw class="size-3.5" :class="{ 'animate-spin': isLoading }" />
-          Refresh
         </Button>
       </div>
     </div>

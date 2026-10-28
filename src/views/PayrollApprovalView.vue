@@ -63,24 +63,12 @@
         <Button
           variant="outline"
           size="sm"
-          class="h-8 gap-1.5 text-xs shrink-0"
+          class="h-9 text-xs shrink-0"
           :disabled="isLoading"
           @click="reload"
         >
           <RefreshCw class="size-3.5" :class="{ 'animate-spin': isLoading }" />
-          Refresh
         </Button>
-
-        <!-- Reviewer indicator -->
-        <div class="hidden xl:flex items-center gap-2 pl-2 border-l border-border text-xs text-muted-foreground shrink-0">
-          <div class="size-7 rounded bg-muted/60 border border-border flex items-center justify-center font-semibold text-[11px] text-foreground">
-            {{ reviewerInitials }}
-          </div>
-          <div class="leading-tight">
-            <div class="font-medium text-foreground text-[11px]">{{ reviewerName }}</div>
-            <div class="text-[10px] text-muted-foreground">{{ reviewerRole }} Reviewer</div>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -269,9 +257,8 @@
           <TableHeader>
             <TableRow class="bg-muted/40">
               <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[70px]">Bio ID</TableHead>
-              <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[190px]">Employee</TableHead>
+              <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[150px]">Employee</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[90px]">Cutoff</TableHead>
-              <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[110px]">Base & Days</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap text-right min-w-[100px]">Gross</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap text-right min-w-[100px]">Deductions</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap text-right min-w-[110px]">Net Pay</TableHead>
@@ -383,17 +370,6 @@
                 {{ snap.periodId }}
               </TableCell>
 
-              <!-- Base & Days -->
-              <TableCell class="whitespace-nowrap">
-                <div class="font-mono tabular-nums text-foreground">
-                  {{ formatPeso(snap.basicSalary) }}
-                </div>
-                <div class="text-[10px] text-muted-foreground">
-                  <span class="font-semibold text-foreground">{{ snap.payableDays ?? '—' }}</span>
-                  <span> payable days</span>
-                </div>
-              </TableCell>
-
               <!-- Gross Earnings -->
               <TableCell class="font-mono tabular-nums text-right whitespace-nowrap text-foreground">
                 {{ formatPeso(snap.initialEarnings) }}
@@ -433,7 +409,7 @@
                   <Button
                     size="sm"
                     variant="default"
-                    class="h-7 px-2.5 text-xs gap-1 font-medium bg-blue-600 hover:bg-blue-700 text-white dark:bg-blue-600 dark:hover:bg-blue-700"
+                    class="h-7 px-2.5 text-xs gap-1 font-medium"
                     :disabled="snap.reviewStatus === 'approved' || isSubmitting"
                     title="Authorize and approve payroll"
                     @click="openApproveDialog(snap)"
