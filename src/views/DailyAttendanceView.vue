@@ -525,7 +525,7 @@ onUnmounted(() => {
             <span>{{ displayDateTitle }}</span>
             <span class="text-muted-foreground font-mono">({{ selectedDate }})</span>
           </div>
-          <button
+          <!-- <button
             type="button"
             class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-xs font-medium transition-colors cursor-pointer"
             :class="[
@@ -545,7 +545,7 @@ onUnmounted(() => {
               ]"
             />
             <span>BISBIO B-29b ({{ deviceStatus.status.toUpperCase() }})</span>
-          </button>
+          </button> -->
         </div>
         <p class="text-xs text-muted-foreground">
           Work Group schedule evaluation · Arrival IN & departure OUT window clustering · Preserved raw scans audit

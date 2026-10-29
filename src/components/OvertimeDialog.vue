@@ -287,7 +287,7 @@ async function handleSaveAuthorization() {
     <DialogContent class="sm:max-w-xl">
       <DialogHeader>
         <DialogTitle class="text-base flex items-center gap-2">
-          <component :is="isEditing ? Pencil : FileText" class="size-4 text-indigo-600" />
+          <component :is="isEditing ? Pencil : FileText" class="size-4" />
           {{ isEditing ? 'Edit Physical Overtime Authorization' : 'New Physical Overtime Authorization' }}
         </DialogTitle>
 

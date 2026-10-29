@@ -801,7 +801,6 @@ onMounted(() => {
             <TableHeader>
               <TableRow class="bg-muted/50 hover:bg-muted/50 border-b">
                 <TableHead class="font-semibold text-foreground min-w-[140px]">Date/Time</TableHead>
-                <TableHead class="font-semibold text-foreground min-w-[100px]">Employee ID</TableHead>
                 <TableHead class="font-semibold text-foreground min-w-[160px]">Employee Name</TableHead>
                 <TableHead class="font-semibold text-foreground min-w-[110px]">Attendance Date</TableHead>
                 <TableHead class="font-semibold text-foreground min-w-[150px]">Attendance Time</TableHead>
@@ -820,11 +819,6 @@ onMounted(() => {
                 <!-- 1. Processed Date/Time -->
                 <TableCell class="py-2.5 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
                   {{ formatTimestamp(record.processedAt) }}
-                </TableCell>
-
-                <!-- 2. Employee ID -->
-                <TableCell class="py-2.5 font-mono text-xs font-semibold text-foreground whitespace-nowrap">
-                  #{{ record.employeeId }}
                 </TableCell>
 
                 <!-- 3. Employee Name -->

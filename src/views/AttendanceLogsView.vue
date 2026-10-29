@@ -560,7 +560,7 @@ onUnmounted(() => {
           <span class="text-xs px-2.5 py-0.5 rounded-md border bg-muted/50 font-mono font-medium text-foreground">
             {{ meta.totalItems.toLocaleString() }} Stored Captures
           </span>
-          <button
+          <!-- <button
             type="button"
             class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-xs font-medium transition-colors cursor-pointer"
             :class="[
@@ -580,7 +580,7 @@ onUnmounted(() => {
               ]"
             />
             <span>BISBIO B-29b ({{ deviceStatus.status.toUpperCase() }})</span>
-          </button>
+          </button> -->
         </div>
         <p class="text-xs text-muted-foreground">
           Immutable, auditable log of all raw biometric fingerprint capture events persisted in client storage.
@@ -612,12 +612,10 @@ onUnmounted(() => {
         </Button>
         <Button variant="outline" size="sm" class="h-8 gap-1.5 text-xs" @click="showImportModal = true">
           <Upload class="size-3.5" />
-          <span>Import</span>
         </Button>
         <div class="flex items-center rounded-md border bg-card shadow-2xs">
-          <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-r-none border-r" @click="exportLogs('xlsx')">
+          <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs rounded-r-none" @click="exportLogs('xlsx')">
             <Download class="size-3.5" />
-            Excel
           </Button>
         </div>
       </div>
