@@ -141,8 +141,6 @@
     min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
   }
 
   /* Hide screen application tree during print */
