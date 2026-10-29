@@ -285,6 +285,7 @@ async function saveRecord(batchStatus: 'draft' | 'approved' | 'finalized') {
 // Print / View Payslip
 const isPrinting = ref(false)
 const payslipRef = ref<InstanceType<typeof PrintablePayslip> | null>(null)
+const directPayslipRef = ref<InstanceType<typeof PrintablePayslip> | null>(null)
 
 async function triggerPrint() {
   if (isPrinting.value) return
@@ -293,6 +294,8 @@ async function triggerPrint() {
   try {
     if (payslipRef.value) {
       await payslipRef.value.print()
+    } else if (directPayslipRef.value) {
+      await directPayslipRef.value.print()
     } else {
       await nextTick()
       window.print()
@@ -301,11 +304,18 @@ async function triggerPrint() {
     isPrinting.value = false
   }
 }
+
+async function handleFirstPrintButton() {
+  if (isPrinting.value || !currentRecord.value) return
+  isPayslipViewOpen.value = true
+  await nextTick()
+  await triggerPrint()
+}
 </script>
 
 <template>
   <Dialog :open="open" @update:open="(val) => emit('update:open', val)">
-    <DialogContent class="sm:max-w-5xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
+    <DialogContent class="payroll-calc-dialog-content print:hidden sm:max-w-5xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
       <!-- Modal Top Header -->
       <DialogHeader class="px-5 pt-4 pb-2 border-b bg-card shrink-0">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -372,13 +382,14 @@ async function triggerPrint() {
               <RefreshCw :class="['size-3.5', isLoading ? 'animate-spin' : '']" />
             </Button>
 
-            <!-- Print / View Payslip -->
+            <!-- Print / View Payslip Button 1 -->
             <Button
               variant="outline"
               size="sm"
               class="h-8 gap-1.5 text-xs cursor-pointer shadow-2xs"
-              :disabled="!currentRecord"
-              @click="isPayslipViewOpen = true"
+              :disabled="!currentRecord || isPrinting"
+              title="Print Official Payslip"
+              @click="handleFirstPrintButton"
             >
               <Printer class="size-3.5 text-primary" />
             </Button>
@@ -1022,6 +1033,22 @@ async function triggerPrint() {
     </DialogContent>
   </Dialog>
 
+  <!-- Dedicated Official Payslip Print Container for Direct Printing when modal is closed -->
+  <div
+    v-if="currentRecord && currentCutoff && !isPayslipViewOpen"
+    id="printable-payslip-direct"
+    class="printable-payslip-direct-container hidden print:block"
+  >
+    <PrintablePayslip
+      ref="directPayslipRef"
+      :record="currentRecord"
+      :cutoff="currentCutoff"
+      company-name="DMBB Industrial Services"
+      company-subtitle="Human Resources & Payroll"
+      logo-url="/dmbblogo.png"
+    />
+  </div>
+
   <!-- Individual Printable Payslip Modal -->
   <Dialog :open="isPayslipViewOpen" @update:open="(val) => isPayslipViewOpen = val">
     <DialogContent class="payslip-dialog-content sm:max-w-2xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
@@ -1040,6 +1067,7 @@ async function triggerPrint() {
           size="sm"
           class="h-8 gap-1.5 text-xs cursor-pointer mr-6 print:hidden"
           :disabled="isPrinting || payslipRef?.isPrinting"
+          title="Print Official Payslip"
           @click="triggerPrint"
         >
           <Printer class="size-3.5" />

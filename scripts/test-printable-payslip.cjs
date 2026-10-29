@@ -111,7 +111,18 @@ assert.ok(dialogContent.includes('import PrintablePayslip'), 'PayrollCalculation
 assert.ok(dialogContent.includes('<PrintablePayslip'), 'PayrollCalculationDialog must mount PrintablePayslip')
 assert.ok(dialogContent.includes('payslipRef.value?.print()') || dialogContent.includes('payslipRef.value.print()'), 'triggerPrint must delegate to payslipRef.print()')
 
-console.log('✔ Test 3 Passed: Dedicated PrintablePayslip component and clean dialog integration verified.\n')
+// Check Both Print Buttons in PayrollCalculationDialog.vue
+assert.ok(dialogContent.includes('handleFirstPrintButton'), 'Button 1 must use handleFirstPrintButton')
+assert.ok(dialogContent.includes('@click="handleFirstPrintButton"'), 'Button 1 must be wired to handleFirstPrintButton')
+assert.ok(dialogContent.includes('@click="triggerPrint"'), 'Button 2 must be wired to triggerPrint')
+assert.ok(dialogContent.includes('payroll-calc-dialog-content print:hidden'), 'Main calculation dialog must have print:hidden and payroll-calc-dialog-content')
+assert.ok(dialogContent.includes('printable-payslip-direct-container'), 'Dedicated printable payslip direct container must exist')
+
+// Check CSS strict exclusion of the calculation dialog in print
+assert.ok(cssContent.includes('.payroll-calc-dialog-content'), 'CSS must specifically target .payroll-calc-dialog-content for hiding')
+assert.ok(cssContent.includes('[data-slot="dialog-content"]:not(.payslip-dialog-content)'), 'CSS must hide non-payslip dialog contents in print')
+
+console.log('✔ Test 3 Passed: Both Print buttons and print isolation guardrails verified.\n')
 
 // -------------------------------------------------------------
 // Test 4: Single-Page Height Mathematical Simulation
