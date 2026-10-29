@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, toRaw } from 'vue'
+import { ref, computed, watch, toRaw, nextTick } from 'vue'
 import {
   Dialog,
   DialogContent,
@@ -282,8 +282,44 @@ async function saveRecord(batchStatus: 'draft' | 'approved' | 'finalized') {
 }
 
 // Print / View Payslip
-function triggerPrint() {
-  window.print()
+const isPrinting = ref(false)
+
+const totalDeductionsCalculated = computed(() => {
+  if (!currentRecord.value) return 0
+  const r = currentRecord.value
+  return Math.round(
+    ((r.totalBenefitsAndLoans || 0) +
+      (r.cashAdvance || 0) +
+      (r.totalOtherDeductions || 0) +
+      (r.undertimeDeduction || 0) +
+      (r.withholdingTax || 0)) * 100
+  ) / 100
+})
+
+async function triggerPrint() {
+  if (isPrinting.value) return
+  isPrinting.value = true
+
+  try {
+    // 1. Ensure company logo is preloaded before opening print dialog
+    await new Promise<void>((resolve) => {
+      const img = new Image()
+      img.onload = () => resolve()
+      img.onerror = () => resolve()
+      img.src = '/dbblogo.png'
+      if (img.complete) {
+        resolve()
+      }
+    })
+
+    // 2. Small tick to allow browser DOM to settle
+    await nextTick()
+
+    // 3. Trigger browser print dialog
+    window.print()
+  } finally {
+    isPrinting.value = false
+  }
 }
 </script>
 
@@ -1008,8 +1044,8 @@ function triggerPrint() {
 
   <!-- Individual Printable Payslip Modal -->
   <Dialog :open="isPayslipViewOpen" @update:open="(val) => isPayslipViewOpen = val">
-    <DialogContent class="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
-      <DialogHeader class="px-5 py-3 border-b bg-card shrink-0 flex flex-row items-center justify-between">
+    <DialogContent class="payslip-dialog-content sm:max-w-2xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-2xl border shadow-2xl">
+      <DialogHeader class="payslip-screen-header px-5 py-3 border-b bg-card shrink-0 flex flex-row items-center justify-between">
         <div>
           <DialogTitle class="text-base font-bold text-foreground flex items-center gap-2">
             <FileText class="size-4 text-primary" />
@@ -1022,166 +1058,231 @@ function triggerPrint() {
         <Button
           variant="outline"
           size="sm"
-          class="h-8 gap-1.5 text-xs cursor-pointer mr-6"
+          class="h-8 gap-1.5 text-xs cursor-pointer mr-6 print:hidden"
+          :disabled="isPrinting"
           @click="triggerPrint"
         >
           <Printer class="size-3.5" />
-          <span>Print Voucher</span>
+          <span>{{ isPrinting ? 'Preparing...' : 'Print Voucher' }}</span>
         </Button>
       </DialogHeader>
 
-      <div v-if="currentRecord && currentCutoff" class="flex-1 overflow-y-auto p-6 space-y-4 print:p-0 text-xs text-foreground bg-background">
-        <!-- Printable Payslip Header -->
-        <div class="border-b pb-3 text-center space-y-1">
-          <h2 class="text-base font-black tracking-wide uppercase text-foreground">
-            DMBB HOLDINGS INC. — HUMAN RESOURCES
-          </h2>
-          <p class="text-[11px] text-muted-foreground uppercase tracking-widest font-semibold">
-            Confidential Semi-Monthly Employee Payslip
-          </p>
-          <div class="flex justify-center items-center gap-4 text-xs font-medium pt-1">
-            <span>Cut-Off Period: <strong>{{ currentCutoff.label }}</strong></span>
-            <span>•</span>
-            <span>Payday: <strong class="text-emerald-700 dark:text-emerald-400">{{ currentCutoff.paydayDisplay }}</strong></span>
-          </div>
-        </div>
-
-        <!-- Employee Info Grid -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-lg border bg-muted/20 font-mono text-[11px]">
-          <div>
-            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Employee Name</span>
-            <strong class="text-foreground text-xs">{{ currentRecord.employeeName }}</strong>
-          </div>
-          <div>
-            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Employee / Bio ID</span>
-            <strong class="text-foreground">#{{ currentRecord.employeeNumber }}</strong>
-          </div>
-          <div>
-            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Department</span>
-            <strong class="text-foreground">{{ currentRecord.department }}</strong>
-          </div>
-          <div>
-            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Position / Group</span>
-            <strong class="text-foreground">{{ currentRecord.position }}</strong>
-          </div>
-        </div>
-
-        <!-- Earnings & Deductions Tables -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <!-- Earnings Column -->
-          <div class="border rounded-lg p-3 space-y-2">
-            <h4 class="font-bold uppercase tracking-wider text-[11px] text-primary border-b pb-1">
-              Gross Earnings
-            </h4>
-            <div class="space-y-1.5 font-mono text-xs">
-              <div class="flex justify-between">
-                <span>Basic Wage ({{ currentRecord.payableDays }} days):</span>
-                <span>₱{{ currentRecord.earningsBreakdown.basePay.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between">
-                <span>Sunday Duty (+30%):</span>
-                <span>₱{{ currentRecord.earningsBreakdown.sundayDutyPay.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.earningsBreakdown.holidayPay > 0" class="flex justify-between">
-                <span>Holiday Duty:</span>
-                <span>₱{{ currentRecord.earningsBreakdown.holidayPay.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.earningsBreakdown.overtimePay > 0" class="flex justify-between">
-                <span>Authorized Overtime:</span>
-                <span>₱{{ currentRecord.earningsBreakdown.overtimePay.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.earningsBreakdown.allowances > 0" class="flex justify-between">
-                <span>Allowances:</span>
-                <span>₱{{ currentRecord.earningsBreakdown.allowances.toFixed(2) }}</span>
+      <div
+        v-if="currentRecord && currentCutoff"
+        id="printable-payslip"
+        class="payslip-voucher-root flex-1 overflow-y-auto p-5 sm:p-6 space-y-3.5 text-xs text-foreground bg-background print:overflow-visible print:p-0 print:space-y-2.5"
+      >
+        <!-- 1. Header with Company Logo & Details -->
+        <div class="border-b pb-3 space-y-2 print:pb-2">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <img
+                src="/dbblogo.png"
+                alt="DMBB Company Logo"
+                class="size-13 sm:size-14 object-contain shrink-0 rounded-md print:size-12"
+                crossorigin="anonymous"
+              />
+              <div class="text-left">
+                <h2 class="text-sm sm:text-base font-black tracking-wide uppercase text-foreground leading-tight">
+                  DMBB HOLDINGS INC.
+                </h2>
+                <p class="text-[10px] sm:text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">
+                  Human Resources & Payroll Department
+                </p>
+                <p class="text-[9.5px] text-muted-foreground font-mono">
+                  Official Compensation & Benefit Remittance Voucher
+                </p>
               </div>
             </div>
-            <div class="border-t pt-1.5 flex justify-between font-bold text-xs">
-              <span>Total Gross:</span>
-              <span class="text-primary font-mono">₱{{ currentRecord.initialEarnings.toFixed(2) }}</span>
+            <div class="text-right shrink-0">
+              <span class="inline-block px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 bg-muted/40 font-mono text-[9.5px] font-bold uppercase tracking-wider text-foreground print:bg-transparent">
+                Confidential
+              </span>
+              <p class="text-[9.5px] text-muted-foreground font-mono pt-1">
+                Ref: {{ currentRecord.id }}
+              </p>
+            </div>
+          </div>
+
+          <!-- 2. Cut-Off Period & Payday Banner -->
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-dashed text-xs">
+            <div class="flex items-center gap-1.5 font-medium">
+              <span class="text-muted-foreground uppercase text-[10px] tracking-wider font-sans">Cut-Off Period:</span>
+              <strong class="font-mono text-foreground text-xs">{{ currentCutoff.label }}</strong>
+            </div>
+            <div class="flex items-center gap-1.5 font-medium">
+              <span class="text-muted-foreground uppercase text-[10px] tracking-wider font-sans">Payday:</span>
+              <strong class="font-mono text-emerald-700 dark:text-emerald-400 print:text-emerald-800 text-xs">{{ currentCutoff.paydayDisplay }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Employee Info Grid with Salary Information -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-2.5 sm:p-3 rounded-lg border bg-muted/20 font-mono text-[11px] print:bg-neutral-50/50 print:p-2 print:gap-2">
+          <div>
+            <span class="text-muted-foreground block text-[9px] uppercase font-sans tracking-wider">Employee Name</span>
+            <strong class="text-foreground text-xs leading-tight block">{{ currentRecord.employeeName }}</strong>
+          </div>
+          <div>
+            <span class="text-muted-foreground block text-[9px] uppercase font-sans tracking-wider">Employee / Bio ID</span>
+            <strong class="text-foreground leading-tight block">#{{ currentRecord.employeeNumber }}</strong>
+          </div>
+          <div>
+            <span class="text-muted-foreground block text-[9px] uppercase font-sans tracking-wider">Position / Dept</span>
+            <span class="text-foreground text-[11px] font-semibold leading-tight block truncate">{{ currentRecord.position }}</span>
+            <span class="text-muted-foreground text-[10px] block leading-tight truncate">{{ currentRecord.department }}</span>
+          </div>
+          <div>
+            <span class="text-muted-foreground block text-[9px] uppercase font-sans tracking-wider">Salary Rate / Type</span>
+            <span class="text-foreground text-[11px] font-semibold leading-tight block">
+              <template v-if="currentRecord.salaryType === 'Daily' && currentRecord.dailyRate > 0">
+                ₱{{ currentRecord.dailyRate.toFixed(2) }}/day (Daily)
+              </template>
+              <template v-else-if="currentRecord.salaryType === 'Monthly' && currentRecord.basicSalary > 0">
+                ₱{{ currentRecord.basicSalary.toFixed(2) }}/mo (Monthly)
+              </template>
+              <template v-else-if="currentRecord.salaryType === 'Hourly' && currentRecord.hourlyRate > 0">
+                ₱{{ currentRecord.hourlyRate.toFixed(2) }}/hr (Hourly)
+              </template>
+              <template v-else>
+                {{ currentRecord.salaryType }}
+              </template>
+            </span>
+            <span class="text-muted-foreground text-[10px] block leading-tight">
+              {{ currentRecord.payableDays }} payable day{{ currentRecord.payableDays === 1 ? '' : 's' }}
+            </span>
+          </div>
+        </div>
+
+        <!-- 4 & 5. Earnings & Deductions Tables -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 print:gap-2.5">
+          <!-- Earnings Column -->
+          <div class="border rounded-lg p-2.5 sm:p-3 space-y-2 flex flex-col justify-between print:p-2">
+            <div>
+              <div class="flex items-center justify-between border-b pb-1">
+                <h4 class="font-bold uppercase tracking-wider text-[11px] text-primary">
+                  Gross Earnings
+                </h4>
+                <span class="text-[9.5px] text-muted-foreground uppercase font-sans">Credit Items</span>
+              </div>
+              <div class="space-y-1 pt-1.5 font-mono text-xs">
+                <div class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Basic Wage ({{ currentRecord.payableDays }} days):</span>
+                  <span class="font-medium text-foreground">₱{{ currentRecord.earningsBreakdown.basePay.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Sunday Duty (+30%):</span>
+                  <span class="font-medium text-foreground">₱{{ currentRecord.earningsBreakdown.sundayDutyPay.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.earningsBreakdown.holidayPay > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Holiday Duty Premium:</span>
+                  <span class="font-medium text-foreground">₱{{ currentRecord.earningsBreakdown.holidayPay.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.earningsBreakdown.overtimePay > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Authorized Overtime ({{ currentRecord.overtimeHours }}h):</span>
+                  <span class="font-medium text-foreground">₱{{ currentRecord.earningsBreakdown.overtimePay.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.earningsBreakdown.allowances > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Allowances:</span>
+                  <span class="font-medium text-foreground">₱{{ currentRecord.earningsBreakdown.allowances.toFixed(2) }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="border-t pt-1.5 mt-2 flex justify-between items-center font-bold text-xs bg-muted/20 px-2 py-1 rounded print:bg-transparent">
+              <span class="uppercase tracking-wider text-[10px]">Total Gross:</span>
+              <span class="text-primary font-mono text-sm">₱{{ currentRecord.initialEarnings.toFixed(2) }}</span>
             </div>
           </div>
 
           <!-- Deductions Column -->
-          <div class="border rounded-lg p-3 space-y-2">
-            <h4 class="font-bold uppercase tracking-wider text-[11px] text-rose-600 dark:text-rose-400 border-b pb-1">
-              Authorized Deductions
-            </h4>
-            <div class="space-y-1 font-mono text-xs max-h-36 overflow-y-auto">
-              <div v-if="currentRecord.sss > 0" class="flex justify-between">
-                <span>SSS:</span>
-                <span>-₱{{ currentRecord.sss.toFixed(2) }}</span>
+          <div class="border rounded-lg p-2.5 sm:p-3 space-y-2 flex flex-col justify-between print:p-2">
+            <div>
+              <div class="flex items-center justify-between border-b pb-1">
+                <h4 class="font-bold uppercase tracking-wider text-[11px] text-rose-600 dark:text-rose-400">
+                  Authorized Deductions
+                </h4>
+                <span class="text-[9.5px] text-muted-foreground uppercase font-sans">Debit Items</span>
               </div>
-              <div v-if="currentRecord.philhealth > 0" class="flex justify-between">
-                <span>PhilHealth:</span>
-                <span>-₱{{ currentRecord.philhealth.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.pagibig > 0" class="flex justify-between">
-                <span>Pag-IBIG:</span>
-                <span>-₱{{ currentRecord.pagibig.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.sssLoan > 0" class="flex justify-between">
-                <span>SSS Loan:</span>
-                <span>-₱{{ currentRecord.sssLoan.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.pagibigLoan > 0" class="flex justify-between">
-                <span>Pag-IBIG Loan:</span>
-                <span>-₱{{ currentRecord.pagibigLoan.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.otherLoan > 0" class="flex justify-between">
-                <span>Other Loan:</span>
-                <span>-₱{{ currentRecord.otherLoan.toFixed(2) }}</span>
-              </div>
-              <div v-if="(currentRecord.undertimeDeduction || 0) > 0" class="flex justify-between text-amber-700 dark:text-amber-400">
-                <span>Undertime ({{ currentRecord.undertimeMinutes }}m):</span>
-                <span>-₱{{ currentRecord.undertimeDeduction.toFixed(2) }}</span>
-              </div>
-              <div v-for="d in currentRecord.itemizedDeductions" :key="d.id" class="flex justify-between text-[11px]">
-                <span class="truncate max-w-[140px]">{{ d.description }}:</span>
-                <span>-₱{{ d.amount.toFixed(2) }}</span>
-              </div>
-              <div v-if="currentRecord.withholdingTax > 0" class="flex justify-between text-amber-700 dark:text-amber-400">
-                <span>Withholding Tax:</span>
-                <span>-₱{{ currentRecord.withholdingTax.toFixed(2) }}</span>
+              <div class="space-y-1 pt-1.5 font-mono text-xs max-h-48 overflow-y-auto print:max-h-none print:overflow-visible">
+                <div v-if="currentRecord.sss > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">SSS Contribution:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ currentRecord.sss.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.philhealth > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">PhilHealth Contribution:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ currentRecord.philhealth.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.pagibig > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Pag-IBIG Contribution:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ currentRecord.pagibig.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.sssLoan > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">SSS Loan Repayment:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ currentRecord.sssLoan.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.pagibigLoan > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Pag-IBIG Loan Repayment:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ currentRecord.pagibigLoan.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.otherLoan > 0" class="flex justify-between py-0.5 border-b border-muted/40">
+                  <span class="text-muted-foreground">Other Company Loan:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ currentRecord.otherLoan.toFixed(2) }}</span>
+                </div>
+                <div v-if="(currentRecord.undertimeDeduction || 0) > 0" class="flex justify-between py-0.5 border-b border-muted/40 text-amber-700 dark:text-amber-400">
+                  <span>Undertime ({{ currentRecord.undertimeMinutes }}m):</span>
+                  <span>-₱{{ currentRecord.undertimeDeduction.toFixed(2) }}</span>
+                </div>
+                <div v-for="d in currentRecord.itemizedDeductions" :key="d.id" class="flex justify-between py-0.5 border-b border-muted/40 text-[11px]">
+                  <span class="truncate max-w-[145px] text-muted-foreground">{{ d.description }}:</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">-₱{{ d.amount.toFixed(2) }}</span>
+                </div>
+                <div v-if="currentRecord.withholdingTax > 0" class="flex justify-between py-0.5 border-b border-muted/40 text-amber-700 dark:text-amber-400">
+                  <span>Withholding Tax (BIR):</span>
+                  <span>-₱{{ currentRecord.withholdingTax.toFixed(2) }}</span>
+                </div>
+                <div v-if="totalDeductionsCalculated === 0" class="text-center py-2 text-muted-foreground font-sans text-[11px] italic">
+                  No authorized deductions applied for this cutoff.
+                </div>
               </div>
             </div>
-            <div class="border-t pt-1.5 flex justify-between font-bold text-xs">
-              <span>Total Deductions:</span>
-              <span class="text-rose-600 dark:text-rose-400 font-mono">
-                -₱{{ (currentRecord.totalBenefitsAndLoans + currentRecord.cashAdvance + currentRecord.totalOtherDeductions + (currentRecord.undertimeDeduction || 0) + currentRecord.withholdingTax).toFixed(2) }}
+            <div class="border-t pt-1.5 mt-2 flex justify-between items-center font-bold text-xs bg-muted/20 px-2 py-1 rounded print:bg-transparent">
+              <span class="uppercase tracking-wider text-[10px]">Total Deductions:</span>
+              <span class="text-rose-600 dark:text-rose-400 font-mono text-sm">
+                -₱{{ totalDeductionsCalculated.toFixed(2) }}
               </span>
             </div>
           </div>
         </div>
 
-        <!-- Net Take Home Pay Highlight -->
-        <div class="p-3.5 rounded-lg border-2 border-emerald-500/40 bg-emerald-500/10 flex items-center justify-between">
+        <!-- 6. Net Take Home Pay Highlight -->
+        <div class="p-3 sm:p-3.5 rounded-lg border-2 border-emerald-600/40 bg-emerald-500/10 flex items-center justify-between print:border-neutral-400 print:bg-neutral-50 print:p-2.5">
           <div>
-            <span class="text-[10px] uppercase font-bold tracking-wider text-emerald-800 dark:text-emerald-300 block">
-              Net Amount Received
+            <span class="text-[10px] sm:text-[11px] uppercase font-bold tracking-wider text-emerald-800 dark:text-emerald-300 print:text-black block">
+              Net Take-Home Pay
             </span>
-            <span class="text-xs text-muted-foreground">
-              Direct transfer / Cash envelope
+            <span class="text-[10px] text-muted-foreground print:text-neutral-600 block">
+              Gross: ₱{{ currentRecord.initialEarnings.toFixed(2) }} · Deductions: -₱{{ totalDeductionsCalculated.toFixed(2) }}
             </span>
           </div>
-          <div class="text-xl sm:text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400">
+          <div class="text-xl sm:text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 print:text-black">
             ₱{{ currentRecord.netPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
           </div>
         </div>
 
-        <!-- Signatures & Acknowledgment -->
-        <div class="grid grid-cols-2 gap-8 pt-8 border-t text-[11px]">
+        <!-- 7. Signatures & Acknowledgment -->
+        <div class="grid grid-cols-2 gap-8 pt-6 sm:pt-7 border-t text-[11px] print:pt-4 print:gap-10">
           <div class="border-t border-muted-foreground/40 pt-1 text-center">
-            <span class="text-muted-foreground block">Prepared & Audited By</span>
-            <strong class="text-foreground">Human Resources / Payroll Officer</strong>
+            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Prepared & Audited By</span>
+            <strong class="text-foreground text-[11px]">Human Resources / Payroll Officer</strong>
           </div>
           <div class="border-t border-muted-foreground/40 pt-1 text-center">
-            <span class="text-muted-foreground block">Received By (Employee Signature)</span>
-            <strong class="text-foreground">{{ currentRecord.employeeName }}</strong>
+            <span class="text-muted-foreground block text-[10px] uppercase font-sans">Received By (Employee Signature)</span>
+            <strong class="text-foreground text-[11px]">{{ currentRecord.employeeName }}</strong>
           </div>
         </div>
       </div>
 
-      <DialogFooter class="px-5 py-2.5 border-t bg-muted/20">
+      <DialogFooter class="payslip-screen-footer px-5 py-2.5 border-t bg-muted/20 print:hidden">
         <Button variant="ghost" size="sm" class="h-8 text-xs cursor-pointer" @click="isPayslipViewOpen = false">
           Close Preview
         </Button>

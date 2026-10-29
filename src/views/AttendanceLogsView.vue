@@ -9,7 +9,6 @@ import {
   Calendar as CalendarIcon,
   X,
   CheckCircle2,
-  Radio,
   Fingerprint,
   Trash2,
   MapPin,
@@ -490,7 +489,6 @@ async function confirmClearAll() {
   }
 }
 
-const deviceStatus = liveAttendanceService.deviceStatus
 const isSyncing = liveAttendanceService.isSyncing
 
 async function handleManualSync() {

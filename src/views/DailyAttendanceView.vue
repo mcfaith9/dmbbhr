@@ -6,7 +6,6 @@ import {
   RefreshCw,
   Calendar as CalendarIcon,
   CheckCircle2,
-  Radio,
   Users,
   Search,
   X,
@@ -75,7 +74,6 @@ const activeEmployeeFilter = ref<{ bioId: string; name?: string } | null>(null)
 const employeeViewMode = ref<'selected_date' | 'all_dates'>('selected_date')
 
 // Real device status and sync state
-const deviceStatus = liveAttendanceService.deviceStatus
 const isSyncing = liveAttendanceService.isSyncing
 
 // Default to Today in Philippine Standard Time
