@@ -282,6 +282,8 @@ export interface PayrollSnapshotRecord {
   overtimeHours?: number
   overtimePay?: number
   lateMinutes: number
+  undertimeMinutes?: number
+  undertimeDeduction?: number
   initialEarnings: number
   sss: number
   philhealth: number

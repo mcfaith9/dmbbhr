@@ -496,7 +496,7 @@ function triggerPrint() {
             </div>
 
             <!-- Attendance Days Metric Grid -->
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 text-xs">
               <div class="p-2 rounded-lg border bg-muted/20">
                 <span class="text-[10px] text-muted-foreground block">Scheduled</span>
                 <span class="font-bold text-foreground font-mono text-sm">{{ currentRecord.scheduledDays }} days</span>
@@ -520,6 +520,10 @@ function triggerPrint() {
               <div class="p-2 rounded-lg border bg-muted/20">
                 <span class="text-[10px] text-muted-foreground block">Late Tardy</span>
                 <span class="font-bold text-foreground font-mono text-sm">{{ currentRecord.lateMinutes }} mins</span>
+              </div>
+              <div class="p-2 rounded-lg border" :class="(currentRecord.undertimeMinutes || 0) > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-muted/20'">
+                <span class="text-[10px] block" :class="(currentRecord.undertimeMinutes || 0) > 0 ? 'text-amber-700 dark:text-amber-300 font-semibold' : 'text-muted-foreground'">Undertime</span>
+                <span class="font-bold font-mono text-sm" :class="(currentRecord.undertimeMinutes || 0) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'">{{ currentRecord.undertimeMinutes || 0 }} mins</span>
               </div>
             </div>
 
@@ -705,14 +709,33 @@ function triggerPrint() {
                     </h3>
                   </div>
                   <div class="text-xs font-mono font-bold text-rose-600 dark:text-rose-400">
-                    -₱{{ (currentRecord.cashAdvance + currentRecord.totalOtherDeductions).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                    -₱{{ (currentRecord.cashAdvance + currentRecord.totalOtherDeductions + (currentRecord.undertimeDeduction || 0)).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                  </div>
+                </div>
+
+                <!-- Undertime Deduction Entry (if any undertime accrued) -->
+                <div
+                  v-if="(currentRecord.undertimeDeduction || 0) > 0"
+                  class="flex items-center justify-between gap-2 p-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs mb-2"
+                >
+                  <div class="min-w-0 flex-1 flex items-center gap-1.5 truncate">
+                    <Badge variant="outline" class="text-[9px] py-0 px-1 font-mono uppercase shrink-0 border-amber-500/40 text-amber-700 dark:text-amber-300">
+                      UNDERTIME
+                    </Badge>
+                    <span class="truncate font-medium text-foreground">
+                      Undertime ({{ currentRecord.undertimeMinutes }}m / {{ (currentRecord.undertimeMinutes / 60).toFixed(1) }}h @ ₱{{ currentRecord.hourlyRate.toFixed(2) }}/hr)
+                    </span>
+                  </div>
+
+                  <div class="flex items-center gap-2 shrink-0 font-mono font-bold text-rose-600 dark:text-rose-400">
+                    -₱{{ currentRecord.undertimeDeduction.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                   </div>
                 </div>
 
                 <!-- Existing Itemized Entries List -->
                 <div class="pt-2 space-y-1.5 max-h-44 overflow-y-auto pr-1">
                   <div
-                    v-if="!currentRecord.itemizedDeductions || currentRecord.itemizedDeductions.length === 0"
+                    v-if="(!currentRecord.itemizedDeductions || currentRecord.itemizedDeductions.length === 0) && (!currentRecord.undertimeDeduction || currentRecord.undertimeDeduction <= 0)"
                     class="py-4 text-center text-xs text-muted-foreground italic border rounded-lg bg-muted/10"
                   >
                     No cash advance or itemized deduction recorded for this cutoff.
@@ -1108,6 +1131,10 @@ function triggerPrint() {
                 <span>Other Loan:</span>
                 <span>-₱{{ currentRecord.otherLoan.toFixed(2) }}</span>
               </div>
+              <div v-if="(currentRecord.undertimeDeduction || 0) > 0" class="flex justify-between text-amber-700 dark:text-amber-400">
+                <span>Undertime ({{ currentRecord.undertimeMinutes }}m):</span>
+                <span>-₱{{ currentRecord.undertimeDeduction.toFixed(2) }}</span>
+              </div>
               <div v-for="d in currentRecord.itemizedDeductions" :key="d.id" class="flex justify-between text-[11px]">
                 <span class="truncate max-w-[140px]">{{ d.description }}:</span>
                 <span>-₱{{ d.amount.toFixed(2) }}</span>
@@ -1120,7 +1147,7 @@ function triggerPrint() {
             <div class="border-t pt-1.5 flex justify-between font-bold text-xs">
               <span>Total Deductions:</span>
               <span class="text-rose-600 dark:text-rose-400 font-mono">
-                -₱{{ (currentRecord.totalBenefitsAndLoans + currentRecord.cashAdvance + currentRecord.totalOtherDeductions + currentRecord.withholdingTax).toFixed(2) }}
+                -₱{{ (currentRecord.totalBenefitsAndLoans + currentRecord.cashAdvance + currentRecord.totalOtherDeductions + (currentRecord.undertimeDeduction || 0) + currentRecord.withholdingTax).toFixed(2) }}
               </span>
             </div>
           </div>

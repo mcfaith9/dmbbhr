@@ -577,7 +577,6 @@ export function processEmployeeDayPunches(
 
       lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
       earlyOutMinutes = Math.max(0, expectedOutMinutes - p2Mins)
-      undertimeMinutes = earlyOutMinutes
 
       let grossMins = Math.max(0, p2Mins - p1Mins)
       if (p1Mins < lunchStartMins && p2Mins > lunchEndMins) {
@@ -588,10 +587,16 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
+      if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
+        undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
+      } else {
+        undertimeMinutes = earlyOutMinutes
+      }
+
       if (lateMinutes > 0) {
         status = 'Late'
         statusVariant = 'warning'
-      } else if (earlyOutMinutes > 0) {
+      } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
       } else {
@@ -745,7 +750,6 @@ export function processEmployeeDayPunches(
 
       lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
       earlyOutMinutes = Math.max(0, expectedOutMinutes - p3Mins)
-      undertimeMinutes = earlyOutMinutes
 
       const grossMins = Math.max(0, p3Mins - p1Mins)
       workedMinutes = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
@@ -753,10 +757,16 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
+      if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
+        undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
+      } else {
+        undertimeMinutes = earlyOutMinutes
+      }
+
       if (lateMinutes > 0) {
         status = 'Late'
         statusVariant = 'warning'
-      } else if (earlyOutMinutes > 0) {
+      } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
       } else {
@@ -808,7 +818,6 @@ export function processEmployeeDayPunches(
 
       lateMinutes = Math.max(0, inMins - expectedInMinutes)
       earlyOutMinutes = Math.max(0, expectedOutMinutes - outMins)
-      undertimeMinutes = earlyOutMinutes
 
       const grossMins = Math.max(0, outMins - inMins)
       workedMinutes = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
@@ -816,10 +825,16 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
+      if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
+        undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
+      } else {
+        undertimeMinutes = earlyOutMinutes
+      }
+
       if (lateMinutes > 0) {
         status = 'Late'
         statusVariant = 'warning'
-      } else if (earlyOutMinutes > 0) {
+      } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
       } else {

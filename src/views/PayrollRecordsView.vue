@@ -77,6 +77,8 @@ function normalizeRecord(r: any): EmployeePayrollRecord {
     totalBenefitsAndLoans: Number(r?.totalBenefitsAndLoans ?? r?.benefits ?? 0),
     totalOtherDeductions: Number(r?.totalOtherDeductions ?? r?.otherDeductions ?? 0),
     cashAdvance: Number(r?.cashAdvance ?? 0),
+    undertimeMinutes: Number(r?.undertimeMinutes ?? r?.undertime_minutes ?? 0),
+    undertimeDeduction: Number(r?.undertimeDeduction ?? r?.undertime_deduction ?? 0),
     netPay: Number(r?.netPay ?? r?.net_pay ?? 0),
     reviewStatus: r?.reviewStatus ?? r?.review_status ?? 'ready',
     // keep raw for debugging
@@ -526,7 +528,7 @@ const totalHolidayPay = computed(() => {
                 ₱{{ (Number(r.initialEarnings) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
               </TableCell>
               <TableCell class="font-mono text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                -₱{{ (Number(r.totalBenefitsAndLoans || 0) + Number(r.totalOtherDeductions || 0) + Number(r.cashAdvance || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                -₱{{ (Number(r.totalBenefitsAndLoans || 0) + Number(r.totalOtherDeductions || 0) + Number(r.cashAdvance || 0) + Number(r.undertimeDeduction || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
               </TableCell>
               <TableCell class="font-mono font-bold text-right text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                 ₱{{ (Number(r.netPay) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}

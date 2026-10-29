@@ -140,6 +140,14 @@ export const employeeService = {
       pagibigNumber?: string
       tin?: string
       taxStatus?: string
+      sss_deduction?: number
+      sssDeduction?: number
+      philhealth_deduction?: number
+      philhealthDeduction?: number
+      pagibig_deduction?: number
+      pagibigDeduction?: number
+      other_deductions?: number
+      otherDeductions?: number
     }
   ): Promise<Employee> {
     return employeeRepository.updateEmployee(bioId, {
@@ -179,7 +187,11 @@ export const employeeService = {
       philhealthNumber: updates.philhealth_number ?? updates.philhealthNumber,
       pagibigNumber: updates.pagibig_number ?? updates.pagibigNumber,
       tin: (updates as any).tin_number ?? updates.tin,
-      taxStatus: updates.tax_status ?? updates.taxStatus
+      taxStatus: updates.tax_status ?? updates.taxStatus,
+      sssDeduction: updates.sss_deduction ?? updates.sssDeduction,
+      philhealthDeduction: updates.philhealth_deduction ?? updates.philhealthDeduction,
+      pagibigDeduction: updates.pagibig_deduction ?? updates.pagibigDeduction,
+      otherDeductions: updates.other_deductions ?? updates.otherDeductions
     })
   },
 

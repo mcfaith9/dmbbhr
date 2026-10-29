@@ -566,6 +566,10 @@
                     <span>Cash Advance</span>
                     <span class="font-mono tabular-nums text-foreground">{{ formatPeso(activeSnap.cashAdvance) }}</span>
                   </div>
+                  <div v-if="Number(activeSnap.undertimeDeduction || 0) > 0" class="flex justify-between items-center text-amber-700 dark:text-amber-400">
+                    <span>Undertime Deduction ({{ activeSnap.undertimeMinutes }}m)</span>
+                    <span class="font-mono tabular-nums text-rose-600 dark:text-rose-400">-{{ formatPeso(activeSnap.undertimeDeduction) }}</span>
+                  </div>
                   <!-- Itemized deductions list -->
                   <template v-if="(activeSnap.itemizedDeductions || []).length > 0">
                     <div v-for="d in activeSnap.itemizedDeductions" :key="d.id" class="flex justify-between items-center text-muted-foreground">
@@ -901,16 +905,6 @@ function showNotice(type: 'success' | 'info', message: string) {
   }, 4000)
 }
 
-// Reviewer Information
-const reviewerName = authService.currentUser.value?.name || authService.currentUser.value?.username || 'Reviewer'
-const reviewerRole = authService.currentUser.value?.role || 'HR'
-const reviewerInitials = (reviewerName || 'HR')
-  .split(' ')
-  .map(s => s[0])
-  .slice(0, 2)
-  .join('')
-  .toUpperCase()
-
 // Helper formatters
 function formatPeso(val: number | undefined | null): string {
   if (val === undefined || val === null || isNaN(val)) return '₱0.00'
@@ -954,7 +948,8 @@ function getSnapshotDeductions(snap: PayrollSnapshotRecord | EmployeePayrollReco
   const benefits = Number(snap.totalBenefitsAndLoans || 0)
   const other = Number(snap.totalOtherDeductions || 0)
   const ca = Number(snap.cashAdvance || 0)
-  return benefits + other + ca
+  const undertime = Number((snap as any).undertimeDeduction || 0)
+  return benefits + other + ca + undertime
 }
 
 // Data loading

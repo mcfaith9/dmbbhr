@@ -69,6 +69,8 @@ export interface EmployeePayrollRecord {
   absentDays: number
   payableDays: number
   lateMinutes: number
+  undertimeMinutes: number
+  undertimeDeduction: number
 
   // Authorized Overtime (Requires Approved Physical Form)
   overtimeHours: number
@@ -454,6 +456,7 @@ export const payrollCalculationService = {
     let specialWorkingDays = 0
     let absentDays = 0
     let lateMinutes = 0
+    let undertimeMinutes = 0
     let futureScheduledDays = 0
     let unresolvedDays = 0
     let leaveDays = 0
@@ -634,6 +637,9 @@ export const payrollCalculationService = {
       if (hasWorked && att?.late_minutes && att.late_minutes > 0) {
         lateMinutes += att.late_minutes
       }
+      if (hasWorked && att?.undertime_minutes && att.undertime_minutes > 0) {
+        undertimeMinutes += att.undertime_minutes
+      }
 
       // --- D. AUTHORIZED OVERTIME (Requires Approved Physical Form) ---
       // Rule 1: Attendance after 5:00 PM is attendance data only; does NOT automatically authorize overtime.
@@ -730,7 +736,14 @@ export const payrollCalculationService = {
       }
     }
 
-    const balanceBeforeTax = Math.round((balanceAfterBenefitsAndLoans - (cashAdvance + totalOtherDeductions)) * 100) / 100
+    // Undertime Deduction: calculated at standard hourly rate
+    // e.g. Daily Wage ₱540 / 8 = ₱67.50/hr -> 2 hrs undertime = ₱135.00 deduction
+    const undertimeHours = undertimeMinutes / 60
+    const undertimeDeduction = hourlyRate > 0
+      ? Math.round(undertimeHours * hourlyRate * 100) / 100
+      : (dailyRate > 0 ? Math.round((undertimeMinutes / (8 * 60)) * dailyRate * 100) / 100 : 0)
+
+    const balanceBeforeTax = Math.round((balanceAfterBenefitsAndLoans - (cashAdvance + totalOtherDeductions + undertimeDeduction)) * 100) / 100
 
     // Stage D: Withholding Tax (Manually editable, never fixed or threshold-automated)
     const withholdingTax = existingSnap?.withholdingTax ?? 0
@@ -791,6 +804,8 @@ export const payrollCalculationService = {
       absentDays,
       payableDays,
       lateMinutes,
+      undertimeMinutes,
+      undertimeDeduction,
       overtimeHours: totalOvertimeHours,
       overtimePay: totalOvertimePay,
       initialEarnings,
@@ -976,7 +991,7 @@ export const payrollCalculationService = {
     rec.totalOtherDeductions = Math.round(otherTotal * 100) / 100
 
     rec.balanceBeforeTax = Math.round(
-      (rec.balanceAfterBenefitsAndLoans - (rec.cashAdvance + rec.totalOtherDeductions)) * 100
+      (rec.balanceAfterBenefitsAndLoans - (rec.cashAdvance + rec.totalOtherDeductions + (rec.undertimeDeduction || 0))) * 100
     ) / 100
 
     // 3. Withholding Tax (manual)
@@ -1068,6 +1083,8 @@ export const payrollCalculationService = {
         overtimeHours: Number(r.overtimeHours) || 0,
         overtimePay: Number(r.overtimePay) || 0,
         lateMinutes: Number(r.lateMinutes) || 0,
+        undertimeMinutes: Number(r.undertimeMinutes) || 0,
+        undertimeDeduction: Number(r.undertimeDeduction) || 0,
         initialEarnings: Number(r.initialEarnings) || 0,
         sss: Number(r.sss) || 0,
         philhealth: Number(r.philhealth) || 0,
@@ -1139,6 +1156,8 @@ export const payrollCalculationService = {
       absentDays: 0,
       payableDays: snap.payableDays,
       lateMinutes: snap.lateMinutes,
+      undertimeMinutes: snap.undertimeMinutes || 0,
+      undertimeDeduction: snap.undertimeDeduction || 0,
       overtimeHours: snap.overtimeHours || 0,
       overtimePay: otPay,
       initialEarnings: snap.initialEarnings,

@@ -113,7 +113,7 @@ console.log('--- TEST 1: Historical Overtime on October 15, 2026 ---')
 
   assert.strictEqual(evaluation.qualifying, true)
   assert.strictEqual(evaluation.overtimeHours, 0.13, 'Clamped to attended window: 8m = 0.13h')
-  assert.strictEqual(evaluation.overtimePay, 150, '₱600 daily rate x 25% company policy = ₱150.00')
+  assert.strictEqual(evaluation.overtimePay, 12.19, '0.13h x ₱75/hr x 125% = ₱12.19')
   ok('Historical date (Oct 15, 2026) with checkout at 5:08 PM correctly evaluated in Oct 1-15 cutoff')
 }
 
@@ -170,7 +170,7 @@ console.log('\n--- TEST 2: Authorization Dated Outside Selected Cutoff ---')
   })
   assert.strictEqual(evalCutoff2.qualifying, true)
   assert.strictEqual(evalCutoff2.overtimeHours, 0.5)
-  assert.strictEqual(evalCutoff2.overtimePay, 150)
+  assert.strictEqual(evalCutoff2.overtimePay, 46.88)
   ok('Authorization outside cutoff 1 is strictly excluded from cutoff 1 and paid in cutoff 2')
 }
 
@@ -238,7 +238,7 @@ console.log('\n--- TEST 4: Editing & Status Transitions ---')
   // Approved after audit
   const approved = evaluateOvertimeDay({ ...inputs, authorizationStatus: 'Approved' })
   assert.strictEqual(approved.qualifying, true)
-  assert.strictEqual(approved.overtimePay, 150)
+  assert.strictEqual(approved.overtimePay, 12.19)
 
   // Rejected
   const rejected = evaluateOvertimeDay({ ...inputs, authorizationStatus: 'Rejected' })
@@ -316,8 +316,8 @@ console.log('\n--- TEST 5: Multiple Overtime Days in Cutoff Period ---')
   }
 
   assert.strictEqual(Math.round(totalHours * 100) / 100, 1.13)
-  assert.strictEqual(totalPay, 300)
-  ok('Multiple approved overtime dates in a cutoff correctly aggregate total hours and earnings (₱300.00)')
+  assert.strictEqual(Math.round(totalPay * 100) / 100, 105.94)
+  ok('Multiple approved overtime dates in a cutoff correctly aggregate total hours and earnings (₱105.94)')
 }
 
 console.log('\n======================================================================')

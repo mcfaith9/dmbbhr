@@ -5,30 +5,42 @@ import { normalizeTimeToHHMM } from '../lib/timeUtils.ts'
  *
  * SCOPE & RATE SPECIFICATIONS:
  *
- * 1. Ordinary Working Day Overtime (DMBBHR Company Policy):
- *    - Overtime premium is calculated as a percentage of the employee's DAILY WAGE, NOT hourly rate.
- *    - Overtime premium = daily wage × 25% (multiplier: 0.25) per qualifying overtime occurrence.
- *    - Example (₱540 daily wage):
- *      ₱540 × 25% = ₱135.00 overtime premium per qualifying overtime occurrence.
- *    - Base daily wage and overtime premium are kept separate to prevent duplicate payment.
- *    - Statutory Minimum Comparison:
- *      Statutory minimum for 1 OT hour = (₱540 ÷ 8) × 1.25 = ₱84.38.
- *      The company policy of ₱135.00 is substantially higher and more favorable to the worker.
- *      Under Philippine labor jurisprudence, superior company benefits must not be diminished.
+ * 1. Ordinary Working Day Overtime:
+ *    - Base daily wage = configured daily wage (e.g. ₱540.00)
+ *    - Hourly rate = daily wage ÷ 8 (e.g. ₱540 ÷ 8 = ₱67.50)
+ *    - Overtime rate: hourly rate × 125% (1.25 multiplier)
+ *    - For 1 overtime hour: ₱67.50 × 125% = ₱84.375 (₱84.38)
+ *    - Total daily earnings for 8 regular hours plus 1 overtime hour:
+ *      ₱540.00 + ₱84.38 = ₱624.38
  *
  * 2. Special Non-Working Holiday Overtime:
  *    - Base daily pay for first 8 hours worked = daily wage × 130% (₱702 for ₱540 daily wage)
- *    - Overtime premium under company policy is a fixed 25% of daily wage per approved OT occurrence.
- *    - Total when worked + approved OT = D + (D × 30%) + (D × 25%)
+ *    - Overtime rate = applicable holiday hourly rate × 130%
+ *    - Multiplier Derivation:
+ *      130% holiday rate × 130% overtime multiplier = 169% (1.69) of the ordinary hourly rate.
+ *      The 30% special-holiday premium applies to the applicable hourly rate, and the additional
+ *      overtime premium (130%) applies to that holiday rate: 1.30 × 1.30 = 1.69.
+ *    - For ₱540 daily wage: ₱67.50 × 130% × 130% = ₱114.075 (₱114.08) per overtime hour.
+ *    - Total daily earnings for 8 regular hours plus 1 overtime hour:
+ *      ₱702.00 + ₱114.08 = ₱816.08
  *
  * 3. Regular Holiday Overtime:
  *    - Base daily pay for first 8 hours worked = daily wage × 200% (₱1,080 for ₱540 daily wage)
- *    - Overtime premium under company policy is a fixed 25% of daily wage per approved OT occurrence.
- *    - Total when worked + approved OT = (D × 2) + (D × 25%)
+ *    - Overtime rate = applicable holiday hourly rate × 130%
+ *    - Multiplier Derivation:
+ *      200% holiday rate × 130% overtime multiplier = 260% (2.60) of the ordinary hourly rate:
+ *      2.00 × 1.30 = 2.60.
+ *    - For ₱540 daily wage: ₱67.50 × 200% × 130% = ₱175.50 per overtime hour.
+ *    - Total daily earnings for 8 regular hours plus 1 overtime hour:
+ *      ₱1,080.00 + ₱175.50 = ₱1,255.50
  *
  * 4. Scope Restrictions:
  *    - Rest-day duty calculations are excluded for now as per instructions.
  *    - Do not implement rest-day overtime, special holiday + rest day, or regular holiday + rest day calculations yet.
+ *
+ * 5. Multiple Overtime Records & Dates:
+ *    - An employee can have multiple authorized overtime records on different dates or even on the same date.
+ *    - Attended hours are accurately clamped to authorized hours and windows without double-counting overlapping time.
  */
 
 export type OvertimeDayClass =
@@ -251,29 +263,8 @@ export function evaluateOvertimeDay(input: OvertimeDayInput): OvertimeDayEvaluat
     return { qualifying: false, overtimeHours: 0, overtimePay: 0 }
   }
 
-  // Pay calculation per company policy: use daily-wage percentage for specified classes.
-  const dailyWage = dailyRate > 0 ? dailyRate : hourlyRate * 8
-
-  let pay = 0
-  // For ordinary, specialWorking and restDay we use the company policy fixed premium (25% of daily wage)
-  if (input.dayClass === 'ordinary' || input.dayClass === 'specialWorking' || input.dayClass === 'restDay') {
-    // DMBBHR Company Policy: 25% of employee's DAILY WAGE per qualifying overtime occurrence
-    pay = Math.round(dailyWage * 0.25 * 100) / 100
-  } else if (
-    input.dayClass === 'specialNonWorking' ||
-    input.dayClass === 'specialNonWorkingRestDay' ||
-    input.dayClass === 'regularHoliday' ||
-    input.dayClass === 'regularHolidayRestDay'
-  ) {
-    // For holiday day classes where a holiday premium is already accounted for elsewhere (payrollCalculation adds
-    // holidayPay), the overtime premium is the company-defined flat 25% of daily wage per approved authorization.
-    // This avoids double-counting base pay or holiday premiums.
-    pay = Math.round(dailyWage * 0.25 * 100) / 100
-  } else {
-    // Fallback: use hourly multiplier behavior for any unrecognized classes
-    const multiplier = OVERTIME_HOURLY_MULTIPLIERS[input.dayClass] ?? 1.25
-    pay = Math.round(payableOtHours * hourlyRate * multiplier * 100) / 100
-  }
+  const multiplier = OVERTIME_HOURLY_MULTIPLIERS[input.dayClass] ?? 1.25
+  const pay = Math.round(payableOtHours * hourlyRate * multiplier * 100) / 100
 
   return { qualifying: true, overtimeHours: payableOtHours, overtimePay: pay }
 }
@@ -352,25 +343,7 @@ export function evaluateMultipleOvertimeRecordsForDay(input: OvertimeDayMultiInp
       anyQualifying = true
       totalQualifyingHours = Math.round((totalQualifyingHours + payableHours) * 100) / 100
 
-      let recPay = 0
-      // For day classes where company policy requires a flat daily-wage premium, use dailyRate × 0.25
-      if (input.dayClass === 'ordinary' || input.dayClass === 'specialWorking' || input.dayClass === 'restDay') {
-        const dailyWage = dailyRate > 0 ? dailyRate : hourlyRate * 8
-        recPay = Math.round(dailyWage * 0.25 * 100) / 100
-      } else if (
-        input.dayClass === 'specialNonWorking' ||
-        input.dayClass === 'specialNonWorkingRestDay' ||
-        input.dayClass === 'regularHoliday' ||
-        input.dayClass === 'regularHolidayRestDay'
-      ) {
-        // For holiday classes, only award the 25% daily-wage premium per approved record. Holiday premium (30% or 100%) is
-        // accounted for separately in payrollCalculation and must NOT be duplicated here.
-        const dailyWage = dailyRate > 0 ? dailyRate : hourlyRate * 8
-        recPay = Math.round(dailyWage * 0.25 * 100) / 100
-      } else {
-        // Fallback to hourly multiplier behavior for any unrecognized classes
-        recPay = Math.round(payableHours * hourlyRate * multiplier * 100) / 100
-      }
+      const recPay = Math.round(payableHours * hourlyRate * multiplier * 100) / 100
 
       totalPay = Math.round((totalPay + recPay) * 100) / 100
     }
