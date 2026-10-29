@@ -108,6 +108,7 @@ export interface DailyAttendanceRecordDB {
   lateMinutes: number
   earlyOutMinutes: number
   undertimeMinutes: number
+  approvedHours?: number
   status: string
   statusVariant: 'success' | 'warning' | 'outline' | 'destructive' | 'secondary'
   rawPunchesCount: number
@@ -186,6 +187,7 @@ export interface ManualAttendanceRecord {
   manualOut?: string
   reason: string
   notes?: string
+  approvedHours?: number
   status: 'Pending' | 'Approved' | 'Rejected'
   requestedBy: string
   requestedAt: string

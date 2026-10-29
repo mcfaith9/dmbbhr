@@ -82,6 +82,7 @@ export const attendanceService = {
     reason?: string
     notes?: string
     requestedBy?: string
+    approvedHours?: number
   }) {
     return manualAttendanceRepository.submitRequest(data)
   },
@@ -104,6 +105,7 @@ export const attendanceService = {
       manualOut?: string
       reason?: string
       notes?: string
+      approvedHours?: number
     }
   ) {
     return manualAttendanceRepository.updateRequest(id, data)

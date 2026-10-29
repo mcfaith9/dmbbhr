@@ -57,6 +57,7 @@ export interface EmployeeScheduleContext {
   }
   isHalfDayApproved?: boolean
   isHalfDayPMApproved?: boolean
+  approvedRequiredHours?: number
   isFieldWorkApproved?: boolean
   employeeStatus?: EmploymentStatus
   resignationDate?: string
@@ -99,6 +100,7 @@ export interface DailyAttendanceRecord {
   late_minutes: number // Clean integer against Work Group Standard IN
   early_out_minutes: number // Clean integer against Work Group Expected OUT
   undertime_minutes: number
+  approved_hours?: number
   employee_status?: EmploymentStatus
   resignation_date?: string
   status: string // Compact HR Status
@@ -124,6 +126,84 @@ export interface DailyAttendanceRecord {
   valid_punches: AttendanceLog[]
   scan_breakdown: ScanItem[]
   notes?: string
+}
+
+/**
+ * Resolves the approved duty hours for an employee / attendance record.
+ * Standard duty is 8 hours unless an approved half-day or approved shorter duration
+ * (e.g. 3, 4, 5, 6 hours) is configured or noted.
+ */
+export function resolveApprovedDutyHours(
+  recordOrContext?: {
+    approved_hours?: number
+    approvedHours?: number
+    approvedRequiredHours?: number
+    isHalfDayApproved?: boolean
+    isHalfDayPMApproved?: boolean
+    manual_adjustment_reason?: string
+    notes?: string
+    status?: string
+    manualAdjustment?: {
+      approvedHours?: number
+      reason?: string
+      notes?: string
+    }
+  } | null
+): number {
+  if (!recordOrContext) return 8
+
+  // 1. Explicit numeric property
+  if (typeof recordOrContext.approved_hours === 'number' && recordOrContext.approved_hours > 0) {
+    return recordOrContext.approved_hours
+  }
+  if (typeof recordOrContext.approvedHours === 'number' && recordOrContext.approvedHours > 0) {
+    return recordOrContext.approvedHours
+  }
+  if (typeof recordOrContext.approvedRequiredHours === 'number' && recordOrContext.approvedRequiredHours > 0) {
+    return recordOrContext.approvedRequiredHours
+  }
+  if (recordOrContext.manualAdjustment) {
+    if (typeof recordOrContext.manualAdjustment.approvedHours === 'number' && recordOrContext.manualAdjustment.approvedHours > 0) {
+      return recordOrContext.manualAdjustment.approvedHours
+    }
+  }
+
+  // 2. Boolean half-day flags
+  if (recordOrContext.isHalfDayApproved || recordOrContext.isHalfDayPMApproved) {
+    return 4
+  }
+
+  // 3. Status string check
+  if (recordOrContext.status) {
+    const st = recordOrContext.status.toLowerCase()
+    if (st.includes('half day')) return 4
+    const statusMatch = st.match(/approved\s+(\d+(?:\.\d+)?)\s*h/i)
+    if (statusMatch) {
+      const val = parseFloat(statusMatch[1])
+      if (val > 0 && val <= 12) return val
+    }
+  }
+
+  // 4. Reason or notes parsing (e.g. "approved 4 hours", "half day", "6 hours")
+  const textToScan = [
+    recordOrContext.manual_adjustment_reason,
+    recordOrContext.notes,
+    recordOrContext.manualAdjustment?.reason,
+    recordOrContext.manualAdjustment?.notes
+  ].filter(Boolean).join(' ')
+
+  if (textToScan) {
+    const hrMatch = textToScan.match(/(?:approved\s+)?(\b[1-7](?:\.\d+)?)\s*(?:hours|hrs|hr|h)\b/i)
+    if (hrMatch) {
+      const val = parseFloat(hrMatch[1])
+      if (val > 0 && val <= 8) return val
+    }
+    if (/half[- ]?day/i.test(textToScan)) {
+      return 4
+    }
+  }
+
+  return 8
 }
 
 /**
@@ -471,8 +551,17 @@ export function processEmployeeDayPunches(
   // Afternoon Departure window: at least lunchEndMins + 35 (e.g. >= 1:35 PM) AND >= expectedInMinutes + 210
   const afternoonDepartureMinMins = Math.max(lunchEndMins + 35, expectedInMinutes + 210)
 
-  // Check Approved HR Context
+  // Check Approved HR Context and Duty Hours
+  const approvedRequiredHours = resolveApprovedDutyHours({
+    approvedHours: employeeContext?.approvedRequiredHours,
+    isHalfDayApproved: employeeContext?.isHalfDayApproved,
+    isHalfDayPMApproved: employeeContext?.isHalfDayPMApproved,
+    manualAdjustment: manual
+  })
+  const approvedRequiredMinutes = approvedRequiredHours * 60
+
   const isApprovedHalfDayAM = employeeContext?.isHalfDayApproved ||
+    approvedRequiredHours === 4 ||
     (manual?.status === 'Approved' && (manual.reason?.toLowerCase().includes('half day') || manual.notes?.toLowerCase().includes('half day')) && !manual.reason?.toLowerCase().includes('pm'))
   const isApprovedHalfDayPM = employeeContext?.isHalfDayPMApproved ||
     (manual?.status === 'Approved' && (manual.reason?.toLowerCase().includes('half day - pm') || manual.notes?.toLowerCase().includes('half day - pm') || manual.reason?.toLowerCase().includes('half day pm')))
@@ -587,7 +676,9 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
+      if (approvedRequiredHours < 8) {
+        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+      } else if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
         undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
       } else {
         undertimeMinutes = earlyOutMinutes
@@ -599,6 +690,9 @@ export function processEmployeeDayPunches(
       } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
+      } else if (approvedRequiredHours < 8) {
+        status = approvedRequiredHours === 4 ? (isApprovedHalfDayPM ? 'Half Day — PM' : 'Half Day') : `Approved ${approvedRequiredHours}h`
+        statusVariant = 'secondary'
       } else {
         status = 'Regular Day'
         statusVariant = 'success'
@@ -610,14 +704,15 @@ export function processEmployeeDayPunches(
       actualInStr = formatManilaTime(p1.attendance_time)
       lateMinutes = Math.max(0, p1Mins - expectedInMinutes)
 
-      if (isApprovedHalfDayAM) {
+      if (isApprovedHalfDayAM || approvedRequiredHours <= 5) {
         actualOutStr = formatManilaTime(p2.attendance_time)
         hasValidOut = true
         workedMinutes = Math.max(0, p2Mins - p1Mins)
         totalHoursStr = `${(workedMinutes / 60).toFixed(1)} hrs`
         totalHoursDecimal = Number((workedMinutes / 60).toFixed(2))
-        status = 'Half Day'
-        statusVariant = 'secondary'
+        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+        status = approvedRequiredHours === 4 ? 'Half Day' : `Approved ${approvedRequiredHours}h`
+        statusVariant = undertimeMinutes > 0 ? 'warning' : 'secondary'
       } else {
         // Without approved half day, 12:00-12:57 is a lunch scan, NOT final OUT
         if (p2Mins <= lunchStartMins + 25) {
@@ -642,15 +737,16 @@ export function processEmployeeDayPunches(
 
     // Subcase 2.3: Midday/Lunch IN + Afternoon OUT (e.g. 12:55 PM + 5:03 PM)
     else if (p1Mins >= lunchStartMins - 30 && p1Mins <= lunchEndMins + 35 && p2Mins >= afternoonDepartureMinMins) {
-      if (isApprovedHalfDayPM) {
+      if (isApprovedHalfDayPM || approvedRequiredHours <= 5) {
         actualInStr = formatManilaTime(p1.attendance_time)
         actualOutStr = formatManilaTime(p2.attendance_time)
         hasValidOut = true
         workedMinutes = Math.max(0, p2Mins - p1Mins)
         totalHoursStr = `${(workedMinutes / 60).toFixed(1)} hrs`
         totalHoursDecimal = Number((workedMinutes / 60).toFixed(2))
+        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
         status = 'Half Day — PM'
-        statusVariant = 'secondary'
+        statusVariant = undertimeMinutes > 0 ? 'warning' : 'secondary'
       } else {
         actualInStr = 'Missing (Manual Request Required)'
         breakInStr = formatManilaTime(p1.attendance_time)
@@ -757,7 +853,9 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
+      if (approvedRequiredHours < 8) {
+        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+      } else if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
         undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
       } else {
         undertimeMinutes = earlyOutMinutes
@@ -769,6 +867,9 @@ export function processEmployeeDayPunches(
       } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
+      } else if (approvedRequiredHours < 8) {
+        status = approvedRequiredHours === 4 ? (isApprovedHalfDayPM ? 'Half Day — PM' : 'Half Day') : `Approved ${approvedRequiredHours}h`
+        statusVariant = 'secondary'
       } else {
         status = 'Regular Day'
         statusVariant = 'success'
@@ -825,7 +926,9 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
+      if (approvedRequiredHours < 8) {
+        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+      } else if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
         undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
       } else {
         undertimeMinutes = earlyOutMinutes
@@ -837,6 +940,9 @@ export function processEmployeeDayPunches(
       } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
+      } else if (approvedRequiredHours < 8) {
+        status = approvedRequiredHours === 4 ? (isApprovedHalfDayPM ? 'Half Day — PM' : 'Half Day') : `Approved ${approvedRequiredHours}h`
+        statusVariant = 'secondary'
       } else {
         status = 'Regular Day'
         statusVariant = 'success'
@@ -920,7 +1026,6 @@ export function processEmployeeDayPunches(
       } else if (effInMins >= 0 && effOutMins >= 0 && effOutMins >= effInMins) {
         lateMinutes = Math.max(0, effInMins - expectedInMinutes)
         earlyOutMinutes = Math.max(0, expectedOutMinutes - effOutMins)
-        undertimeMinutes = earlyOutMinutes
 
         let grossMins = Math.max(0, effOutMins - effInMins)
         if (effInMins < lunchStartMins && effOutMins > lunchEndMins) {
@@ -931,12 +1036,17 @@ export function processEmployeeDayPunches(
         totalHoursDecimal = Number(netHours.toFixed(2))
         totalHoursStr = `${netHours.toFixed(1)} hrs`
 
+        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+
         if (lateMinutes > 0) {
           status = 'Late'
           statusVariant = 'warning'
-        } else if (earlyOutMinutes > 0) {
+        } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
           status = 'Early OUT'
           statusVariant = 'warning'
+        } else if (approvedRequiredHours < 8) {
+          status = approvedRequiredHours === 4 ? (isApprovedHalfDayPM ? 'Half Day — PM' : 'Half Day') : `Approved ${approvedRequiredHours}h`
+          statusVariant = 'secondary'
         } else {
           status = 'Manual Time'
           statusVariant = 'secondary'
@@ -1009,6 +1119,7 @@ export function processEmployeeDayPunches(
     late_minutes: lateMinutes,
     early_out_minutes: earlyOutMinutes,
     undertime_minutes: undertimeMinutes,
+    approved_hours: approvedRequiredHours,
     employee_status: employeeContext?.employeeStatus || 'active',
     resignation_date: employeeContext?.resignationDate,
     status,

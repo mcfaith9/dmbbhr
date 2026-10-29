@@ -1162,6 +1162,20 @@ onUnmounted(() => {
                       0m
                     </span>
                   </div>
+
+                  <!-- Undertime (if present and distinct from early out) -->
+                  <div
+                    v-if="row.undertime_minutes > 0 && row.undertime_minutes !== row.early_out_minutes"
+                    class="flex items-center gap-1"
+                  >
+                    <span class="text-[10px] text-muted-foreground">Under:</span>
+                    <span
+                      class="px-1.5 py-0.2 rounded bg-orange-500/15 text-orange-700 dark:text-orange-300 font-mono font-bold text-[11px]"
+                      :title="`Undertime of ${formatDuration(row.undertime_minutes)} (${row.undertime_minutes}m) against approved duty`"
+                    >
+                      {{ row.undertime_minutes }}m
+                    </span>
+                  </div>
                 </div>
               </TableCell>
 

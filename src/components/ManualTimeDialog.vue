@@ -67,6 +67,7 @@ const origOut = ref('—')
 const schedule = ref('')
 const adjustmentIn = ref('')
 const adjustmentOut = ref('')
+const approvedDutyHours = ref<string>('8')
 const adjustmentNotes = ref('')
 const isFetchingOriginalAttendance = ref(false)
 const isSubmitting = ref(false)
@@ -109,12 +110,16 @@ async function fetchOriginalAttendance() {
       schedule.value = `${rec.expected_in} → ${rec.expected_out} (${rec.work_group_name})`
       adjustmentIn.value = normalizeTimeToHHMM(rec.actual_in) || ''
       adjustmentOut.value = normalizeTimeToHHMM(rec.actual_out) || ''
+      if (rec.approved_hours) {
+        approvedDutyHours.value = String(rec.approved_hours)
+      }
     } else {
       origIn.value = '—'
       origOut.value = '—'
       schedule.value = ''
       adjustmentIn.value = ''
       adjustmentOut.value = ''
+      approvedDutyHours.value = '8'
     }
   } catch (err) {
     console.error('Failed to fetch original attendance:', err)
@@ -129,6 +134,7 @@ function initializeForm() {
   adjustmentIn.value = ''
   adjustmentOut.value = ''
   adjustmentNotes.value = ''
+  approvedDutyHours.value = '8'
   origIn.value = '—'
   origOut.value = '—'
   schedule.value = ''
@@ -146,6 +152,7 @@ function initializeForm() {
     schedule.value = rec.scheduleContext || ''
     adjustmentIn.value = normalizeTimeToHHMM(rec.manualIn) || ''
     adjustmentOut.value = normalizeTimeToHHMM(rec.manualOut) || ''
+    approvedDutyHours.value = String(rec.approvedHours || 8)
     adjustmentNotes.value = rec.notes || rec.reason || ''
     return
   }
@@ -228,6 +235,13 @@ const hasChange = computed(() => {
   return inStatus.value.changed || outStatus.value.changed
 })
 
+const hasDutyHoursChanged = computed(() => {
+  if (isEditing.value) {
+    return Number(approvedDutyHours.value) !== (props.editingRecord?.approvedHours || 8)
+  }
+  return Number(approvedDutyHours.value) !== 8
+})
+
 const hasInvalidTime = computed(() => {
   return !inStatus.value.valid || !outStatus.value.valid
 })
@@ -236,8 +250,9 @@ const canSubmit = computed(() => {
   if (isSubmitting.value || !!successMsg.value) return false
   if (!employeeId.value || !attendanceDate.value) return false
   if (hasInvalidTime.value) return false
-  if (!adjustmentIn.value.trim() && !adjustmentOut.value.trim()) return false
   if (isEditing.value) return true
+  if (hasDutyHoursChanged.value) return true
+  if (!adjustmentIn.value.trim() && !adjustmentOut.value.trim()) return false
   return hasChange.value
 })
 
@@ -255,8 +270,8 @@ async function submitAdjustment() {
   const inVal = adjustmentIn.value.trim()
   const outVal = adjustmentOut.value.trim()
 
-  if (!inVal && !outVal) {
-    errorMsg.value = 'Please provide at least a Time IN or Time OUT adjustment.'
+  if (!inVal && !outVal && !hasDutyHoursChanged.value) {
+    errorMsg.value = 'Please provide at least a Time IN, Time OUT, or Approved Duty Hours adjustment.'
     return
   }
 
@@ -273,8 +288,8 @@ async function submitAdjustment() {
   const inChanged = inVal ? hasTimeChanged(origIn.value, inVal) : false
   const outChanged = outVal ? hasTimeChanged(origOut.value, outVal) : false
 
-  if (!isEditing.value && !inChanged && !outChanged) {
-    errorMsg.value = 'No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.'
+  if (!isEditing.value && !inChanged && !outChanged && !hasDutyHoursChanged.value) {
+    errorMsg.value = 'No changes detected. Please modify the Time IN, Time OUT, or Approved Duty Hours before submitting an adjustment.'
     return
   }
 
@@ -295,6 +310,7 @@ async function submitAdjustment() {
       originalOut: origOut.value.replace(/\s*\(Manual\)/gi, '').trim(),
       manualIn: formattedIn,
       manualOut: formattedOut,
+      approvedHours: Number(approvedDutyHours.value) || 8,
       notes: adjustmentNotes.value.trim() || 'Manual attendance adjustment request',
       requestedBy: requesterName
     }
@@ -494,6 +510,30 @@ function handleClose() {
           <span>No changes detected. Please modify the Time IN or Time OUT before submitting an adjustment.</span>
         </div> -->
 
+        <!-- Approved Required Duty Hours (Full Day 8h, 6h, 5h, Half Day 4h, 3h) -->
+        <div class="space-y-1.5 p-3 rounded-lg border bg-card">
+          <div class="flex items-center justify-between">
+            <label class="font-bold text-foreground text-xs uppercase tracking-wider">
+              Approved Required Duty Hours
+            </label>
+            <span class="text-[10px] text-muted-foreground font-mono">Standard: 8h | Half-day: 4h</span>
+          </div>
+          <Select v-model="approvedDutyHours">
+            <SelectTrigger class="h-8 text-xs bg-background">
+              <SelectValue placeholder="Select duty hours" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="8">8 Hours — Standard Full Day (₱540 / 8 hrs)</SelectItem>
+                <SelectItem value="6">6 Hours — Approved Reduced Day (₱405 / 6 hrs)</SelectItem>
+                <SelectItem value="5">5 Hours — Approved Reduced Day (₱337.50 / 5 hrs)</SelectItem>
+                <SelectItem value="4">4 Hours — Approved Half-Day (₱270 / 4 hrs)</SelectItem>
+                <SelectItem value="3">3 Hours — Approved Part-Time (₱202.50 / 3 hrs)</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+
         <!-- Reason / Notes -->
         <div class="space-y-1.5">
           <label class="font-semibold text-foreground text-xs flex items-center justify-between">
@@ -502,7 +542,7 @@ function handleClose() {
           </label>
           <Textarea
             v-model="adjustmentNotes"
-            placeholder="e.g. Employee forgot to punch IN on terminal due to orientation"
+            placeholder="e.g. Employee approved for 4-hour half day or adjusted duty"
             class="h-16 text-xs resize-none"
           />
         </div>

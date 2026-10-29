@@ -87,6 +87,7 @@ export const manualAttendanceRepository = {
     reason?: string
     notes?: string
     requestedBy?: string
+    approvedHours?: number
   }): Promise<ManualAttendanceRecord> {
     const id = `${data.bioId}_${data.date}`
     const existing = await db.manualAdjustments.get(id)
@@ -102,6 +103,7 @@ export const manualAttendanceRepository = {
       originalOut: data.originalOut ?? existing?.originalOut ?? '—',
       manualIn: data.manualIn ? data.manualIn.trim() : undefined,
       manualOut: data.manualOut ? data.manualOut.trim() : undefined,
+      approvedHours: data.approvedHours ?? existing?.approvedHours,
       reason: (data.notes || data.reason || 'Manual attendance adjustment request').trim(),
       notes: (data.notes || '').trim(),
       status: 'Pending',
@@ -130,6 +132,7 @@ export const manualAttendanceRepository = {
       manualOut?: string
       reason?: string
       notes?: string
+      approvedHours?: number
     }
   ): Promise<ManualAttendanceRecord> {
     const cleanId = String(id || '').trim()
@@ -158,6 +161,9 @@ export const manualAttendanceRepository = {
       manualOut: Object.prototype.hasOwnProperty.call(data, 'manualOut')
         ? (data.manualOut ? data.manualOut.trim() : undefined)
         : existing.manualOut,
+      approvedHours: Object.prototype.hasOwnProperty.call(data, 'approvedHours')
+        ? data.approvedHours
+        : existing.approvedHours,
       reason: (data.notes || data.reason || existing.reason || 'Manual attendance adjustment request').trim(),
       notes: (data.notes ?? existing.notes ?? '').trim(),
       updatedAt: now

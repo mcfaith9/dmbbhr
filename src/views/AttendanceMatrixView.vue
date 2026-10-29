@@ -26,6 +26,7 @@ import OvertimeDialog from '@/components/OvertimeDialog.vue'
 import ManualTimeDialog from '@/components/ManualTimeDialog.vue'
 import { employeeService } from '@/services/employees'
 import { attendanceService, type DailyAttendanceRecord } from '@/services/attendance'
+import { resolveApprovedDutyHours } from '@/services/attendanceEngine'
 import { holidayService } from '@/services/holidays/holidayService'
 import { overtimeRepository } from '@/repositories/overtimeRepository'
 import { collectEmployeeIdKeys } from '@/lib/employeeIdentity'
@@ -322,6 +323,7 @@ export interface DutyCellData {
   lateMinutes?: number
   earlyOutMinutes?: number
   undertimeMinutes?: number
+  approvedHours?: number
   notes?: string
 }
 
@@ -344,6 +346,7 @@ const dutyCells = computed<DutyCellData[]>(() => {
 
     // Check actual attendance record
     const record = attendanceRecordsMap.value.get(dStr)
+    const appHours = resolveApprovedDutyHours(record)
 
     // Has verified attendance punch (IN)
     const hasValidIn = Boolean(record?.actual_in && !record.actual_in.startsWith('Missing') && record.actual_in !== '—')
@@ -383,6 +386,9 @@ const dutyCells = computed<DutyCellData[]>(() => {
       } else if (record?.undertime_minutes && record.undertime_minutes > 0) {
         statusLabel = `Present (Undertime ${record.undertime_minutes}m)`
         statusBadgeVariant = 'warning'
+      } else if (appHours < 8) {
+        statusLabel = appHours === 4 ? 'Half Day' : `Approved ${appHours}h Duty`
+        statusBadgeVariant = 'secondary'
       } else {
         statusLabel = 'Present / Duty'
         statusBadgeVariant = 'success'
@@ -430,6 +436,7 @@ const dutyCells = computed<DutyCellData[]>(() => {
       lateMinutes: record?.late_minutes,
       earlyOutMinutes: record?.early_out_minutes,
       undertimeMinutes: record?.undertime_minutes,
+      approvedHours: appHours,
       notes
     }
   })
@@ -875,6 +882,9 @@ onMounted(async () => {
                   <span v-else-if="cell.statusCategory === 'present' && ((cell.earlyOutMinutes ?? 0) > 0 || (cell.undertimeMinutes ?? 0) > 0)">
                     UNDER
                   </span>
+                  <span v-else-if="cell.statusCategory === 'present' && (cell.approvedHours ?? 8) < 8">
+                    {{ cell.approvedHours === 4 ? 'HALF' : `${cell.approvedHours}H` }}
+                  </span>
                   <span v-else-if="cell.statusCategory === 'present'">
                     DUTY
                   </span>
@@ -937,6 +947,14 @@ onMounted(async () => {
                     class="text-[9px] text-rose-600 dark:text-rose-400 font-semibold font-mono"
                   >
                     Late {{ cell.lateMinutes }}m
+                  </div>
+
+                  <!-- UNDERTIME MINUTES -->
+                  <div
+                    v-if="cell.statusCategory === 'present' && (cell.undertimeMinutes ?? 0) > 0"
+                    class="text-[9px] text-amber-600 dark:text-amber-400 font-semibold font-mono"
+                  >
+                    Under {{ cell.undertimeMinutes }}m
                   </div>
                 </template>
 

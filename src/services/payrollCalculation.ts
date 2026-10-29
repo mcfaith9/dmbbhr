@@ -19,7 +19,7 @@
 
 import { db, type PayrollSnapshotRecord, type ItemizedDeductionRecord, type HolidayRecord, type OvertimeAuthorizationRecord } from '@/db'
 import type { Employee } from '@/types'
-import { getManilaDateString, type DailyAttendanceRecord } from '@/services/attendanceEngine'
+import { getManilaDateString, resolveApprovedDutyHours, type DailyAttendanceRecord } from '@/services/attendanceEngine'
 import { attendanceRepository, overtimeRepository } from '@/repositories'
 import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateMultipleOvertimeRecordsForDay } from '@/services/overtimePolicy'
 
@@ -468,6 +468,13 @@ export const payrollCalculationService = {
     let totalOvertimePay = 0
     const attendanceReviewNotes: string[] = []
 
+    // Regular worked days and hourly proration accumulators
+    let regularWorkedDaysPay = 0
+    let regularPayableDaysFraction = 0
+    let standardShiftsUndertimeMinutes = 0
+    let standardShiftsUndertimeDeduction = 0
+    let totalUndertimeMinutes = 0
+
     // Helper: Check unworked regular holiday eligibility under Philippine Labor Code
     const isEligibleForUnworkedRegularHoliday = (hDateStr: string): boolean => {
       if (employee.resignation_date && employee.resignation_date < hDateStr) return false
@@ -623,6 +630,42 @@ export const payrollCalculationService = {
           if (!hasValidOut) {
             attendanceReviewNotes.push(`Duty punch on ${dStr} is awaiting or missing OUT punch`)
           }
+
+          const appHours = resolveApprovedDutyHours(att)
+          const workedMins = att?.worked_minutes || 0
+          const workedHoursDecimal = typeof att?.total_hours_decimal === 'number' && att.total_hours_decimal > 0
+            ? att.total_hours_decimal
+            : workedMins / 60
+
+          if (appHours < 8) {
+            // Approved shorter shift (e.g. 3, 4, 5, 6 hours)
+            // Base pay calculated using actual payable working hours multiplied by hourly rate
+            const payableHoursForDay = Math.min(appHours, Math.max(0, workedHoursDecimal))
+            const dayBasePay = Math.round(payableHoursForDay * hourlyRate * 100) / 100
+            const dayFraction = Math.round((payableHoursForDay / 8) * 100) / 100
+            const dayUndertime = Math.max(0, Math.round(appHours * 60 - workedMins))
+
+            regularWorkedDaysPay += dayBasePay
+            regularPayableDaysFraction += dayFraction
+            totalUndertimeMinutes += dayUndertime
+            // Notice: Undertime deduction is ₱0 because base pay is already calculated on actual payable hours!
+          } else {
+            // Standard 8-hour shift
+            const dayBasePay = dailyRate
+            const dayFraction = 1.0
+            const dayUndertime = typeof att?.undertime_minutes === 'number' && att.undertime_minutes > 0
+              ? att.undertime_minutes
+              : Math.max(0, 480 - workedMins)
+            const dayUndertimeDed = hourlyRate > 0
+              ? Math.round((dayUndertime / 60) * hourlyRate * 100) / 100
+              : (dailyRate > 0 ? Math.round((dayUndertime / 480) * dailyRate * 100) / 100 : 0)
+
+            regularWorkedDaysPay += dayBasePay
+            regularPayableDaysFraction += dayFraction
+            totalUndertimeMinutes += dayUndertime
+            standardShiftsUndertimeMinutes += dayUndertime
+            standardShiftsUndertimeDeduction += dayUndertimeDed
+          }
         } else if (att?.status === 'On Leave' || att?.status === 'Leave') {
           leaveDays++
         } else if (isFuture) {
@@ -636,9 +679,6 @@ export const payrollCalculationService = {
 
       if (hasWorked && att?.late_minutes && att.late_minutes > 0) {
         lateMinutes += att.late_minutes
-      }
-      if (hasWorked && att?.undertime_minutes && att.undertime_minutes > 0) {
-        undertimeMinutes += att.undertime_minutes
       }
 
       // --- D. AUTHORIZED OVERTIME (Requires Approved Physical Form) ---
@@ -674,8 +714,8 @@ export const payrollCalculationService = {
       attendanceReviewNotes.push(`${unresolvedDays} scheduled date(s) have missing or unverified attendance records`)
     }
 
-    // Total payable working days (standard 8-hour shifts rendered)
-    const payableDays = presentDays + sundayWorkDays + workedHolidayDays + specialNonWorkingDays + specialWorkingDays
+    // Total payable working days (standard 8-hour shift equivalent rendered)
+    const payableDays = Math.round((regularPayableDaysFraction + sundayWorkDays + workedHolidayDays + specialNonWorkingDays + specialWorkingDays) * 100) / 100
 
     const reviewReasons: string[] = []
 
@@ -688,16 +728,16 @@ export const payrollCalculationService = {
     if (basicSalary <= 0 && dailyRate <= 0) {
       reviewReasons.push('Salary rate is not configured for this employee')
     } else if (salaryType === 'Daily') {
-      // Daily wage worker: Base working pay is calculated from actual payable days rendered
-      basePay = Math.round(payableDays * dailyRate * 100) / 100
+      // Daily wage worker: Base working pay is calculated from actual payable hours/days rendered
+      basePay = Math.round(regularWorkedDaysPay * 100) / 100
     } else if (salaryType === 'Monthly') {
       const semiMonthlyBasic = Math.round((basicSalary / 2) * 100) / 100
       const absenceDeduction = Math.round(absentDays * dailyRate * 100) / 100
       basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction) * 100) / 100)
     } else if (salaryType === 'Hourly') {
-      basePay = Math.round(payableDays * 8 * hourlyRate * 100) / 100
+      basePay = Math.round(regularWorkedDaysPay * 100) / 100
     } else {
-      basePay = Math.round(payableDays * dailyRate * 100) / 100
+      basePay = Math.round(regularWorkedDaysPay * 100) / 100
     }
 
     const initialEarnings = Math.round((basePay + sundayDutyPay + holidayPay + totalOvertimePay + allowances) * 100) / 100
@@ -736,12 +776,15 @@ export const payrollCalculationService = {
       }
     }
 
+    // Set undertimeMinutes to total tracked undertime across all shifts for HR reporting
+    undertimeMinutes = totalUndertimeMinutes
+
     // Undertime Deduction: calculated at standard hourly rate
     // e.g. Daily Wage ₱540 / 8 = ₱67.50/hr -> 2 hrs undertime = ₱135.00 deduction
-    const undertimeHours = undertimeMinutes / 60
-    const undertimeDeduction = hourlyRate > 0
-      ? Math.round(undertimeHours * hourlyRate * 100) / 100
-      : (dailyRate > 0 ? Math.round((undertimeMinutes / (8 * 60)) * dailyRate * 100) / 100 : 0)
+    // Crucial rule: Only deduct undertime for standard shifts where full daily wage was in basePay.
+    // For approved shorter shifts, base pay was already computed using actual payable hours,
+    // so undertime deduction for them is ₱0 to strictly prevent double deduction.
+    const undertimeDeduction = Math.round(standardShiftsUndertimeDeduction * 100) / 100
 
     const balanceBeforeTax = Math.round((balanceAfterBenefitsAndLoans - (cashAdvance + totalOtherDeductions + undertimeDeduction)) * 100) / 100
 
