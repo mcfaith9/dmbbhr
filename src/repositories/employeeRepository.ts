@@ -990,10 +990,33 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   const cleanTin = input.tin_number !== undefined ? getOptString(input.tin_number) : (input.tin !== undefined ? getOptString(input.tin) : getOptString(input.tinNumber))
   const cleanTaxStatus = getOptString(input.taxStatus, input.tax_status)
 
-  const cleanSssDeduction = getOptNumber(input.sssDeduction, input.sss_deduction)
-  const cleanPhilhealthDeduction = getOptNumber(input.philhealthDeduction, input.philhealth_deduction)
-  const cleanPagibigDeduction = getOptNumber(input.pagibigDeduction, input.pagibig_deduction)
-  const cleanOtherDeductions = getOptNumber(input.otherDeductions, input.other_deductions)
+  let cleanSssDeduction: number | undefined
+  if ('sss_deduction' in input) {
+    cleanSssDeduction = getOptNumber(input.sss_deduction)
+  } else if ('sssDeduction' in input) {
+    cleanSssDeduction = getOptNumber(input.sssDeduction)
+  }
+
+  let cleanPhilhealthDeduction: number | undefined
+  if ('philhealth_deduction' in input) {
+    cleanPhilhealthDeduction = getOptNumber(input.philhealth_deduction)
+  } else if ('philhealthDeduction' in input) {
+    cleanPhilhealthDeduction = getOptNumber(input.philhealthDeduction)
+  }
+
+  let cleanPagibigDeduction: number | undefined
+  if ('pagibig_deduction' in input) {
+    cleanPagibigDeduction = getOptNumber(input.pagibig_deduction)
+  } else if ('pagibigDeduction' in input) {
+    cleanPagibigDeduction = getOptNumber(input.pagibigDeduction)
+  }
+
+  let cleanOtherDeductions: number | undefined
+  if ('other_deductions' in input) {
+    cleanOtherDeductions = getOptNumber(input.other_deductions)
+  } else if ('otherDeductions' in input) {
+    cleanOtherDeductions = getOptNumber(input.otherDeductions)
+  }
 
   // Extract Created / Updated Dates (primitive ISO strings only)
   let cleanCreatedAt = new Date().toISOString()

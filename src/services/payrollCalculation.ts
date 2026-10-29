@@ -269,7 +269,7 @@ export const payrollCalculationService = {
       : await db.payrollSnapshots.get(`${period.id}_${bioId}`)
 
     // If an existing finalized snapshot exists, preserve it completely as an immutable historical record
-    if (existingSnap && existingSnap.batchStatus === 'finalized') {
+    if (existingSnap && (existingSnap.batchStatus === 'finalized' || existingSnap.reviewStatus === 'finalized')) {
       return this.snapshotToPayrollRecord(existingSnap)
     }
 
@@ -743,22 +743,28 @@ export const payrollCalculationService = {
     const initialEarnings = Math.round((basePay + sundayDutyPay + holidayPay + totalOvertimePay + allowances) * 100) / 100
 
     // Stage B: Statutory Benefits & Loans
-    let sss = existingSnap?.sss ?? 0
-    let philhealth = existingSnap?.philhealth ?? 0
-    let pagibig = existingSnap?.pagibig ?? 0
+    const configuredSss = typeof employee.sss_deduction === 'number'
+      ? employee.sss_deduction
+      : (typeof (employee as any).sssDeduction === 'number' ? (employee as any).sssDeduction : undefined)
+
+    const configuredPhilhealth = typeof employee.philhealth_deduction === 'number'
+      ? employee.philhealth_deduction
+      : (typeof (employee as any).philhealthDeduction === 'number' ? (employee as any).philhealthDeduction : undefined)
+
+    const configuredPagibig = typeof employee.pagibig_deduction === 'number'
+      ? employee.pagibig_deduction
+      : (typeof (employee as any).pagibigDeduction === 'number' ? (employee as any).pagibigDeduction : undefined)
+
+    // Government deductions must strictly reflect configured amounts.
+    // If not configured (undefined or null), deductions must default to ₱0.00.
+    // Statutory formulas or fallback percentages must NEVER auto-generate deductions simply because an ID number exists.
+    let sss = configuredSss !== undefined ? Math.max(0, configuredSss) : 0
+    let philhealth = configuredPhilhealth !== undefined ? Math.max(0, configuredPhilhealth) : 0
+    let pagibig = configuredPagibig !== undefined ? Math.max(0, configuredPagibig) : 0
+
     let sssLoan = existingSnap?.sssLoan ?? 0
     let pagibigLoan = existingSnap?.pagibigLoan ?? 0
     let otherLoan = existingSnap?.otherLoan ?? 0
-
-    if (!existingSnap && initialEarnings > 0) {
-      pagibig = 100
-      if (employee.sss_number) {
-        sss = Math.min(1350, Math.max(180, Math.round(initialEarnings * 0.045)))
-      }
-      if (employee.philhealth_number) {
-        philhealth = Math.round(initialEarnings * 0.025)
-      }
-    }
 
     const totalBenefitsAndLoans = Math.round((sss + philhealth + pagibig + sssLoan + pagibigLoan + otherLoan) * 100) / 100
     const balanceAfterBenefitsAndLoans = Math.round((initialEarnings - totalBenefitsAndLoans) * 100) / 100

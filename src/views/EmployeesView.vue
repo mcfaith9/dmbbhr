@@ -231,6 +231,9 @@ const formTaxStatus = ref<string>('Standard')
 const formAllowances = ref<number | ''>('')
 const formDeMinimis = ref<number | ''>('')
 const formPayrollStatus = ref<'configured' | 'pending' | 'exempt'>('configured')
+const formSssDeduction = ref<number | ''>('')
+const formPhilhealthDeduction = ref<number | ''>('')
+const formPagibigDeduction = ref<number | ''>('')
 
 function normalizeSalaryType(val?: string | null): 'Monthly' | 'Daily' | 'Hourly' {
   if (!val) return 'Daily'
@@ -332,6 +335,9 @@ function resetEmployeeForm() {
   formAllowances.value = ''
   formDeMinimis.value = ''
   formPayrollStatus.value = 'configured'
+  formSssDeduction.value = ''
+  formPhilhealthDeduction.value = ''
+  formPagibigDeduction.value = ''
   nextTick(() => {
     isInitializingProfileForm.value = false
   })
@@ -578,6 +584,9 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   formAllowances.value = typeof emp.allowances === 'number' ? emp.allowances : ''
   formDeMinimis.value = typeof emp.de_minimis === 'number' ? emp.de_minimis : ''
   formPayrollStatus.value = (emp.payroll_status as any) || 'configured'
+  formSssDeduction.value = typeof emp.sss_deduction === 'number' ? emp.sss_deduction : ''
+  formPhilhealthDeduction.value = typeof emp.philhealth_deduction === 'number' ? emp.philhealth_deduction : ''
+  formPagibigDeduction.value = typeof emp.pagibig_deduction === 'number' ? emp.pagibig_deduction : ''
 
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
@@ -652,7 +661,10 @@ async function saveProfile() {
       tax_status: formTaxStatus.value.trim() || 'Standard',
       allowances: parseOptionalNumber(formAllowances.value),
       de_minimis: parseOptionalNumber(formDeMinimis.value),
-      payroll_status: formPayrollStatus.value
+      payroll_status: formPayrollStatus.value,
+      sss_deduction: parseOptionalNumber(formSssDeduction.value),
+      philhealth_deduction: parseOptionalNumber(formPhilhealthDeduction.value),
+      pagibig_deduction: parseOptionalNumber(formPagibigDeduction.value)
     })
 
     selectedEmployee.value = updated
@@ -2126,6 +2138,55 @@ onUnmounted(() => {
                           </SelectGroup>
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <!-- Configured Semi-Monthly Statutory Deductions -->
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">SSS Deduction (Semi-Monthly)</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formSssDeduction"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                      <p class="text-[10px] text-muted-foreground">Fixed cutoff deduction. Leave empty for ₱0.00.</p>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">PhilHealth Deduction (Semi-Monthly)</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formPhilhealthDeduction"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                      <p class="text-[10px] text-muted-foreground">Fixed cutoff deduction. Leave empty for ₱0.00.</p>
+                    </div>
+
+                    <div class="space-y-1">
+                      <label class="text-xs font-semibold text-foreground">Pag-IBIG Deduction (Semi-Monthly)</label>
+                      <div class="relative">
+                        <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">₱</span>
+                        <Input
+                          v-model.number="formPagibigDeduction"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          class="h-8 text-xs pl-6 font-mono"
+                        />
+                      </div>
+                      <p class="text-[10px] text-muted-foreground">Fixed cutoff deduction. Leave empty for ₱0.00.</p>
                     </div>
                   </div>
 
