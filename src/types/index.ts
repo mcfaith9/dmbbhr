@@ -98,6 +98,10 @@ export interface Employee {
   pagibig_number?: string
   tin?: string
   tax_status?: string
+  sss_deduction?: number
+  philhealth_deduction?: number
+  pagibig_deduction?: number
+  other_deductions?: number
   created_at?: string
   updated_at?: string
 }

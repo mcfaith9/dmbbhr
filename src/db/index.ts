@@ -79,6 +79,10 @@ export interface EmployeeRecord {
   pagibigNumber?: string
   tin?: string
   taxStatus?: string
+  sssDeduction?: number
+  philhealthDeduction?: number
+  pagibigDeduction?: number
+  otherDeductions?: number
   createdAt: string
   updatedAt: string
 }

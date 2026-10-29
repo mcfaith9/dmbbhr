@@ -990,6 +990,11 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
   const cleanTin = input.tin_number !== undefined ? getOptString(input.tin_number) : (input.tin !== undefined ? getOptString(input.tin) : getOptString(input.tinNumber))
   const cleanTaxStatus = getOptString(input.taxStatus, input.tax_status)
 
+  const cleanSssDeduction = getOptNumber(input.sssDeduction, input.sss_deduction)
+  const cleanPhilhealthDeduction = getOptNumber(input.philhealthDeduction, input.philhealth_deduction)
+  const cleanPagibigDeduction = getOptNumber(input.pagibigDeduction, input.pagibig_deduction)
+  const cleanOtherDeductions = getOptNumber(input.otherDeductions, input.other_deductions)
+
   // Extract Created / Updated Dates (primitive ISO strings only)
   let cleanCreatedAt = new Date().toISOString()
   if (typeof input.createdAt === 'string' && input.createdAt) {
@@ -1045,6 +1050,10 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     pagibigNumber: cleanPagibigNumber,
     tin: cleanTin,
     taxStatus: cleanTaxStatus,
+    sssDeduction: cleanSssDeduction,
+    philhealthDeduction: cleanPhilhealthDeduction,
+    pagibigDeduction: cleanPagibigDeduction,
+    otherDeductions: cleanOtherDeductions,
     createdAt: cleanCreatedAt,
     updatedAt: cleanUpdatedAt
   }
@@ -1114,6 +1123,10 @@ export const employeeRepository = {
       pagibig_number: rec.pagibigNumber,
       tin: rec.tin,
       tax_status: rec.taxStatus,
+      sss_deduction: rec.sssDeduction,
+      philhealth_deduction: rec.philhealthDeduction,
+      pagibig_deduction: rec.pagibigDeduction,
+      other_deductions: rec.otherDeductions,
       created_at: rec.createdAt,
       updated_at: rec.updatedAt
     }
@@ -1233,6 +1246,14 @@ export const employeeRepository = {
       tin_number?: string
       tax_status?: string
       taxStatus?: string
+      sss_deduction?: number
+      sssDeduction?: number
+      philhealth_deduction?: number
+      philhealthDeduction?: number
+      pagibig_deduction?: number
+      pagibigDeduction?: number
+      other_deductions?: number
+      otherDeductions?: number
     }
   ): Promise<Employee> {
     await ensureInitialized()
