@@ -150,7 +150,60 @@ async function print(): Promise<void> {
     .my-1 { margin-top: 4px; margin-bottom: 4px; }
     .my-2 { margin-top: 8px; margin-bottom: 8px; }
     .py-1 { padding-top: 3px; padding-bottom: 3px; }
-    .logo-img { height: 32px; width: auto; max-width: 50px; object-fit: contain; }
+    .company-header {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .company-logo {
+      height: 40px !important;
+      max-height: 40px !important;
+      width: auto !important;
+      max-width: 50px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+
+    .company-details h1 {
+      font-size: 12px !important;
+      line-height: 1 !important;
+      font-weight: 700;
+      margin: 0;
+      text-transform: uppercase;
+    }
+
+    .company-details p {
+      font-size: 10px !important;
+      line-height: 1 !important;
+      margin: 1px 0 0 !important;
+      color: #525252;
+    }
+    
+    .payslip-signatures {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #d4d4d4;
+      font-size: 9px;
+    }
+
+    .signature-item {
+      min-width: 0;
+      text-align: center;
+    }
+
+    .signature-line {
+      height: 24px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #000;
+    }
+
+    .signature-item span {
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -188,25 +241,21 @@ defineExpose({
     <!-- ================================================================= -->
     <div class="border-b border-black pb-2 mb-2">
       <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2.5">
+        <div class="company-header">
           <img
             :src="activeLogoUrl"
             :alt="companyName"
-            class="h-8 w-auto max-w-[44px] object-contain shrink-0"
+            class="company-logo"
             crossorigin="anonymous"
             @error="onLogoError"
           />
-          <div>
-            <h1 class="text-xs font-bold uppercase tracking-wide leading-tight">
-              {{ companyName }}
-            </h1>
-            <p class="text-[9.5px] text-neutral-600 uppercase tracking-wider">
-              {{ companySubtitle }}
-            </p>
+          <div class="company-details">
+            <h1>{{ companyName }}</h1>
+            <p>{{ companySubtitle }}</p>
           </div>
         </div>
         <div class="text-right">
-          <span class="text-xs font-black tracking-widest uppercase">PAYSLIP</span>
+          <span class="text-[9px] font-medium tracking-widest uppercase">PAYSLIP</span>
           <p class="text-[9px] font-mono text-neutral-500">Ref: #{{ record.employeeNumber }}</p>
         </div>
       </div>
@@ -219,12 +268,6 @@ defineExpose({
         </div>
         <div class="flex justify-between items-center text-neutral-700">
           <span>Position: {{ record.position }} <template v-if="record.department">({{ record.department }})</template></span>
-          <span>
-            Salary:
-            <strong v-if="record.salaryType === 'Daily'">₱{{ record.dailyRate.toFixed(2) }}/day</strong>
-            <strong v-else-if="record.salaryType === 'Monthly'">₱{{ record.basicSalary.toFixed(2) }}/mo</strong>
-            <strong v-else>{{ record.salaryType }}</strong>
-          </span>
         </div>
         <div class="flex justify-between items-center text-neutral-700">
           <span>Period: <strong class="font-mono text-black">{{ cutoff.label }}</strong></span>
@@ -333,7 +376,7 @@ defineExpose({
     <!-- ================================================================= -->
     <div class="my-2 p-2 border-2 border-black flex justify-between items-center">
       <span class="font-black uppercase tracking-wider text-xs">NET PAY:</span>
-      <span class="font-mono font-black text-sm sm:text-base">
+      <span class="font-mono font-black text-sm">
         {{ formatCurrency(record.netPay) }}
       </span>
     </div>
@@ -341,15 +384,70 @@ defineExpose({
     <!-- ================================================================= -->
     <!-- 5. SIGNATURES -->
     <!-- ================================================================= -->
-    <div class="pt-4 mt-3 border-t border-neutral-300 grid grid-cols-2 gap-4 text-[9.5px]">
-      <div class="text-center">
-        <div class="border-b border-black mb-1 h-6"></div>
-        <span class="text-neutral-700 block">Employee Signature</span>
+    <div class="payslip-signatures">
+      <div class="signature-item">
+        <div class="signature-line"></div>
+        <span>Employee Signature</span>
       </div>
-      <div class="text-center">
-        <div class="border-b border-black mb-1 h-6"></div>
-        <span class="text-neutral-700 block">Prepared By / Authorized Signature</span>
+
+      <div class="signature-item">
+        <div class="signature-line"></div>
+        <span>Prepared By / Authorized Signature</span>
       </div>
     </div>
   </div>
 </template>
+<style scoped>
+  .company-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .company-logo {
+    height: 32px;
+    width: auto;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  .company-details h1 {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-transform: uppercase;
+    margin: 0;
+  }
+
+  .company-details p {
+    font-size: 9.5px;
+    line-height: 1.2;
+    margin: 2px 0 0;
+    color: #525252;
+  }
+
+  .payslip-signatures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #d4d4d4;
+    font-size: 9px;
+  }
+
+  .signature-item {
+    min-width: 0;
+    text-align: center;
+  }
+
+  .signature-line {
+    height: 24px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #000;
+  }
+
+  .signature-item span {
+    display: block;
+  }
+</style>
