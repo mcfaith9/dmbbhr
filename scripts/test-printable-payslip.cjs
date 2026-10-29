@@ -66,41 +66,52 @@ assert.ok(cssContent.includes('print-color-adjust: exact'), 'style.css must pres
 console.log('✔ Test 2 Passed: Comprehensive @media print and @page CSS rules verified.\n')
 
 // -------------------------------------------------------------
-// Test 3: Verify Payslip Template Structure in PayrollCalculationDialog.vue
+// Test 3: Verify Dedicated Payslip Component (PrintablePayslip.vue) and Integration
 // -------------------------------------------------------------
-console.log('Test 3: Payslip Template Structure in PayrollCalculationDialog.vue')
+console.log('Test 3: Dedicated Payslip Component and Dialog Integration')
+const payslipPath = path.resolve(__dirname, '../src/components/PrintablePayslip.vue')
+assert.ok(fs.existsSync(payslipPath), 'src/components/PrintablePayslip.vue must exist')
+const payslipContent = fs.readFileSync(payslipPath, 'utf8')
+
 const dialogPath = path.resolve(__dirname, '../src/components/PayrollCalculationDialog.vue')
 const dialogContent = fs.readFileSync(dialogPath, 'utf8')
 
-// Check logo inclusion
-assert.ok(dialogContent.includes('src="/dbblogo.png"'), 'Template must include /dbblogo.png')
-assert.ok(dialogContent.includes('object-contain'), 'Logo must have object-contain to preserve aspect ratio')
+// Check logo inclusion and props in PrintablePayslip.vue
+assert.ok(payslipContent.includes('activeLogoUrl'), 'PrintablePayslip must bind active logo URL')
+assert.ok(payslipContent.includes('object-contain'), 'Logo must have object-contain to preserve aspect ratio')
+assert.ok(payslipContent.includes('onLogoError'), 'PrintablePayslip must handle fallback logo')
 
-// Check preloading in triggerPrint
-assert.ok(dialogContent.includes('new Image()'), 'triggerPrint must preload the logo image before printing')
-assert.ok(dialogContent.includes('img.src = \'/dbblogo.png\''), 'triggerPrint must preload /dbblogo.png')
-assert.ok(dialogContent.includes('window.print()'), 'triggerPrint must invoke window.print()')
+// Check preloading and expose in PrintablePayslip.vue
+assert.ok(payslipContent.includes('new Image()'), 'print() must preload the logo image before printing')
+assert.ok(payslipContent.includes('window.print()'), 'print() must invoke window.print()')
+assert.ok(payslipContent.includes('defineExpose'), 'PrintablePayslip must expose print method')
 
-// Check 7 required sections
-assert.ok(dialogContent.includes('DMBB HOLDINGS INC.'), 'Section 1: Company header present')
-assert.ok(dialogContent.includes('currentCutoff.label'), 'Section 2: Cutoff label present')
-assert.ok(dialogContent.includes('currentCutoff.paydayDisplay'), 'Section 2: Payday present')
-assert.ok(dialogContent.includes('currentRecord.employeeName'), 'Section 3: Employee name present')
-assert.ok(dialogContent.includes('currentRecord.employeeNumber'), 'Section 3: Employee ID present')
-assert.ok(dialogContent.includes('currentRecord.position'), 'Section 3: Position present')
-assert.ok(dialogContent.includes('currentRecord.department'), 'Section 3: Department present')
-assert.ok(dialogContent.includes('currentRecord.salaryType'), 'Section 3: Salary type present')
-assert.ok(dialogContent.includes('currentRecord.dailyRate'), 'Section 3: Salary rate present')
-assert.ok(dialogContent.includes('Gross Earnings'), 'Section 4: Gross earnings header present')
-assert.ok(dialogContent.includes('currentRecord.initialEarnings'), 'Section 4: Total gross present')
-assert.ok(dialogContent.includes('Authorized Deductions'), 'Section 5: Deductions header present')
-assert.ok(dialogContent.includes('totalDeductionsCalculated'), 'Section 5: Total deductions present')
-assert.ok(dialogContent.includes('print:max-h-none print:overflow-visible'), 'Section 5: print:max-h-none print:overflow-visible must prevent scroll clipping in print')
-assert.ok(dialogContent.includes('Net Take-Home Pay'), 'Section 6: Net take-home pay title present')
-assert.ok(dialogContent.includes('currentRecord.netPay'), 'Section 6: Net pay amount present')
-assert.ok(dialogContent.includes('Human Resources / Payroll Officer'), 'Section 7: Prepared by signature block present')
-assert.ok(dialogContent.includes('Received By (Employee Signature)'), 'Section 7: Received by signature block present')
-console.log('✔ Test 3 Passed: All 7 required payslip sections and print preloading verified.\n')
+// Check 7 required sections inside PrintablePayslip.vue
+assert.ok(payslipContent.includes('companyName'), 'Section 1: Company header prop present')
+assert.ok(payslipContent.includes('cutoff.label'), 'Section 2: Cutoff label present')
+assert.ok(payslipContent.includes('cutoff.paydayDisplay'), 'Section 2: Payday present')
+assert.ok(payslipContent.includes('record.employeeName'), 'Section 3: Employee name present')
+assert.ok(payslipContent.includes('record.employeeNumber'), 'Section 3: Employee ID present')
+assert.ok(payslipContent.includes('record.position'), 'Section 3: Position present')
+assert.ok(payslipContent.includes('record.department'), 'Section 3: Department present')
+assert.ok(payslipContent.includes('record.salaryType'), 'Section 3: Salary type present')
+assert.ok(payslipContent.includes('record.dailyRate'), 'Section 3: Salary rate present')
+assert.ok(payslipContent.includes('Gross Earnings'), 'Section 4: Gross earnings header present')
+assert.ok(payslipContent.includes('record.initialEarnings'), 'Section 4: Total gross present')
+assert.ok(payslipContent.includes('Authorized Deductions'), 'Section 5: Deductions header present')
+assert.ok(payslipContent.includes('totalDeductions'), 'Section 5: Total deductions present')
+assert.ok(payslipContent.includes('print:max-h-none print:overflow-visible'), 'Section 5: print:max-h-none print:overflow-visible must prevent scroll clipping in print')
+assert.ok(payslipContent.includes('Net Take-Home Pay'), 'Section 6: Net take-home pay title present')
+assert.ok(payslipContent.includes('record.netPay'), 'Section 6: Net pay amount present')
+assert.ok(payslipContent.includes('Human Resources / Payroll Officer'), 'Section 7: Prepared by signature block present')
+assert.ok(payslipContent.includes('Received By (Employee Signature)'), 'Section 7: Received by signature block present')
+
+// Check PayrollCalculationDialog.vue integration
+assert.ok(dialogContent.includes('import PrintablePayslip'), 'PayrollCalculationDialog must import PrintablePayslip')
+assert.ok(dialogContent.includes('<PrintablePayslip'), 'PayrollCalculationDialog must mount PrintablePayslip')
+assert.ok(dialogContent.includes('payslipRef.value?.print()') || dialogContent.includes('payslipRef.value.print()'), 'triggerPrint must delegate to payslipRef.print()')
+
+console.log('✔ Test 3 Passed: Dedicated PrintablePayslip component and clean dialog integration verified.\n')
 
 // -------------------------------------------------------------
 // Test 4: Single-Page Height Mathematical Simulation
