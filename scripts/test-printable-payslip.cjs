@@ -57,7 +57,7 @@ const cssContent = fs.readFileSync(cssPath, 'utf8')
 
 assert.ok(cssContent.includes('@media print'), 'style.css must contain @media print block')
 assert.ok(cssContent.includes('@page'), 'style.css must contain @page rule')
-assert.ok(cssContent.includes('margin: 8mm 10mm'), 'style.css must define print margins')
+assert.ok(cssContent.includes('margin: 6mm 8mm') || cssContent.includes('margin: 8mm 10mm'), 'style.css must define print margins')
 assert.ok(cssContent.includes('#app {'), 'style.css must target #app during print')
 assert.ok(cssContent.includes('.payslip-dialog-content {'), 'style.css must target .payslip-dialog-content')
 assert.ok(cssContent.includes('position: static !important'), 'style.css must reset fixed modal positioning in print')
@@ -81,48 +81,44 @@ assert.ok(payslipContent.includes('activeLogoUrl'), 'PrintablePayslip must bind 
 assert.ok(payslipContent.includes('object-contain'), 'Logo must have object-contain to preserve aspect ratio')
 assert.ok(payslipContent.includes('onLogoError'), 'PrintablePayslip must handle fallback logo')
 
-// Check preloading and expose in PrintablePayslip.vue
+// Check preloading, isolated iframe, and expose in PrintablePayslip.vue
 assert.ok(payslipContent.includes('new Image()'), 'print() must preload the logo image before printing')
-assert.ok(payslipContent.includes('window.print()'), 'print() must invoke window.print()')
+assert.ok(payslipContent.includes('dmbb-payslip-print-iframe'), 'print() must support isolated iframe printing')
 assert.ok(payslipContent.includes('defineExpose'), 'PrintablePayslip must expose print method')
 
-// Check 7 required sections inside PrintablePayslip.vue
+// Check compact required sections inside PrintablePayslip.vue
 assert.ok(payslipContent.includes('companyName'), 'Section 1: Company header prop present')
 assert.ok(payslipContent.includes('cutoff.label'), 'Section 2: Cutoff label present')
 assert.ok(payslipContent.includes('cutoff.paydayDisplay'), 'Section 2: Payday present')
 assert.ok(payslipContent.includes('record.employeeName'), 'Section 3: Employee name present')
 assert.ok(payslipContent.includes('record.employeeNumber'), 'Section 3: Employee ID present')
 assert.ok(payslipContent.includes('record.position'), 'Section 3: Position present')
-assert.ok(payslipContent.includes('record.department'), 'Section 3: Department present')
 assert.ok(payslipContent.includes('record.salaryType'), 'Section 3: Salary type present')
-assert.ok(payslipContent.includes('record.dailyRate'), 'Section 3: Salary rate present')
-assert.ok(payslipContent.includes('Gross Earnings'), 'Section 4: Gross earnings header present')
+assert.ok(payslipContent.includes('EARNINGS'), 'Section 4: Gross earnings header present')
 assert.ok(payslipContent.includes('record.initialEarnings'), 'Section 4: Total gross present')
-assert.ok(payslipContent.includes('Authorized Deductions'), 'Section 5: Deductions header present')
+assert.ok(payslipContent.includes('DEDUCTIONS'), 'Section 5: Deductions header present')
 assert.ok(payslipContent.includes('totalDeductions'), 'Section 5: Total deductions present')
-assert.ok(payslipContent.includes('print:max-h-none print:overflow-visible'), 'Section 5: print:max-h-none print:overflow-visible must prevent scroll clipping in print')
-assert.ok(payslipContent.includes('Net Take-Home Pay'), 'Section 6: Net take-home pay title present')
+assert.ok(payslipContent.includes('NET PAY'), 'Section 6: Net take-home pay title present')
 assert.ok(payslipContent.includes('record.netPay'), 'Section 6: Net pay amount present')
-assert.ok(payslipContent.includes('Human Resources / Payroll Officer'), 'Section 7: Prepared by signature block present')
-assert.ok(payslipContent.includes('Received By (Employee Signature)'), 'Section 7: Received by signature block present')
+assert.ok(payslipContent.includes('Employee Signature'), 'Section 7: Employee signature line present')
+assert.ok(payslipContent.includes('Prepared By / Authorized Signature'), 'Section 7: Authorized signature line present')
 
 // Check PayrollCalculationDialog.vue integration
 assert.ok(dialogContent.includes('import PrintablePayslip'), 'PayrollCalculationDialog must import PrintablePayslip')
 assert.ok(dialogContent.includes('<PrintablePayslip'), 'PayrollCalculationDialog must mount PrintablePayslip')
 assert.ok(dialogContent.includes('payslipRef.value?.print()') || dialogContent.includes('payslipRef.value.print()'), 'triggerPrint must delegate to payslipRef.print()')
 
-// Check Both Print Buttons in PayrollCalculationDialog.vue
-assert.ok(dialogContent.includes('handleFirstPrintButton'), 'Button 1 must use handleFirstPrintButton')
-assert.ok(dialogContent.includes('@click="handleFirstPrintButton"'), 'Button 1 must be wired to handleFirstPrintButton')
-assert.ok(dialogContent.includes('@click="triggerPrint"'), 'Button 2 must be wired to triggerPrint')
+// Check Official Payslip Preview workflow in PayrollCalculationDialog.vue
+assert.ok(dialogContent.includes('isPayslipViewOpen = true'), 'Button 1 must open payslip preview modal')
+assert.ok(dialogContent.includes('Print Payslip'), 'Official Payslip Preview must contain Print Payslip button')
+assert.ok(dialogContent.includes('@click="triggerPrint"'), 'Preview Print Payslip button must be wired to triggerPrint')
 assert.ok(dialogContent.includes('payroll-calc-dialog-content print:hidden'), 'Main calculation dialog must have print:hidden and payroll-calc-dialog-content')
-assert.ok(dialogContent.includes('printable-payslip-direct-container'), 'Dedicated printable payslip direct container must exist')
 
 // Check CSS strict exclusion of the calculation dialog in print
 assert.ok(cssContent.includes('.payroll-calc-dialog-content'), 'CSS must specifically target .payroll-calc-dialog-content for hiding')
 assert.ok(cssContent.includes('[data-slot="dialog-content"]:not(.payslip-dialog-content)'), 'CSS must hide non-payslip dialog contents in print')
 
-console.log('✔ Test 3 Passed: Both Print buttons and print isolation guardrails verified.\n')
+console.log('✔ Test 3 Passed: Compact PrintablePayslip component and isolated preview workflow verified.\n')
 
 // -------------------------------------------------------------
 // Test 4: Single-Page Height Mathematical Simulation

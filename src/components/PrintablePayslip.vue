@@ -17,11 +17,11 @@ const props = withDefaults(
   }
 )
 
+const payslipRootRef = ref<HTMLElement | null>(null)
 const activeLogoUrl = ref(props.logoUrl)
 const isPrinting = ref(false)
 
 function onLogoError() {
-  // If primary logo fails, gracefully try alternate /dbblogo.png
   if (activeLogoUrl.value !== '/dbblogo.png') {
     activeLogoUrl.value = '/dbblogo.png'
   }
@@ -40,29 +40,131 @@ const totalDeductions = computed(() => {
 })
 
 /**
- * Preloads the logo image and triggers the Windows browser print dialog.
- * Exposed to parent components for clean integration.
+ * Clean currency formatter for Philippine Peso amounts
+ */
+function formatCurrency(val: number): string {
+  return '₱' + (val || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+/**
+ * Isolated printing mechanism:
+ * Injects the dedicated PrintablePayslip HTML into an isolated hidden iframe
+ * so ONLY the compact official payslip is sent to the printer.
+ * The parent Payroll Calculation dialog, dashboard, and backdrop are never printed.
  */
 async function print(): Promise<void> {
   if (isPrinting.value) return
   isPrinting.value = true
 
   try {
-    // 1. Ensure logo image is fully decoded before opening print dialog
+    // 1. Ensure logo image is fully decoded before printing
     await new Promise<void>((resolve) => {
       const img = new Image()
       img.onload = () => resolve()
       img.onerror = () => resolve()
       img.src = activeLogoUrl.value
-      if (img.complete) {
-        resolve()
-      }
+      if (img.complete) resolve()
     })
 
-    // 2. Allow DOM to settle
     await nextTick()
 
-    // 3. Open browser print dialog
+    const slipElement = payslipRootRef.value || document.getElementById('printable-payslip')
+    if (!slipElement) {
+      window.print()
+      return
+    }
+
+    // 2. Reuse or create isolated hidden print iframe
+    let iframe = document.getElementById('dmbb-payslip-print-iframe') as HTMLIFrameElement | null
+    if (!iframe) {
+      iframe = document.createElement('iframe')
+      iframe.id = 'dmbb-payslip-print-iframe'
+      iframe.style.position = 'fixed'
+      iframe.style.right = '0'
+      iframe.style.bottom = '0'
+      iframe.style.width = '0'
+      iframe.style.height = '0'
+      iframe.style.border = '0'
+      iframe.style.opacity = '0'
+      document.body.appendChild(iframe)
+    }
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+    if (!iframeDoc) {
+      window.print()
+      return
+    }
+
+    const slipHtml = slipElement.outerHTML
+
+    iframeDoc.open()
+    iframeDoc.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Payslip - ${props.record.employeeName}</title>
+  <style>
+    @page {
+      size: auto;
+      margin: 5mm 8mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff !important;
+      color: #000000 !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+    .printable-payslip-root {
+      width: 100%;
+      max-width: 440px;
+      margin: 0 auto;
+      padding: 4px;
+      background: #ffffff;
+      color: #000000;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    .font-bold { font-weight: 700; }
+    .font-semibold { font-weight: 600; }
+    .uppercase { text-transform: uppercase; }
+    .border-b { border-bottom: 1px solid #222222; }
+    .border-t { border-top: 1px solid #222222; }
+    .border-b-dotted { border-bottom: 1px dotted #888888; }
+    .border-double { border-top: 2px solid #222222; border-bottom: 2px solid #222222; }
+    .row { display: flex; justify-content: space-between; align-items: center; padding: 1.5px 0; }
+    .flex { display: flex; }
+    .justify-between { justify-content: space-between; }
+    .items-center { align-items: center; }
+    .gap-2 { gap: 8px; }
+    .my-1 { margin-top: 4px; margin-bottom: 4px; }
+    .my-2 { margin-top: 8px; margin-bottom: 8px; }
+    .py-1 { padding-top: 3px; padding-bottom: 3px; }
+    .logo-img { height: 32px; width: auto; max-width: 50px; object-fit: contain; }
+  </style>
+</head>
+<body>
+  ${slipHtml}
+</body>
+</html>`)
+    iframeDoc.close()
+
+    // 3. Allow small interval for iframe layout settle and image decode, then print
+    await new Promise((r) => setTimeout(r, 200))
+    iframe.contentWindow?.focus()
+    iframe.contentWindow?.print()
+  } catch (err) {
+    console.warn('Falling back to window.print():', err)
     window.print()
   } finally {
     isPrinting.value = false
@@ -76,231 +178,178 @@ defineExpose({
 </script>
 
 <template>
-  <div id="printable-payslip" class="printable-payslip-root bg-white text-neutral-900 font-sans p-5 sm:p-6 print:p-0">
+  <div
+    id="printable-payslip"
+    ref="payslipRootRef"
+    class="printable-payslip-root bg-white text-black font-sans w-full max-w-[440px] mx-auto p-4 sm:p-5 text-[10.5px] leading-tight select-text"
+  >
     <!-- ================================================================= -->
-    <!-- 1. COMPANY HEADER & IDENTIFICATION -->
+    <!-- 1. HEADER: PAYSLIP TITLE, LOGO, COMPANY NAME -->
     <!-- ================================================================= -->
-    <header class="border-b border-neutral-300 pb-3 mb-3 print:pb-2 print:mb-2">
-      <div class="flex items-center justify-between gap-3">
-        <!-- Logo and Company Details -->
-        <div class="flex items-center gap-3">
+    <div class="border-b border-black pb-2 mb-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2.5">
           <img
             :src="activeLogoUrl"
             :alt="companyName"
-            class="h-12 w-auto max-w-[64px] object-contain shrink-0 print:h-11"
+            class="h-8 w-auto max-w-[44px] object-contain shrink-0"
             crossorigin="anonymous"
             @error="onLogoError"
           />
-          <div class="text-left">
-            <h1 class="text-sm sm:text-base font-bold tracking-tight text-neutral-900 uppercase leading-snug">
+          <div>
+            <h1 class="text-xs font-bold uppercase tracking-wide leading-tight">
               {{ companyName }}
             </h1>
-            <p class="text-[10.5px] text-neutral-600 uppercase tracking-wider font-medium">
+            <p class="text-[9.5px] text-neutral-600 uppercase tracking-wider">
               {{ companySubtitle }}
             </p>
           </div>
         </div>
-
-        <!-- Document Type & Reference -->
-        <div class="text-right shrink-0">
-          <div class="text-[11px] font-bold text-neutral-800 tracking-wide uppercase">
-            Payslip Voucher
-          </div>
-          <p class="text-[9.5px] font-mono text-neutral-500 pt-0.5">
-            Ref: {{ record.id }}
-          </p>
+        <div class="text-right">
+          <span class="text-xs font-black tracking-widest uppercase">PAYSLIP</span>
+          <p class="text-[9px] font-mono text-neutral-500">Ref: #{{ record.employeeNumber }}</p>
         </div>
       </div>
 
-      <!-- Cutoff Period and Payday Row -->
-      <div class="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-neutral-200 text-xs">
-        <div class="flex items-center gap-1.5">
-          <span class="text-neutral-500 text-[10px] uppercase tracking-wider">Payroll Period:</span>
-          <span class="font-mono font-semibold text-neutral-900 text-[11px]">{{ cutoff.label }}</span>
+      <!-- Employee Information (Tightly Arranged) -->
+      <div class="mt-2 pt-1.5 border-t border-neutral-300 space-y-0.5 text-[10px]">
+        <div class="flex justify-between items-center">
+          <span>Employee: <strong class="text-black">{{ record.employeeName }}</strong></span>
+          <span class="font-mono">ID: <strong>#{{ record.employeeNumber }}</strong></span>
         </div>
-        <div class="flex items-center gap-1.5">
-          <span class="text-neutral-500 text-[10px] uppercase tracking-wider">Payday:</span>
-          <span class="font-mono font-semibold text-neutral-900 text-[11px]">{{ cutoff.paydayDisplay }}</span>
-        </div>
-      </div>
-    </header>
-
-    <!-- ================================================================= -->
-    <!-- 2. EMPLOYEE INFORMATION -->
-    <!-- ================================================================= -->
-    <section class="border border-neutral-300 rounded-md p-2.5 mb-3 bg-neutral-50/60 print:bg-transparent print:p-2 print:mb-2 text-[11px] font-mono">
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div>
-          <span class="text-[9px] text-neutral-500 uppercase font-sans tracking-wider block">Employee Name</span>
-          <span class="font-bold text-neutral-900 text-xs block truncate">{{ record.employeeName }}</span>
-        </div>
-        <div>
-          <span class="text-[9px] text-neutral-500 uppercase font-sans tracking-wider block">Employee / Bio ID</span>
-          <span class="font-bold text-neutral-900 block">#{{ record.employeeNumber }}</span>
-        </div>
-        <div>
-          <span class="text-[9px] text-neutral-500 uppercase font-sans tracking-wider block">Position / Department</span>
-          <span class="font-semibold text-neutral-900 block truncate">{{ record.position }}</span>
-          <span class="text-[10px] text-neutral-600 block truncate">{{ record.department }}</span>
-        </div>
-        <div>
-          <span class="text-[9px] text-neutral-500 uppercase font-sans tracking-wider block">Salary Rate / Schedule</span>
-          <span class="font-semibold text-neutral-900 block">
-            <template v-if="record.salaryType === 'Daily' && record.dailyRate > 0">
-              ₱{{ record.dailyRate.toFixed(2) }}/day (Daily)
-            </template>
-            <template v-else-if="record.salaryType === 'Monthly' && record.basicSalary > 0">
-              ₱{{ record.basicSalary.toFixed(2) }}/mo (Monthly)
-            </template>
-            <template v-else-if="record.salaryType === 'Hourly' && record.hourlyRate > 0">
-              ₱{{ record.hourlyRate.toFixed(2) }}/hr (Hourly)
-            </template>
-            <template v-else>
-              {{ record.salaryType }}
-            </template>
-          </span>
-          <span class="text-[10px] text-neutral-600 block">
-            {{ record.payableDays }} payable day{{ record.payableDays === 1 ? '' : 's' }}
+        <div class="flex justify-between items-center text-neutral-700">
+          <span>Position: {{ record.position }} <template v-if="record.department">({{ record.department }})</template></span>
+          <span>
+            Salary:
+            <strong v-if="record.salaryType === 'Daily'">₱{{ record.dailyRate.toFixed(2) }}/day</strong>
+            <strong v-else-if="record.salaryType === 'Monthly'">₱{{ record.basicSalary.toFixed(2) }}/mo</strong>
+            <strong v-else>{{ record.salaryType }}</strong>
           </span>
         </div>
-      </div>
-    </section>
-
-    <!-- ================================================================= -->
-    <!-- 3. EARNINGS & DEDUCTIONS BREAKDOWN (SIDE-BY-SIDE) -->
-    <!-- ================================================================= -->
-    <section class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 print:gap-2.5 print:mb-2">
-      <!-- Earnings Column -->
-      <div class="border border-neutral-300 rounded-md p-2.5 flex flex-col justify-between print:p-2">
-        <div>
-          <div class="flex items-center justify-between border-b border-neutral-200 pb-1 mb-1.5">
-            <h2 class="text-[10.5px] font-bold uppercase tracking-wider text-neutral-900">
-              Gross Earnings
-            </h2>
-            <span class="text-[9px] text-neutral-500 uppercase font-sans">Credit</span>
-          </div>
-
-          <div class="space-y-1 font-mono text-[11px]">
-            <div class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Basic Wage ({{ record.payableDays }} days):</span>
-              <span class="font-medium text-neutral-900">₱{{ record.earningsBreakdown.basePay.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Sunday Duty (+30%):</span>
-              <span class="font-medium text-neutral-900">₱{{ record.earningsBreakdown.sundayDutyPay.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.earningsBreakdown.holidayPay > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Holiday Duty:</span>
-              <span class="font-medium text-neutral-900">₱{{ record.earningsBreakdown.holidayPay.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.earningsBreakdown.overtimePay > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Authorized Overtime ({{ record.overtimeHours }}h):</span>
-              <span class="font-medium text-neutral-900">₱{{ record.earningsBreakdown.overtimePay.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.earningsBreakdown.allowances > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Allowances:</span>
-              <span class="font-medium text-neutral-900">₱{{ record.earningsBreakdown.allowances.toFixed(2) }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Total Gross -->
-        <div class="border-t border-neutral-300 pt-1.5 mt-2 flex justify-between items-center text-xs bg-neutral-50 px-2 py-1 rounded print:bg-transparent">
-          <span class="font-bold uppercase tracking-wider text-[10px] text-neutral-700">Total Gross:</span>
-          <span class="font-mono font-bold text-neutral-900 text-xs">₱{{ record.initialEarnings.toFixed(2) }}</span>
+        <div class="flex justify-between items-center text-neutral-700">
+          <span>Period: <strong class="font-mono text-black">{{ cutoff.label }}</strong></span>
+          <span>Pay Date: <strong class="font-mono text-black">{{ cutoff.paydayDisplay }}</strong></span>
         </div>
       </div>
+    </div>
 
-      <!-- Deductions Column -->
-      <div class="border border-neutral-300 rounded-md p-2.5 flex flex-col justify-between print:p-2">
-        <div>
-          <div class="flex items-center justify-between border-b border-neutral-200 pb-1 mb-1.5">
-            <h2 class="text-[10.5px] font-bold uppercase tracking-wider text-neutral-900">
-              Authorized Deductions
-            </h2>
-            <span class="text-[9px] text-neutral-500 uppercase font-sans">Debit</span>
-          </div>
+    <!-- ================================================================= -->
+    <!-- 2. EARNINGS -->
+    <!-- ================================================================= -->
+    <div class="mb-2">
+      <div class="flex justify-between items-center border-b border-black pb-0.5 mb-1">
+        <span class="font-bold uppercase tracking-wider text-[10px]">EARNINGS</span>
+        <span class="text-[9px] uppercase font-mono text-neutral-600">AMOUNT</span>
+      </div>
 
-          <div class="space-y-1 font-mono text-[11px] max-h-48 overflow-y-auto print:max-h-none print:overflow-visible">
-            <div v-if="record.sss > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">SSS Contribution:</span>
-              <span class="text-neutral-900">-₱{{ record.sss.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.philhealth > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">PhilHealth Contribution:</span>
-              <span class="text-neutral-900">-₱{{ record.philhealth.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.pagibig > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Pag-IBIG Contribution:</span>
-              <span class="text-neutral-900">-₱{{ record.pagibig.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.sssLoan > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">SSS Loan Repayment:</span>
-              <span class="text-neutral-900">-₱{{ record.sssLoan.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.pagibigLoan > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Pag-IBIG Loan Repayment:</span>
-              <span class="text-neutral-900">-₱{{ record.pagibigLoan.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.otherLoan > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Other Company Loan:</span>
-              <span class="text-neutral-900">-₱{{ record.otherLoan.toFixed(2) }}</span>
-            </div>
-            <div v-if="(record.undertimeDeduction || 0) > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Undertime ({{ record.undertimeMinutes }}m):</span>
-              <span class="text-neutral-900">-₱{{ record.undertimeDeduction.toFixed(2) }}</span>
-            </div>
-            <div v-for="d in record.itemizedDeductions" :key="d.id" class="flex justify-between py-0.5 border-b border-neutral-100 text-[10.5px]">
-              <span class="truncate max-w-[145px] text-neutral-600 font-sans">{{ d.description }}:</span>
-              <span class="text-neutral-900">-₱{{ d.amount.toFixed(2) }}</span>
-            </div>
-            <div v-if="record.withholdingTax > 0" class="flex justify-between py-0.5 border-b border-neutral-100">
-              <span class="text-neutral-600 font-sans">Withholding Tax (BIR):</span>
-              <span class="text-neutral-900">-₱{{ record.withholdingTax.toFixed(2) }}</span>
-            </div>
-            <div v-if="totalDeductions === 0" class="text-center py-2 text-neutral-400 font-sans text-[10.5px] italic">
-              No deductions applied.
-            </div>
-          </div>
+      <div class="space-y-0.5 font-mono text-[10.5px]">
+        <div class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Working Days ({{ record.payableDays }} days):</span>
+          <span>{{ formatCurrency(record.earningsBreakdown.basePay) }}</span>
+        </div>
+        <div v-if="record.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Sunday Duty (+30%):</span>
+          <span>{{ formatCurrency(record.earningsBreakdown.sundayDutyPay) }}</span>
+        </div>
+        <div v-if="record.earningsBreakdown.holidayPay > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Holiday Pay:</span>
+          <span>{{ formatCurrency(record.earningsBreakdown.holidayPay) }}</span>
+        </div>
+        <div v-if="record.earningsBreakdown.overtimePay > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Overtime Pay ({{ record.overtimeHours }}h):</span>
+          <span>{{ formatCurrency(record.earningsBreakdown.overtimePay) }}</span>
+        </div>
+        <div v-if="record.earningsBreakdown.allowances > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Other Earnings / Allowances:</span>
+          <span>{{ formatCurrency(record.earningsBreakdown.allowances) }}</span>
         </div>
 
-        <!-- Total Deductions -->
-        <div class="border-t border-neutral-300 pt-1.5 mt-2 flex justify-between items-center text-xs bg-neutral-50 px-2 py-1 rounded print:bg-transparent">
-          <span class="font-bold uppercase tracking-wider text-[10px] text-neutral-700">Total Deductions:</span>
-          <span class="font-mono font-bold text-neutral-900 text-xs">-₱{{ totalDeductions.toFixed(2) }}</span>
+        <div class="flex justify-between items-center pt-1 mt-1 border-t border-black font-bold text-[11px]">
+          <span class="uppercase tracking-wider font-sans">Gross Pay:</span>
+          <span>{{ formatCurrency(record.initialEarnings) }}</span>
         </div>
       </div>
-    </section>
+    </div>
 
     <!-- ================================================================= -->
-    <!-- 4. NET PAY SUMMARY BANNER -->
+    <!-- 3. DEDUCTIONS -->
     <!-- ================================================================= -->
-    <section class="border border-neutral-400 rounded-md p-2.5 sm:p-3 mb-4 bg-neutral-50 flex items-center justify-between print:p-2 print:mb-3 print:bg-neutral-50/50">
-      <div>
-        <span class="text-[10px] font-bold uppercase tracking-wider text-neutral-700 block">
-          Net Take-Home Pay
-        </span>
-        <span class="text-[9.5px] text-neutral-500 font-mono block">
-          Gross: ₱{{ record.initialEarnings.toFixed(2) }} · Deductions: -₱{{ totalDeductions.toFixed(2) }}
-        </span>
+    <div class="mb-2">
+      <div class="flex justify-between items-center border-b border-black pb-0.5 mb-1">
+        <span class="font-bold uppercase tracking-wider text-[10px]">DEDUCTIONS</span>
+        <span class="text-[9px] uppercase font-mono text-neutral-600">AMOUNT</span>
       </div>
-      <div class="text-lg sm:text-xl font-black font-mono text-neutral-900">
-        ₱{{ record.netPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+
+      <div class="space-y-0.5 font-mono text-[10.5px]">
+        <div v-if="record.sss > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">SSS Contribution:</span>
+          <span>-{{ formatCurrency(record.sss) }}</span>
+        </div>
+        <div v-if="record.philhealth > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">PhilHealth:</span>
+          <span>-{{ formatCurrency(record.philhealth) }}</span>
+        </div>
+        <div v-if="record.pagibig > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Pag-IBIG:</span>
+          <span>-{{ formatCurrency(record.pagibig) }}</span>
+        </div>
+        <div v-if="record.sssLoan > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">SSS Loan:</span>
+          <span>-{{ formatCurrency(record.sssLoan) }}</span>
+        </div>
+        <div v-if="record.pagibigLoan > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Pag-IBIG Loan:</span>
+          <span>-{{ formatCurrency(record.pagibigLoan) }}</span>
+        </div>
+        <div v-if="record.otherLoan > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Other Loan:</span>
+          <span>-{{ formatCurrency(record.otherLoan) }}</span>
+        </div>
+        <div v-if="(record.undertimeDeduction || 0) > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Undertime ({{ record.undertimeMinutes }}m):</span>
+          <span>-{{ formatCurrency(record.undertimeDeduction) }}</span>
+        </div>
+        <div v-for="d in record.itemizedDeductions" :key="d.id" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">{{ d.description }}:</span>
+          <span>-{{ formatCurrency(d.amount) }}</span>
+        </div>
+        <div v-if="record.withholdingTax > 0" class="flex justify-between items-center py-0.5 border-b border-neutral-100">
+          <span class="font-sans text-neutral-800">Withholding Tax:</span>
+          <span>-{{ formatCurrency(record.withholdingTax) }}</span>
+        </div>
+        <div v-if="totalDeductions === 0" class="py-1 text-center font-sans text-neutral-500 italic text-[10px]">
+          No authorized deductions applied.
+        </div>
+
+        <div class="flex justify-between items-center pt-1 mt-1 border-t border-black font-bold text-[11px]">
+          <span class="uppercase tracking-wider font-sans">Total Deductions:</span>
+          <span>-{{ formatCurrency(totalDeductions) }}</span>
+        </div>
       </div>
-    </section>
+    </div>
 
     <!-- ================================================================= -->
-    <!-- 5. SIGNATURES & ACKNOWLEDGMENT -->
+    <!-- 4. NET PAY -->
     <!-- ================================================================= -->
-    <footer class="grid grid-cols-2 gap-8 pt-4 border-t border-neutral-300 text-[11px] print:pt-3 print:gap-10">
-      <div class="border-t border-neutral-400 pt-1 text-center">
-        <span class="text-neutral-500 block text-[9.5px] uppercase font-sans">Prepared & Audited By</span>
-        <span class="font-bold text-neutral-800 text-[10.5px]">Human Resources / Payroll Officer</span>
+    <div class="my-2 p-2 border-2 border-black flex justify-between items-center">
+      <span class="font-black uppercase tracking-wider text-xs">NET PAY:</span>
+      <span class="font-mono font-black text-sm sm:text-base">
+        {{ formatCurrency(record.netPay) }}
+      </span>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- 5. SIGNATURES -->
+    <!-- ================================================================= -->
+    <div class="pt-4 mt-3 border-t border-neutral-300 grid grid-cols-2 gap-4 text-[9.5px]">
+      <div class="text-center">
+        <div class="border-b border-black mb-1 h-6"></div>
+        <span class="text-neutral-700 block">Employee Signature</span>
       </div>
-      <div class="border-t border-neutral-400 pt-1 text-center">
-        <span class="text-neutral-500 block text-[9.5px] uppercase font-sans">Received By (Employee Signature)</span>
-        <span class="font-bold text-neutral-800 text-[10.5px]">{{ record.employeeName }}</span>
+      <div class="text-center">
+        <div class="border-b border-black mb-1 h-6"></div>
+        <span class="text-neutral-700 block">Prepared By / Authorized Signature</span>
       </div>
-    </footer>
+    </div>
   </div>
 </template>
