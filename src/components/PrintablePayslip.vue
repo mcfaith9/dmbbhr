@@ -304,24 +304,3 @@ defineExpose({
     </footer>
   </div>
 </template>
-
-<style scoped>
-/* Component-level print isolation and formatting */
-@media print {
-  .printable-payslip-root {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #ffffff !important;
-    color: #000000 !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-  }
-
-  .printable-payslip-root * {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-}
-</style>
