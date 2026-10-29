@@ -337,7 +337,7 @@ async function triggerPrint() {
               </div>
               <div>
                 <DialogTitle class="text-base sm:text-lg font-bold text-foreground flex items-center gap-2">
-                  <span>Semi-Monthly Payroll Calculation</span>
+                  <span>Payroll Calculation</span>
                   <Badge variant="outline" class="text-[10px] font-mono py-0 font-medium border-primary/30 text-primary">
                     Single Employee
                   </Badge>
@@ -1063,7 +1063,6 @@ async function triggerPrint() {
           @click="triggerPrint"
         >
           <Printer class="size-3.5" />
-          <span>{{ isPrinting ? 'Preparing...' : 'Print Voucher' }}</span>
         </Button>
       </DialogHeader>
 
@@ -1077,21 +1076,15 @@ async function triggerPrint() {
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-center gap-3">
               <img
-                src="/dbblogo.png"
+                src="/dmbblogo.png"
                 alt="DMBB Company Logo"
                 class="size-13 sm:size-14 object-contain shrink-0 rounded-md print:size-12"
                 crossorigin="anonymous"
               />
               <div class="text-left">
                 <h2 class="text-sm sm:text-base font-black tracking-wide uppercase text-foreground leading-tight">
-                  DMBB HOLDINGS INC.
+                  DMBB Industrial Services
                 </h2>
-                <p class="text-[10px] sm:text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">
-                  Human Resources & Payroll Department
-                </p>
-                <p class="text-[9.5px] text-muted-foreground font-mono">
-                  Official Compensation & Benefit Remittance Voucher
-                </p>
               </div>
             </div>
             <div class="text-right shrink-0">
