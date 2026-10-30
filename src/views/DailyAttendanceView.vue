@@ -1120,7 +1120,10 @@ onUnmounted(() => {
 
               <!-- 4. Rendered Hours (Top & Bottom) -->
               <TableCell class="py-2.5 text-center">
-                <div class="flex flex-col gap-0.5">
+                <div
+                  class="flex flex-col gap-0.5 cursor-help"
+                  :title="`Net worked: ${row.total_hours} (${row.worked_minutes}m net after unpaid break). Standard shift: 8h. Overtime is governed by authorized overtime windows and requires an approved physical OT form.`"
+                >
                   <span class="font-mono font-bold text-xs text-foreground">{{ row.total_hours }}</span>
                   <span class="font-mono text-[10px] text-muted-foreground">
                     {{ row.worked_minutes > 0 ? `${row.worked_minutes}m net` : '-' }}

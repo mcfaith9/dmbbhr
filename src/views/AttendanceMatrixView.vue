@@ -183,7 +183,10 @@ function getCellTooltip(cell: DutyCellData): string {
   const hasIn = Boolean(cell.timeIn && !cell.timeIn.startsWith('Missing') && cell.timeIn !== '—' && cell.timeIn !== '-')
   const hasOut = Boolean(cell.timeOut && cell.timeOut !== '—' && cell.timeOut !== '-')
   if (hasIn && hasOut) {
-    return `${cell.date} (${cell.dayOfWeek}): Time IN and OUT present. Click to open Overtime Authorization.`
+    const netStr = cell.workHours ? ` | Net: ${cell.workHours}` : ''
+    const underStr = (cell.undertimeMinutes ?? 0) > 0 ? ` | Undertime: ${cell.undertimeMinutes}m` : ''
+    const lateStr = (cell.lateMinutes ?? 0) > 0 ? ` | Late: ${cell.lateMinutes}m` : ''
+    return `${cell.date} (${cell.dayOfWeek}): IN ${cell.timeIn} → OUT ${cell.timeOut}${netStr}${lateStr}${underStr}. Regular duty: 8.0h standard. Overtime requires approved physical OT authorization form (early arrival before shift is not OT). Click to manage Overtime.`
   }
   return `${cell.date} (${cell.dayOfWeek}): Missing Time IN or OUT. Click to open Manual Time Adjustment.`
 }
