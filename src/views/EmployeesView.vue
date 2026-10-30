@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import {
   Search,
   Fingerprint,
@@ -61,6 +61,7 @@ import {
 } from '@/components/ui/select'
 
 const router = useRouter()
+const route = useRoute()
 
 const employees = ref<Employee[]>([])
 const workGroups = ref<WorkGroup[]>([])
@@ -602,6 +603,11 @@ function closeProfileModal() {
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
   resetEmployeeForm()
+  if (route.query.returnTo === 'payroll-records') {
+    router.push('/payroll/records')
+  } else if (route.query.returnTo === 'payroll-matrix') {
+    router.push('/payroll/attendance-matrix')
+  }
 }
 
 async function saveProfile() {
@@ -670,10 +676,17 @@ async function saveProfile() {
     selectedEmployee.value = updated
     profileSuccessMsg.value = `Employee profile for Bio ID ${formBioId.value} (${updated.full_name}) saved successfully.`
     
-    // Auto switch to overview after brief moment
+    // Auto switch to overview or return to payroll
     setTimeout(() => {
       profileSuccessMsg.value = ''
-      activeProfileTab.value = 'overview'
+      if (route.query.returnTo === 'payroll-records') {
+        navigateToPayrollRecords()
+      } else if (route.query.returnTo === 'payroll-matrix') {
+        showProfileModal.value = false
+        router.push('/payroll/attendance-matrix')
+      } else {
+        activeProfileTab.value = 'overview'
+      }
     }, 1400)
     
     await executeLoadEmployees()
@@ -797,15 +810,44 @@ async function exportPeople(format: 'xlsx' | 'csv') {
   }
 }
 
+async function checkRouteParams() {
+  const queryBioId = String(route.query.bioId || route.query.employeeId || route.query.id || '').trim()
+  if (!queryBioId) return
+
+  const isEdit = route.query.edit === 'true' || route.query.tab === 'edit'
+  const targetSection = (route.query.section || route.query.tab || 'payroll') as EditSection
+
+  let emp = employees.value.find(e =>
+    e.biometric_user_id.toLowerCase() === queryBioId.toLowerCase() ||
+    e.employee_number.toLowerCase() === queryBioId.toLowerCase()
+  )
+
+  if (!emp) {
+    emp = await employeeService.getEmployeeByBioId(queryBioId)
+  }
+
+  if (emp) {
+    openProfile(emp, isEdit ? 'edit' : 'overview', targetSection)
+  }
+}
+
 let unSubChange: (() => void) | null = null
 
 onMounted(async () => {
   await loadLookups()
-  executeLoadEmployees()
+  await executeLoadEmployees()
   unSubChange = employeeService.onEmployeesChanged(() => {
     triggerCoalescedEmployees(false)
   })
+  await checkRouteParams()
 })
+
+watch(
+  () => route.query,
+  () => {
+    checkRouteParams()
+  }
+)
 
 onUnmounted(() => {
   if (reloadTimer) {
@@ -2432,6 +2474,27 @@ onUnmounted(() => {
           <div class="flex items-center gap-2">
             <!-- Edit -->
             <template v-if="activeProfileTab === 'edit'">
+              <Button
+                v-if="route.query.returnTo === 'payroll-records'"
+                type="button"
+                variant="outline"
+                size="sm"
+                class="h-7 text-xs border-primary/30 text-primary hover:bg-primary/10"
+                @click="navigateToPayrollRecords"
+              >
+                Return to Payroll Records
+              </Button>
+              <Button
+                v-else-if="route.query.returnTo === 'payroll-matrix'"
+                type="button"
+                variant="outline"
+                size="sm"
+                class="h-7 text-xs border-primary/30 text-primary hover:bg-primary/10"
+                @click="showProfileModal = false; router.push('/payroll/attendance-matrix')"
+              >
+                Return to Attendance Matrix
+              </Button>
+
               <Button
                 type="button"
                 variant="outline"

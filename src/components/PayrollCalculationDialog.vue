@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, toRaw, nextTick } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import PrintablePayslip from '@/components/PrintablePayslip.vue'
 import {
   Dialog,
@@ -35,7 +36,9 @@ import {
   ShieldCheck,
   User,
   FileText,
-  Clock
+  Clock,
+  UserRoundPen,
+  ArrowRight
 } from '@lucide/vue'
 import {
   payrollCalculationService,
@@ -43,6 +46,7 @@ import {
   type EmployeePayrollRecord,
   type ItemizedDeduction
 } from '@/services/payrollCalculation'
+import { employeeRepository } from '@/repositories/employeeRepository'
 import type { Employee } from '@/types'
 import type { HolidayRecord } from '@/db'
 import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
@@ -57,11 +61,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
+  (e: 'wage-updated', data: { bioId: string; dailyRate: number; basicSalary: number; hourlyRate: number }): void
 }>()
+
+const router = useRouter()
+const route = useRoute()
 
 // UI state
 const isLoading = ref(false)
 const isSaving = ref(false)
+const isSavingWage = ref(false)
 const saveSuccessMessage = ref('')
 const saveErrorMessage = ref('')
 const isPayslipViewOpen = ref(false)
@@ -76,6 +85,17 @@ const currentCutoff = computed<PayrollCutoffPeriod | undefined>(() => {
 
 // Current Single Employee Payroll Record
 const currentRecord = ref<EmployeePayrollRecord | null>(null)
+
+// Daily Wage Editable State
+const editableDailyWage = ref<number | ''>('')
+const originalDailyWage = ref<number | ''>('')
+
+const isDailyWageDirty = computed(() => {
+  if (editableDailyWage.value === '' || editableDailyWage.value === null) return false
+  const n = Number(editableDailyWage.value)
+  if (isNaN(n) || n <= 0) return false
+  return n !== Number(originalDailyWage.value)
+})
 
 // Itemized deduction draft for Stage C
 const newDeductionCategory = ref<'cash_advance' | 'safety_boots' | 'gloves' | 'uniform' | 'other'>('cash_advance')
@@ -99,6 +119,8 @@ async function loadEmployeePayroll() {
 
   if (!props.selectedEmployee) {
     currentRecord.value = null
+    editableDailyWage.value = ''
+    originalDailyWage.value = ''
     return
   }
 
@@ -110,6 +132,17 @@ async function loadEmployeePayroll() {
 
   isLoading.value = true
   try {
+    const bioId = String(
+      props.selectedEmployee.biometric_user_id ||
+      (props.selectedEmployee as any).bioId ||
+      props.selectedEmployee.employee_number ||
+      ''
+    ).trim()
+
+    // Query repository to guarantee latest persisted employee salary data
+    const freshEmployee = bioId ? await employeeRepository.getByBioId(bioId) : null
+    const activeEmp = freshEmployee || props.selectedEmployee
+
     let passedRecords = props.attendanceRecords || []
     if (passedRecords.length > 0 && currentCutoff.value) {
       const cutoffDatesSet = new Set(currentCutoff.value.dates)
@@ -121,11 +154,20 @@ async function loadEmployeePayroll() {
 
     const record = await payrollCalculationService.computeSingleEmployeePayroll(
       currentCutoff.value,
-      props.selectedEmployee,
+      activeEmp,
       props.holidaysList || [],
       passedRecords
     )
     currentRecord.value = record
+
+    // Initialize editable daily wage
+    const activeRate = record.dailyRate > 0
+      ? record.dailyRate
+      : (record.basicSalary > 0
+          ? (record.salaryType === 'Monthly' ? Math.round((record.basicSalary / 26) * 100) / 100 : record.basicSalary)
+          : (activeEmp.daily_rate || activeEmp.basic_salary || ''))
+    editableDailyWage.value = activeRate
+    originalDailyWage.value = activeRate
   } catch (err: any) {
     saveErrorMessage.value = `Failed to compute payroll: ${err?.message || 'Unknown error'}`
   } finally {
@@ -247,9 +289,177 @@ function clearTax() {
   payrollCalculationService.recalculateRecord(currentRecord.value)
 }
 
+function onDailyWageInput() {
+  if (!currentRecord.value) return
+  const newRate = Number(editableDailyWage.value)
+  if (isNaN(newRate) || newRate < 0) return
+
+  currentRecord.value.dailyRate = newRate
+  if (currentRecord.value.salaryType === 'Monthly') {
+    currentRecord.value.basicSalary = Math.round(newRate * 26 * 100) / 100
+  } else {
+    currentRecord.value.basicSalary = newRate
+  }
+  currentRecord.value.hourlyRate = Math.round((newRate / 8) * 100) / 100
+
+  // Recalculate Stage A base earnings
+  const payableDays = currentRecord.value.payableDays || 0
+  currentRecord.value.earningsBreakdown.basePay = Math.round(payableDays * newRate * 100) / 100
+
+  // Recalculate holiday pay if holidays were worked
+  if (
+    currentRecord.value.workedHolidayDays > 0 ||
+    currentRecord.value.unworkedHolidayDays > 0 ||
+    currentRecord.value.specialNonWorkingDays > 0
+  ) {
+    const regWorked = currentRecord.value.workedHolidayDays || 0
+    const unworkedReg = currentRecord.value.unworkedHolidayDays || 0
+    const specWorked = currentRecord.value.specialNonWorkingDays || 0
+    currentRecord.value.earningsBreakdown.holidayPay = Math.round(
+      (regWorked * newRate * 1.0 + unworkedReg * newRate * 1.0 + specWorked * newRate * 0.3) * 100
+    ) / 100
+  }
+
+  // Recalculate overtime pay if overtime hours exist
+  if (currentRecord.value.overtimeHours > 0) {
+    const otHours = currentRecord.value.overtimeHours
+    const hourly = currentRecord.value.hourlyRate
+    currentRecord.value.earningsBreakdown.overtimePay = Math.round(otHours * hourly * 1.25 * 100) / 100
+    currentRecord.value.overtimePay = currentRecord.value.earningsBreakdown.overtimePay
+  }
+
+  // Recalculate total initial gross earnings
+  currentRecord.value.initialEarnings = Math.round(
+    (currentRecord.value.earningsBreakdown.basePay +
+      currentRecord.value.earningsBreakdown.sundayDutyPay +
+      currentRecord.value.earningsBreakdown.holidayPay +
+      currentRecord.value.earningsBreakdown.overtimePay +
+      currentRecord.value.earningsBreakdown.allowances) *
+      100
+  ) / 100
+
+  payrollCalculationService.recalculateRecord(currentRecord.value)
+}
+
+async function saveDailyWageToEmployee(): Promise<boolean> {
+  if (!currentRecord.value) return false
+  const newRate = Number(editableDailyWage.value)
+  if (isNaN(newRate) || newRate <= 0) {
+    saveErrorMessage.value = 'Please enter a valid positive daily wage.'
+    return false
+  }
+
+  isSavingWage.value = true
+  saveErrorMessage.value = ''
+
+  const bioId = String(
+    currentRecord.value.bioId ||
+    props.selectedEmployee?.biometric_user_id ||
+    props.selectedEmployee?.employee_number ||
+    ''
+  ).trim()
+  const previousRate = originalDailyWage.value
+
+  try {
+    const salaryType = (currentRecord.value.salaryType === 'unconfigured' || !currentRecord.value.salaryType)
+      ? 'Daily'
+      : currentRecord.value.salaryType
+
+    const basicSalary = salaryType === 'Monthly'
+      ? Math.round(newRate * 26 * 100) / 100
+      : newRate
+
+    const hourlyRate = Math.round((newRate / 8) * 100) / 100
+
+    // Persist directly to Dexie DB and in-memory cache via employeeRepository
+    await employeeRepository.updateEmployee(bioId, {
+      salary_type: salaryType as any,
+      salaryType: salaryType as any,
+      daily_rate: newRate,
+      dailyRate: newRate,
+      basic_salary: basicSalary,
+      basicSalary: basicSalary,
+      hourly_rate: hourlyRate,
+      hourlyRate: hourlyRate,
+      payroll_status: 'configured',
+      payrollStatus: 'configured'
+    })
+
+    // Also update selectedEmployee prop object if mutable
+    if (props.selectedEmployee) {
+      props.selectedEmployee.daily_rate = newRate
+      ;(props.selectedEmployee as any).dailyRate = newRate
+      props.selectedEmployee.basic_salary = basicSalary
+      ;(props.selectedEmployee as any).basicSalary = basicSalary
+      props.selectedEmployee.hourly_rate = hourlyRate
+      ;(props.selectedEmployee as any).hourlyRate = hourlyRate
+      props.selectedEmployee.salary_type = salaryType as any
+      props.selectedEmployee.payroll_status = 'configured'
+    }
+
+    currentRecord.value.dailyRate = newRate
+    currentRecord.value.basicSalary = basicSalary
+    currentRecord.value.hourlyRate = hourlyRate
+    currentRecord.value.salaryType = salaryType as any
+
+    originalDailyWage.value = newRate
+    saveSuccessMessage.value = `Daily wage ₱${newRate.toFixed(2)} successfully saved to employee profile.`
+
+    emit('wage-updated', { bioId, dailyRate: newRate, basicSalary, hourlyRate })
+
+    setTimeout(() => {
+      if (saveSuccessMessage.value.includes('Daily wage')) {
+        saveSuccessMessage.value = ''
+      }
+    }, 4000)
+
+    return true
+  } catch (err: any) {
+    // Revert if database save failed to avoid false visual feedback
+    editableDailyWage.value = previousRate
+    onDailyWageInput()
+    saveErrorMessage.value = `Failed to save daily wage: ${err?.message || 'Database error'}`
+    return false
+  } finally {
+    isSavingWage.value = false
+  }
+}
+
+function navigateToEmployeePayrollEdit() {
+  const bioId = String(
+    currentRecord.value?.bioId ||
+    props.selectedEmployee?.biometric_user_id ||
+    props.selectedEmployee?.employee_number ||
+    ''
+  ).trim()
+
+  emit('update:open', false)
+
+  if (bioId) {
+    const returnTo = route.path.includes('matrix') ? 'payroll-matrix' : 'payroll-records'
+    router.push({
+      path: '/employees',
+      query: {
+        bioId,
+        edit: 'true',
+        section: 'payroll',
+        returnTo
+      }
+    })
+  }
+}
+
 // Save Snapshot to IndexedDB
 async function saveRecord(batchStatus: 'draft' | 'approved' | 'finalized') {
   if (!currentRecord.value) return
+
+  // If daily wage was edited, persist it to employee profile first
+  if (isDailyWageDirty.value) {
+    const wageSaved = await saveDailyWageToEmployee()
+    if (!wageSaved) {
+      return
+    }
+  }
 
   isSaving.value = true
   saveSuccessMessage.value = ''
@@ -451,30 +661,87 @@ async function triggerPrint() {
               </div>
             </div>
 
-            <!-- Salary Configuration Status Pill -->
-            <div class="flex items-center gap-2 self-start sm:self-auto">
+            <!-- Salary Configuration Status Pill & Daily Wage Edit -->
+            <div class="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <!-- Configured Salary / Editable Daily Wage -->
               <div
-                v-if="currentRecord.basicSalary > 0 || currentRecord.dailyRate > 0"
-                class="px-3 py-1.5 rounded-lg border bg-muted/40 text-xs font-mono text-right"
+                v-if="currentRecord.basicSalary > 0 || currentRecord.dailyRate > 0 || editableDailyWage"
+                class="px-3 py-1.5 rounded-lg border bg-muted/40 text-xs font-mono flex items-center gap-2"
               >
-                <div class="text-[10px] uppercase text-muted-foreground font-semibold">
-                  {{ currentRecord.salaryType }} Rate
+                <div class="text-right">
+                  <div class="text-[10px] uppercase text-muted-foreground font-semibold flex items-center gap-1 justify-end font-sans">
+                    <span>Daily Wage</span>
+                    <span class="text-[9px] font-normal text-muted-foreground">({{ currentRecord.salaryType }})</span>
+                  </div>
+                  <div class="flex items-center gap-1 mt-0.5">
+                    <span class="text-xs font-bold text-muted-foreground font-mono">₱</span>
+                    <Input
+                      v-model.number="editableDailyWage"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      class="h-7 w-24 text-xs font-mono font-bold text-right px-1.5 py-0 bg-background"
+                      title="Edit daily wage"
+                      @input="onDailyWageInput"
+                    />
+                  </div>
                 </div>
-                <div class="font-bold text-foreground">
-                  ₱{{ (currentRecord.basicSalary || currentRecord.dailyRate).toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
-                  <span class="text-[10px] font-normal text-muted-foreground">
-                    {{ currentRecord.salaryType === 'Monthly' ? '/mo' : '/day' }}
-                  </span>
-                </div>
+
+                <Button
+                  v-if="isDailyWageDirty"
+                  size="sm"
+                  variant="default"
+                  class="h-7 text-xs px-2.5 gap-1 font-semibold shadow-xs"
+                  :disabled="isSavingWage || !editableDailyWage || Number(editableDailyWage) <= 0"
+                  @click="saveDailyWageToEmployee"
+                >
+                  <Save class="size-3" />
+                  <span>{{ isSavingWage ? 'Saving...' : 'Save' }}</span>
+                </Button>
               </div>
+
+              <!-- Unconfigured Salary -->
               <div
                 v-else
-                class="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-1.5"
+                class="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2 flex-wrap"
               >
-                <AlertTriangle class="size-4 shrink-0 text-amber-600" />
-                <span class="font-medium">Unconfigured Salary</span>
+                <div class="flex items-center gap-1.5">
+                  <AlertTriangle class="size-4 shrink-0 text-amber-600" />
+                  <span class="font-medium">Unconfigured Salary</span>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  class="h-6 text-[10px] gap-1 px-2 border-amber-500/40 hover:bg-amber-500/20 text-amber-800 dark:text-amber-200 cursor-pointer font-medium"
+                  title="Navigate to Employee Profile Edit > Payroll"
+                  @click="navigateToEmployeePayrollEdit"
+                >
+                  <UserRoundPen class="size-3" />
+                  <span>Configure in Profile &rarr;</span>
+                </Button>
               </div>
             </div>
+          </div>
+
+          <!-- Unconfigured Salary Banner (if rate is missing) -->
+          <div
+            v-if="(!currentRecord.basicSalary && !currentRecord.dailyRate && !editableDailyWage) || currentRecord.salaryType === 'unconfigured'"
+            class="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2"
+          >
+            <div class="flex items-center gap-2">
+              <AlertTriangle class="size-4 text-amber-600 shrink-0" />
+              <span>Missing salary configuration for {{ currentRecord.employeeName }}. Configure salary type and rates in Employee Profile &gt; Payroll.</span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              class="h-7 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white shrink-0 font-medium cursor-pointer"
+              @click="navigateToEmployeePayrollEdit"
+            >
+              <span>Open Profile &gt; Payroll</span>
+              <ArrowRight class="size-3" />
+            </Button>
           </div>
 
           <!-- Audit Warning / Flags Banner -->

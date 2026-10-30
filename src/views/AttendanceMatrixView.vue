@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   CalendarDays,
   ChevronLeft,
@@ -55,6 +55,7 @@ import {
 } from '@/components/ui/avatar'
 
 const route = useRoute()
+const router = useRouter()
 
 // Employee directory state
 const employees = ref<Employee[]>([])
@@ -77,6 +78,44 @@ const isLoadingAttendance = ref(false)
 
 // Payroll Calculation Modal state
 const showPayrollCalculationModal = ref(false)
+
+function onPayrollCalculationClick() {
+  if (!selectedEmployee.value) return
+
+  const emp = selectedEmployee.value
+  const dailyRate = Number(emp.daily_rate ?? (emp as any).dailyRate)
+  const basicSalary = Number(emp.basic_salary ?? (emp as any).basicSalary)
+  const isUnconfigured = (emp.salary_type as string) === 'unconfigured' || ((!dailyRate || dailyRate <= 0) && (!basicSalary || basicSalary <= 0))
+
+  if (isUnconfigured) {
+    const bioId = emp.biometric_user_id || emp.employee_number
+    router.push({
+      path: '/employees',
+      query: {
+        bioId,
+        edit: 'true',
+        section: 'payroll',
+        returnTo: 'payroll-matrix'
+      }
+    })
+    return
+  }
+
+  showPayrollCalculationModal.value = true
+}
+
+function onWageUpdated(data: { bioId: string; dailyRate: number; basicSalary: number; hourlyRate: number }) {
+  const emp = employees.value.find(e => e.biometric_user_id === data.bioId || e.employee_number === data.bioId)
+  if (emp) {
+    emp.daily_rate = data.dailyRate
+    ;(emp as any).dailyRate = data.dailyRate
+    emp.basic_salary = data.basicSalary
+    ;(emp as any).basicSalary = data.basicSalary
+    emp.hourly_rate = data.hourlyRate
+    ;(emp as any).hourlyRate = data.hourlyRate
+    emp.payroll_status = 'configured'
+  }
+}
 
 // Overtime and Manual Time Dialogs state
 const isOvertimeModalOpen = ref(false)
@@ -1031,7 +1070,7 @@ onMounted(async () => {
             class="h-8 gap-2 text-xs font-semibold shadow-xs cursor-pointer"
             :disabled="!selectedEmployee"
             :title="!selectedEmployee ? 'Please select an employee first' : `Calculate payroll for ${selectedEmployee.full_name}`"
-            @click="showPayrollCalculationModal = true"
+            @click="onPayrollCalculationClick"
           >
             <Calculator class="size-3.5" />
             <span>Payroll Calculation</span>
@@ -1131,6 +1170,7 @@ onMounted(async () => {
       :period-anchor-date="periodAnchorDate"
       :attendance-records="Array.from(attendanceRecordsMap.values())"
       :holidays-list="Array.from(holidaysMap.entries()).map(([date, h]) => ({ id: `hol-${date}`, name: h.name, date, type: h.type as any, isNationwide: true }))"
+      @wage-updated="onWageUpdated"
     />
 
     <!-- Overtime Authorization Dialog Component -->

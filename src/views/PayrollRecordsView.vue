@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   RefreshCw,
   Calendar,
@@ -9,7 +10,8 @@ import {
   Search,
   X,
   AlertCircle,
-  Users
+  Users,
+  Calculator
 } from '@lucide/vue'
 import {
   Select,
@@ -25,15 +27,28 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Pagination } from '@/components/ui/pagination'
+import PayrollCalculationDialog from '@/components/PayrollCalculationDialog.vue'
 import { payrollCalculationService, type EmployeePayrollRecord, type PayrollCutoffPeriod } from '@/services/payrollCalculation'
 import { employeeRepository } from '@/repositories/employeeRepository'
 import type { Employee } from '@/types'
 
+const router = useRouter()
 const availableCutoffs = ref<PayrollCutoffPeriod[]>([])
 const selectedPeriodId = ref('')
 const records = ref<EmployeePayrollRecord[]>([])
 const isLoading = ref(true)
 const loadError = ref<string | null>(null)
+
+// Payroll calculation modal state
+const showPayrollCalculationModal = ref(false)
+const selectedEmployeeForCalc = ref<Employee | null>(null)
+
+const calcAnchorDate = computed(() => {
+  if (selectedPeriod.value?.startDate) {
+    return new Date(selectedPeriod.value.startDate)
+  }
+  return new Date()
+})
 
 // Search and filter state
 const searchQuery = ref('')
@@ -62,6 +77,9 @@ function normalizeRecord(r: any): EmployeePayrollRecord {
     employeeName: String(r?.employeeName ?? r?.full_name ?? r?.name ?? ''),
     department: String(r?.department ?? r?.dept ?? r?.departmentName ?? ''),
     salaryType: String(r?.salaryType ?? r?.payType ?? r?.salary_type ?? 'unconfigured'),
+    dailyRate: Number(r?.dailyRate ?? r?.daily_rate ?? 0),
+    basicSalary: Number(r?.basicSalary ?? r?.basic_salary ?? 0),
+    hourlyRate: Number(r?.hourlyRate ?? r?.hourly_rate ?? 0),
     earningsBreakdown: r?.earningsBreakdown ?? {
       basePay: Number(r?.basePay ?? r?.initialEarnings ?? 0),
       holidayPay: Number(r?.holidayPay ?? 0),
@@ -86,6 +104,43 @@ function normalizeRecord(r: any): EmployeePayrollRecord {
   }
 
   return normalized as EmployeePayrollRecord
+}
+
+async function openPayrollCalculationForRecord(r: EmployeePayrollRecord) {
+  const dailyRate = Number(r.dailyRate || 0)
+  const basicSalary = Number(r.basicSalary || 0)
+  const isUnconfigured = r.salaryType === 'unconfigured' || ((!dailyRate || dailyRate <= 0) && (!basicSalary || basicSalary <= 0))
+
+  if (isUnconfigured) {
+    router.push({
+      path: '/employees',
+      query: {
+        bioId: r.bioId,
+        edit: 'true',
+        section: 'payroll',
+        returnTo: 'payroll-records'
+      }
+    })
+    return
+  }
+
+  let emp = cachedEmployees?.find(e => e.biometric_user_id === r.bioId || e.employee_number === r.bioId)
+  if (!emp) {
+    const fetched = await employeeRepository.getByBioId(r.bioId)
+    emp = fetched || undefined
+  }
+  if (emp) {
+    selectedEmployeeForCalc.value = emp
+    showPayrollCalculationModal.value = true
+  }
+}
+
+async function onWageUpdated() {
+  payrollCache.clear()
+  cachedEmployees = null
+  if (selectedPeriodId.value) {
+    await loadRecordsForPeriod(selectedPeriodId.value, true)
+  }
 }
 
 async function loadRecordsForPeriod(periodId: string, forceRefresh = false) {
@@ -427,6 +482,7 @@ const totalHolidayPay = computed(() => {
               <TableHead class="font-semibold text-xs whitespace-nowrap">Deductions</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap text-right">Net Pay</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap text-center">Status</TableHead>
+              <TableHead class="font-semibold text-xs whitespace-nowrap text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -449,12 +505,13 @@ const totalHolidayPay = computed(() => {
                 <TableCell><Skeleton class="h-4 w-14" /></TableCell>
                 <TableCell class="text-right"><Skeleton class="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell class="text-center"><Skeleton class="h-5 w-16 mx-auto rounded-full" /></TableCell>
+                <TableCell class="text-right"><Skeleton class="h-6 w-16 ml-auto" /></TableCell>
               </TableRow>
             </template>
 
             <!-- 2. Search Yielded No Results -->
             <TableRow v-else-if="records.length > 0 && filteredRecords.length === 0">
-              <TableCell :colspan="10" class="h-32 text-center text-xs">
+              <TableCell :colspan="11" class="h-32 text-center text-xs">
                 <div class="flex flex-col items-center justify-center py-4 space-y-2">
                   <Search class="size-6 text-muted-foreground/60" />
                   <div class="font-medium text-foreground">
@@ -472,7 +529,7 @@ const totalHolidayPay = computed(() => {
 
             <!-- 3. Period Has No Records -->
             <TableRow v-else-if="records.length === 0">
-              <TableCell :colspan="10" class="h-28 text-center text-xs">
+              <TableCell :colspan="11" class="h-28 text-center text-xs">
                 <div class="flex flex-col items-center justify-center py-4 space-y-1.5 text-muted-foreground">
                   <Users class="size-6 text-muted-foreground/60" />
                   <div class="font-medium text-foreground">No active employees in this period.</div>
@@ -541,6 +598,18 @@ const totalHolidayPay = computed(() => {
                   {{ r.reviewStatus ? r.reviewStatus.replace('_', ' ') : 'ready' }}
                 </Badge>
               </TableCell>
+              <TableCell class="text-right whitespace-nowrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  class="h-7 px-2 text-xs gap-1 font-medium hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                  :title="`Open payroll calculation for ${r.employeeName}`"
+                  @click="openPayrollCalculationForRecord(r)"
+                >
+                  <Calculator class="size-3 text-primary" />
+                  <span>Calculate</span>
+                </Button>
+              </TableCell>
             </TableRow>
           </TableBody>
         </Table>
@@ -558,5 +627,13 @@ const totalHolidayPay = computed(() => {
         />
       </div>
     </div>
+
+    <!-- Payroll Calculation Dialog -->
+    <PayrollCalculationDialog
+      v-model:open="showPayrollCalculationModal"
+      :selected-employee="selectedEmployeeForCalc"
+      :period-anchor-date="calcAnchorDate"
+      @wage-updated="onWageUpdated"
+    />
   </div>
 </template>
