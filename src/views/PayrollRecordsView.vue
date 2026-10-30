@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   RefreshCw,
   Calendar,
@@ -32,7 +31,6 @@ import { payrollCalculationService, type EmployeePayrollRecord, type PayrollCuto
 import { employeeRepository } from '@/repositories/employeeRepository'
 import type { Employee } from '@/types'
 
-const router = useRouter()
 const availableCutoffs = ref<PayrollCutoffPeriod[]>([])
 const selectedPeriodId = ref('')
 const records = ref<EmployeePayrollRecord[]>([])
@@ -107,24 +105,11 @@ function normalizeRecord(r: any): EmployeePayrollRecord {
 }
 
 async function openPayrollCalculationForRecord(r: EmployeePayrollRecord) {
-  const dailyRate = Number(r.dailyRate || 0)
-  const basicSalary = Number(r.basicSalary || 0)
-  const isUnconfigured = r.salaryType === 'unconfigured' || ((!dailyRate || dailyRate <= 0) && (!basicSalary || basicSalary <= 0))
-
-  if (isUnconfigured) {
-    router.push({
-      path: '/employees',
-      query: {
-        bioId: r.bioId,
-        edit: 'true',
-        section: 'payroll',
-        returnTo: 'payroll-records'
-      }
-    })
-    return
-  }
-
-  let emp = cachedEmployees?.find(e => e.biometric_user_id === r.bioId || e.employee_number === r.bioId)
+  const cleanBio = String(r.bioId).replace(/^emp[-_]/i, '').toLowerCase()
+  let emp = cachedEmployees?.find(e =>
+    String(e.biometric_user_id).replace(/^emp[-_]/i, '').toLowerCase() === cleanBio ||
+    String(e.employee_number || '').replace(/^emp[-_]/i, '').toLowerCase() === cleanBio
+  )
   if (!emp) {
     const fetched = await employeeRepository.getByBioId(r.bioId)
     emp = fetched || undefined
@@ -135,9 +120,23 @@ async function openPayrollCalculationForRecord(r: EmployeePayrollRecord) {
   }
 }
 
-async function onWageUpdated() {
+async function onWageUpdated(data?: { bioId: string; dailyRate: number; basicSalary: number; hourlyRate: number }) {
   payrollCache.clear()
   cachedEmployees = null
+  if (data && selectedEmployeeForCalc.value) {
+    const cleanTarget = String(data.bioId).replace(/^emp[-_]/i, '').toLowerCase()
+    const curEmpBio = String(selectedEmployeeForCalc.value.biometric_user_id || '').replace(/^emp[-_]/i, '').toLowerCase()
+    if (cleanTarget === curEmpBio) {
+      selectedEmployeeForCalc.value.daily_rate = data.dailyRate
+      ;(selectedEmployeeForCalc.value as any).dailyRate = data.dailyRate
+      selectedEmployeeForCalc.value.basic_salary = data.basicSalary
+      ;(selectedEmployeeForCalc.value as any).basicSalary = data.basicSalary
+      selectedEmployeeForCalc.value.hourly_rate = data.hourlyRate
+      ;(selectedEmployeeForCalc.value as any).hourlyRate = data.hourlyRate
+      selectedEmployeeForCalc.value.salary_type = 'Daily'
+      selectedEmployeeForCalc.value.payroll_status = 'configured'
+    }
+  }
   if (selectedPeriodId.value) {
     await loadRecordsForPeriod(selectedPeriodId.value, true)
   }
@@ -247,6 +246,13 @@ function onPageSizeChange(size: number) {
 
 onMounted(() => {
   loadPeriodsAndRecords()
+  employeeRepository.onChange(async () => {
+    payrollCache.clear()
+    cachedEmployees = null
+    if (selectedPeriodId.value) {
+      await loadRecordsForPeriod(selectedPeriodId.value, true)
+    }
+  })
 })
 
 // Lightweight computed search filter over all batch records

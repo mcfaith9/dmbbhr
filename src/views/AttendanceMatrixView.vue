@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import {
   CalendarDays,
   ChevronLeft,
@@ -55,7 +55,6 @@ import {
 } from '@/components/ui/avatar'
 
 const route = useRoute()
-const router = useRouter()
 
 // Employee directory state
 const employees = ref<Employee[]>([])
@@ -81,31 +80,15 @@ const showPayrollCalculationModal = ref(false)
 
 function onPayrollCalculationClick() {
   if (!selectedEmployee.value) return
-
-  const emp = selectedEmployee.value
-  const dailyRate = Number(emp.daily_rate ?? (emp as any).dailyRate)
-  const basicSalary = Number(emp.basic_salary ?? (emp as any).basicSalary)
-  const isUnconfigured = (emp.salary_type as string) === 'unconfigured' || ((!dailyRate || dailyRate <= 0) && (!basicSalary || basicSalary <= 0))
-
-  if (isUnconfigured) {
-    const bioId = emp.biometric_user_id || emp.employee_number
-    router.push({
-      path: '/employees',
-      query: {
-        bioId,
-        edit: 'true',
-        section: 'payroll',
-        returnTo: 'payroll-matrix'
-      }
-    })
-    return
-  }
-
   showPayrollCalculationModal.value = true
 }
 
 function onWageUpdated(data: { bioId: string; dailyRate: number; basicSalary: number; hourlyRate: number }) {
-  const emp = employees.value.find(e => e.biometric_user_id === data.bioId || e.employee_number === data.bioId)
+  const cleanTarget = String(data.bioId).replace(/^emp[-_]/i, '').toLowerCase()
+  const emp = employees.value.find(e =>
+    String(e.biometric_user_id).replace(/^emp[-_]/i, '').toLowerCase() === cleanTarget ||
+    String(e.employee_number || '').replace(/^emp[-_]/i, '').toLowerCase() === cleanTarget
+  )
   if (emp) {
     emp.daily_rate = data.dailyRate
     ;(emp as any).dailyRate = data.dailyRate
@@ -113,6 +96,7 @@ function onWageUpdated(data: { bioId: string; dailyRate: number; basicSalary: nu
     ;(emp as any).basicSalary = data.basicSalary
     emp.hourly_rate = data.hourlyRate
     ;(emp as any).hourlyRate = data.hourlyRate
+    emp.salary_type = 'Daily'
     emp.payroll_status = 'configured'
   }
 }
@@ -610,6 +594,15 @@ onMounted(async () => {
 
   await loadHolidays()
   await loadEmployeePeriodAttendance()
+
+  employeeService.onEmployeesChanged(async () => {
+    try {
+      const empList = await employeeService.getEmployees()
+      employees.value = empList
+    } catch {
+      // ignore
+    }
+  })
 })
 </script>
 

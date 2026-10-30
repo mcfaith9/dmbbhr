@@ -816,14 +816,21 @@ async function checkRouteParams() {
 
   const isEdit = route.query.edit === 'true' || route.query.tab === 'edit'
   const targetSection = (route.query.section || route.query.tab || 'payroll') as EditSection
+  const stripped = queryBioId.replace(/^emp[-_]/i, '').toLowerCase()
+  const rawLower = queryBioId.toLowerCase()
 
   let emp = employees.value.find(e =>
-    e.biometric_user_id.toLowerCase() === queryBioId.toLowerCase() ||
-    e.employee_number.toLowerCase() === queryBioId.toLowerCase()
+    e.biometric_user_id.toLowerCase() === rawLower ||
+    e.employee_number.toLowerCase() === rawLower ||
+    e.biometric_user_id.toLowerCase() === stripped ||
+    e.employee_number.toLowerCase() === stripped
   )
 
   if (!emp) {
     emp = await employeeService.getEmployeeByBioId(queryBioId)
+  }
+  if (!emp && stripped !== rawLower) {
+    emp = await employeeService.getEmployeeByBioId(stripped)
   }
 
   if (emp) {

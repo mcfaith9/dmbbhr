@@ -37,8 +37,7 @@ import {
   User,
   FileText,
   Clock,
-  UserRoundPen,
-  ArrowRight
+  UserRoundPen
 } from '@lucide/vue'
 import {
   payrollCalculationService,
@@ -352,12 +351,15 @@ async function saveDailyWageToEmployee(): Promise<boolean> {
   isSavingWage.value = true
   saveErrorMessage.value = ''
 
-  const bioId = String(
+  const rawBio = String(
     currentRecord.value.bioId ||
     props.selectedEmployee?.biometric_user_id ||
     props.selectedEmployee?.employee_number ||
+    (props.selectedEmployee as any)?.bioId ||
+    props.selectedEmployee?.id ||
     ''
   ).trim()
+  const cleanBioId = rawBio.replace(/^emp[-_]/i, '')
   const previousRate = originalDailyWage.value
 
   try {
@@ -372,7 +374,7 @@ async function saveDailyWageToEmployee(): Promise<boolean> {
     const hourlyRate = Math.round((newRate / 8) * 100) / 100
 
     // Persist directly to Dexie DB and in-memory cache via employeeRepository
-    await employeeRepository.updateEmployee(bioId, {
+    const updatedEmployee = await employeeRepository.updateEmployee(cleanBioId, {
       salary_type: salaryType as any,
       salaryType: salaryType as any,
       daily_rate: newRate,
@@ -384,6 +386,8 @@ async function saveDailyWageToEmployee(): Promise<boolean> {
       payroll_status: 'configured',
       payrollStatus: 'configured'
     })
+
+    const canonicalBio = updatedEmployee?.biometric_user_id || cleanBioId
 
     // Also update selectedEmployee prop object if mutable
     if (props.selectedEmployee) {
@@ -397,15 +401,18 @@ async function saveDailyWageToEmployee(): Promise<boolean> {
       props.selectedEmployee.payroll_status = 'configured'
     }
 
+    currentRecord.value.bioId = canonicalBio
     currentRecord.value.dailyRate = newRate
     currentRecord.value.basicSalary = basicSalary
     currentRecord.value.hourlyRate = hourlyRate
     currentRecord.value.salaryType = salaryType as any
 
+    onDailyWageInput()
+
     originalDailyWage.value = newRate
     saveSuccessMessage.value = `Daily wage ₱${newRate.toFixed(2)} successfully saved to employee profile.`
 
-    emit('wage-updated', { bioId, dailyRate: newRate, basicSalary, hourlyRate })
+    emit('wage-updated', { bioId: canonicalBio, dailyRate: newRate, basicSalary, hourlyRate })
 
     setTimeout(() => {
       if (saveSuccessMessage.value.includes('Daily wage')) {
@@ -426,12 +433,15 @@ async function saveDailyWageToEmployee(): Promise<boolean> {
 }
 
 function navigateToEmployeePayrollEdit() {
-  const bioId = String(
+  const rawBio = String(
     currentRecord.value?.bioId ||
     props.selectedEmployee?.biometric_user_id ||
     props.selectedEmployee?.employee_number ||
+    (props.selectedEmployee as any)?.bioId ||
+    props.selectedEmployee?.id ||
     ''
   ).trim()
+  const bioId = rawBio.replace(/^emp[-_]/i, '')
 
   emit('update:open', false)
 
@@ -665,7 +675,7 @@ async function triggerPrint() {
             <div class="flex items-center gap-2 self-start sm:self-auto flex-wrap">
               <!-- Configured Salary / Editable Daily Wage -->
               <div
-                v-if="currentRecord.basicSalary > 0 || currentRecord.dailyRate > 0 || editableDailyWage"
+                v-if="(currentRecord.basicSalary > 0 || currentRecord.dailyRate > 0 || editableDailyWage) && currentRecord.salaryType !== 'unconfigured'"
                 class="px-3 py-1.5 rounded-lg border bg-muted/40 text-xs font-mono flex items-center gap-2"
               >
                 <div class="text-right">
@@ -681,8 +691,10 @@ async function triggerPrint() {
                       step="0.01"
                       min="0"
                       class="h-7 w-24 text-xs font-mono font-bold text-right px-1.5 py-0 bg-background"
-                      title="Edit daily wage"
+                      title="Edit daily wage (persists directly to employee profile)"
                       @input="onDailyWageInput"
+                      @change="saveDailyWageToEmployee"
+                      @keydown.enter.prevent="saveDailyWageToEmployee"
                     />
                   </div>
                 </div>
@@ -691,8 +703,9 @@ async function triggerPrint() {
                   v-if="isDailyWageDirty"
                   size="sm"
                   variant="default"
-                  class="h-7 text-xs px-2.5 gap-1 font-semibold shadow-xs"
+                  class="h-7 text-xs px-2.5 gap-1 font-semibold shadow-xs cursor-pointer"
                   :disabled="isSavingWage || !editableDailyWage || Number(editableDailyWage) <= 0"
+                  title="Save updated daily wage to employee profile"
                   @click="saveDailyWageToEmployee"
                 >
                   <Save class="size-3" />
@@ -700,7 +713,7 @@ async function triggerPrint() {
                 </Button>
               </div>
 
-              <!-- Unconfigured Salary -->
+              <!-- Unconfigured Salary Status Badge & Edit Profile Button -->
               <div
                 v-else
                 class="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2 flex-wrap"
@@ -718,29 +731,31 @@ async function triggerPrint() {
                   @click="navigateToEmployeePayrollEdit"
                 >
                   <UserRoundPen class="size-3" />
-                  <span>Configure in Profile &rarr;</span>
+                  <span>Edit Profile</span>
                 </Button>
               </div>
             </div>
           </div>
 
-          <!-- Unconfigured Salary Banner (if rate is missing) -->
+          <!-- Unconfigured Salary Warning Area with clearly labeled Edit Profile button -->
           <div
             v-if="(!currentRecord.basicSalary && !currentRecord.dailyRate && !editableDailyWage) || currentRecord.salaryType === 'unconfigured'"
-            class="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2"
+            class="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs"
           >
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2.5">
               <AlertTriangle class="size-4 text-amber-600 shrink-0" />
-              <span>Missing salary configuration for {{ currentRecord.employeeName }}. Configure salary type and rates in Employee Profile &gt; Payroll.</span>
+              <span>
+                <strong>Unconfigured Salary:</strong> Missing daily wage or salary rate for {{ currentRecord.employeeName }}. Configure salary type and rates in Employee Profile &gt; Payroll.
+              </span>
             </div>
             <Button
               type="button"
               size="sm"
-              class="h-7 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white shrink-0 font-medium cursor-pointer"
+              class="h-8 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white shrink-0 font-semibold cursor-pointer shadow-xs"
               @click="navigateToEmployeePayrollEdit"
             >
-              <span>Open Profile &gt; Payroll</span>
-              <ArrowRight class="size-3" />
+              <UserRoundPen class="size-3.5" />
+              <span>Edit Profile</span>
             </Button>
           </div>
 

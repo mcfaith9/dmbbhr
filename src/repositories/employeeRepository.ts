@@ -517,6 +517,45 @@ async function ensureInitialized() {
   }
 }
 
+/**
+ * Resilient lookup helper that matches an employee across bioId, employeeNumber,
+ * prefix variants (emp-25065 vs 25065), and case insensitivity.
+ */
+export function findCachedEmployee(identifier?: string | null): { key: string; record: EmployeeRecord } | null {
+  if (!employeeCache) return null
+  const raw = String(identifier || '').trim()
+  if (!raw) return null
+
+  // 1. Direct match on cache key
+  if (employeeCache.has(raw)) {
+    return { key: raw, record: employeeCache.get(raw)! }
+  }
+
+  // 2. Prefix stripped (emp-25065 -> 25065)
+  const stripped = raw.replace(/^emp[-_]/i, '').trim()
+  if (employeeCache.has(stripped)) {
+    return { key: stripped, record: employeeCache.get(stripped)! }
+  }
+
+  // 3. Match across bioId or employeeNumber (case-insensitive)
+  const rawLower = raw.toLowerCase()
+  const strippedLower = stripped.toLowerCase()
+  for (const [k, rec] of employeeCache.entries()) {
+    if (
+      k.toLowerCase() === rawLower ||
+      k.toLowerCase() === strippedLower ||
+      rec.bioId.toLowerCase() === rawLower ||
+      rec.bioId.toLowerCase() === strippedLower ||
+      rec.employeeNumber.toLowerCase() === rawLower ||
+      rec.employeeNumber.toLowerCase() === strippedLower
+    ) {
+      return { key: k, record: rec }
+    }
+  }
+
+  return null
+}
+
 export interface EmploymentStatusParseResult {
   status?: EmploymentStatus
   isValid: boolean
@@ -965,9 +1004,39 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     else if (s === 'hourly') cleanSalaryType = 'Hourly'
   }
 
-  const cleanBasicSalary = getOptNumber(input.basicSalary, input.basic_salary, input.salaryRate, input.salary_rate)
-  const cleanDailyRate = getOptNumber(input.dailyRate, input.daily_rate)
-  const cleanHourlyRate = getOptNumber(input.hourlyRate, input.hourly_rate)
+  let cleanBasicSalary = getOptNumber(input.basicSalary, input.basic_salary, input.salaryRate, input.salary_rate)
+  let cleanDailyRate = getOptNumber(input.dailyRate, input.daily_rate)
+  let cleanHourlyRate = getOptNumber(input.hourlyRate, input.hourly_rate)
+
+  // Automatic rate harmonization: if daily rate is configured (> 0), ensure salary type and sister rates are properly set
+  if (cleanDailyRate !== undefined && cleanDailyRate > 0) {
+    if (!cleanSalaryType) {
+      cleanSalaryType = 'Daily'
+    }
+    if (cleanBasicSalary === undefined || cleanBasicSalary === 0) {
+      cleanBasicSalary = cleanSalaryType === 'Monthly' ? Math.round(cleanDailyRate * 26 * 100) / 100 : cleanDailyRate
+    }
+    if (cleanHourlyRate === undefined || cleanHourlyRate === 0) {
+      cleanHourlyRate = Math.round((cleanDailyRate / 8) * 100) / 100
+    }
+    if (!cleanPayrollStatus) {
+      cleanPayrollStatus = 'configured'
+    }
+  } else if (cleanBasicSalary !== undefined && cleanBasicSalary > 0) {
+    if (!cleanSalaryType) {
+      cleanSalaryType = 'Daily'
+    }
+    if (cleanDailyRate === undefined || cleanDailyRate === 0) {
+      cleanDailyRate = cleanSalaryType === 'Monthly' ? Math.round((cleanBasicSalary / 26) * 100) / 100 : cleanBasicSalary
+    }
+    if (cleanHourlyRate === undefined || cleanHourlyRate === 0) {
+      cleanHourlyRate = Math.round((cleanDailyRate / 8) * 100) / 100
+    }
+    if (!cleanPayrollStatus) {
+      cleanPayrollStatus = 'configured'
+    }
+  }
+
   const rawPayFrequency = getOptString(input.payFrequency, input.pay_frequency, input.payrollSchedule, input.payroll_schedule)
   let cleanPayFrequency: 'Semi-Monthly' | 'Monthly' | 'Weekly' | undefined = undefined
   if (rawPayFrequency === 'Semi-Monthly' || rawPayFrequency === 'Monthly' || rawPayFrequency === 'Weekly') {
@@ -1215,13 +1284,23 @@ export const employeeRepository = {
   },
 
   /**
-   * Get single employee by Bio ID
+   * Get single employee by Bio ID (supports bioId, employeeNumber, and stripped prefixes)
    */
   async getByBioId(bioId: string): Promise<Employee | undefined> {
     await ensureInitialized()
     await workGroupRepository.getMap()
-    const rec = employeeCache!.get(String(bioId).trim())
-    return rec ? this.toEmployee(rec) : undefined
+    const found = findCachedEmployee(bioId)
+    if (found) {
+      return this.toEmployee(found.record)
+    }
+    const clean = String(bioId || '').trim()
+    const stripped = clean.replace(/^emp[-_]/i, '').trim()
+    const dbRec = (await db.employees.get(clean)) || (stripped !== clean ? await db.employees.get(stripped) : undefined)
+    if (dbRec) {
+      employeeCache!.set(dbRec.bioId, dbRec)
+      return this.toEmployee(dbRec)
+    }
+    return undefined
   },
 
   /**
@@ -1280,19 +1359,20 @@ export const employeeRepository = {
     }
   ): Promise<Employee> {
     await ensureInitialized()
-    const cleanBioId = String(bioId).trim()
-    const existing = employeeCache!.get(cleanBioId)
+    const found = findCachedEmployee(bioId)
+    const canonicalBioId = found ? found.record.bioId : String(bioId || '').replace(/^emp[-_]/i, '').trim()
+    const existing = found ? found.record : (await db.employees.get(canonicalBioId))
 
     const record = toPersistableEmployeeRecord({
       ...existing,
       ...updates,
-      bioId: cleanBioId, // Strictly permanent and read-only
-      employeeNumber: cleanBioId, // Core Rule: Employee ID = Bio ID
+      bioId: canonicalBioId, // Strictly permanent and read-only
+      employeeNumber: canonicalBioId, // Core Rule: Employee ID = Bio ID
       updatedAt: new Date().toISOString()
     })
 
     await db.employees.put(record)
-    employeeCache!.set(cleanBioId, record)
+    employeeCache!.set(canonicalBioId, record)
     this.notifyChange()
 
     return this.toEmployee(record)
