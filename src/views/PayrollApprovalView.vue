@@ -660,7 +660,6 @@
             <Button
               variant="default"
               size="sm"
-              class="bg-blue-600 hover:bg-blue-700 text-white dark:bg-blue-600 dark:hover:bg-blue-700"
               :disabled="activeSnap.reviewStatus === 'approved' || isSubmitting"
               @click="openApproveFromDetail"
             >
@@ -679,7 +678,7 @@
       <DialogContent class="w-full max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle class="text-base font-bold flex items-center gap-2 text-foreground">
-            <ShieldCheck class="size-5 text-blue-600 dark:text-blue-400 shrink-0" />
+            <ShieldCheck class="size-5 shrink-0" />
             <span>Confirm Payroll Approval</span>
           </DialogTitle>
           <DialogDescription class="text-xs text-muted-foreground">
@@ -722,7 +721,6 @@
           <Button
             variant="default"
             size="sm"
-            class="bg-blue-600 hover:bg-blue-700 text-white dark:bg-blue-600 dark:hover:bg-blue-700"
             :disabled="isSubmitting"
             @click="handleConfirmApprove"
           >

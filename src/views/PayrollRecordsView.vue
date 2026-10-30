@@ -432,12 +432,12 @@ const totalHolidayPay = computed(() => {
 
     <!-- Search Bar & Controls Toolbar -->
     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-      <div class="relative flex-1 max-w-md">
+      <div class="relative w-[30%] min-w-0">
         <Search class="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground pointer-events-none" />
         <Input
           v-model="searchQuery"
           type="text"
-          placeholder="Search by employee name, Bio ID, or Employee ID..."
+          placeholder="Search by employee name, Bio ID..."
           class="pl-8 pr-8 h-8 text-xs bg-card"
           :disabled="isLoading && records.length === 0"
           @input="onSearchInput"
@@ -478,7 +478,6 @@ const totalHolidayPay = computed(() => {
         <Table>
           <TableHeader>
             <TableRow class="bg-muted/40">
-              <TableHead class="font-semibold text-xs whitespace-nowrap">Bio ID</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[180px]">Employee Name</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Base Pay</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Payable Days</TableHead>
@@ -496,7 +495,6 @@ const totalHolidayPay = computed(() => {
             <!-- 1. Skeleton Loading State -->
             <template v-if="isLoading">
               <TableRow v-for="i in 8" :key="`skeleton-row-${i}`" class="text-xs">
-                <TableCell><Skeleton class="h-4 w-12" /></TableCell>
                 <TableCell>
                   <div class="space-y-1">
                     <Skeleton class="h-4 w-36" />
@@ -553,9 +551,6 @@ const totalHolidayPay = computed(() => {
               :key="r.id"
               class="text-xs hover:bg-muted/40 transition-colors"
             >
-              <TableCell class="font-mono text-muted-foreground font-medium whitespace-nowrap">
-                {{ r.bioId }}
-              </TableCell>
               <TableCell class="font-medium text-foreground">
                 <div class="font-medium">{{ r.employeeName }}</div>
                 <div class="text-[10px] text-muted-foreground">
