@@ -676,18 +676,14 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      if (approvedRequiredHours < 8) {
-        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
-      } else if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
-        undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
-      } else {
-        undertimeMinutes = earlyOutMinutes
-      }
+      // Undertime is strictly based on actual net working hours against approved required hours
+      undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+      earlyOutMinutes = undertimeMinutes > 0 ? Math.max(0, expectedOutMinutes - p2Mins) : 0
 
       if (lateMinutes > 0) {
         status = 'Late'
         statusVariant = 'warning'
-      } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
+      } else if (undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
       } else if (approvedRequiredHours < 8) {
@@ -853,18 +849,13 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      if (approvedRequiredHours < 8) {
-        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
-      } else if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
-        undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
-      } else {
-        undertimeMinutes = earlyOutMinutes
-      }
+      undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+      earlyOutMinutes = undertimeMinutes > 0 ? Math.max(0, expectedOutMinutes - p3Mins) : 0
 
       if (lateMinutes > 0) {
         status = 'Late'
         statusVariant = 'warning'
-      } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
+      } else if (undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
       } else if (approvedRequiredHours < 8) {
@@ -926,18 +917,13 @@ export function processEmployeeDayPunches(
       totalHoursDecimal = Number(netHours.toFixed(2))
       totalHoursStr = `${netHours.toFixed(1)} hrs`
 
-      if (approvedRequiredHours < 8) {
-        undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
-      } else if (!isApprovedHalfDayAM && !isApprovedHalfDayPM && workedMinutes > 0 && workedMinutes < 480) {
-        undertimeMinutes = Math.max(earlyOutMinutes, 480 - workedMinutes)
-      } else {
-        undertimeMinutes = earlyOutMinutes
-      }
+      undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+      earlyOutMinutes = undertimeMinutes > 0 ? Math.max(0, expectedOutMinutes - outMins) : 0
 
       if (lateMinutes > 0) {
         status = 'Late'
         statusVariant = 'warning'
-      } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
+      } else if (undertimeMinutes > 0) {
         status = 'Early OUT'
         statusVariant = 'warning'
       } else if (approvedRequiredHours < 8) {
@@ -1025,8 +1011,6 @@ export function processEmployeeDayPunches(
         statusVariant = 'secondary'
       } else if (effInMins >= 0 && effOutMins >= 0 && effOutMins >= effInMins) {
         lateMinutes = Math.max(0, effInMins - expectedInMinutes)
-        earlyOutMinutes = Math.max(0, expectedOutMinutes - effOutMins)
-
         let grossMins = Math.max(0, effOutMins - effInMins)
         if (effInMins < lunchStartMins && effOutMins > lunchEndMins) {
           grossMins = Math.max(0, grossMins - (lunchEndMins - lunchStartMins))
@@ -1037,11 +1021,12 @@ export function processEmployeeDayPunches(
         totalHoursStr = `${netHours.toFixed(1)} hrs`
 
         undertimeMinutes = Math.max(0, approvedRequiredMinutes - workedMinutes)
+        earlyOutMinutes = undertimeMinutes > 0 ? Math.max(0, expectedOutMinutes - effOutMins) : 0
 
         if (lateMinutes > 0) {
           status = 'Late'
           statusVariant = 'warning'
-        } else if (earlyOutMinutes > 0 || undertimeMinutes > 0) {
+        } else if (undertimeMinutes > 0) {
           status = 'Early OUT'
           statusVariant = 'warning'
         } else if (approvedRequiredHours < 8) {

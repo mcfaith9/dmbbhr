@@ -653,12 +653,18 @@ export const payrollCalculationService = {
             // Standard 8-hour shift
             const dayBasePay = dailyRate
             const dayFraction = 1.0
-            const dayUndertime = typeof att?.undertime_minutes === 'number' && att.undertime_minutes > 0
-              ? att.undertime_minutes
-              : Math.max(0, 480 - workedMins)
-            const dayUndertimeDed = hourlyRate > 0
-              ? Math.round((dayUndertime / 60) * hourlyRate * 100) / 100
-              : (dailyRate > 0 ? Math.round((dayUndertime / 480) * dailyRate * 100) / 100 : 0)
+            // Undertime must be based on actual net working hours, not merely on departure time.
+            // If an employee completes at least 8 net working hours (480 mins), undertime is 0.
+            // If actual net working hours are below 8 hours, calculate undertime using the difference.
+            const dayUndertime = workedMins > 0
+              ? Math.max(0, 480 - workedMins)
+              : (typeof att?.undertime_minutes === 'number' ? Math.max(0, att.undertime_minutes) : 0)
+
+            const dayUndertimeDed = dayUndertime > 0
+              ? (hourlyRate > 0
+                  ? Math.round((dayUndertime / 60) * hourlyRate * 100) / 100
+                  : (dailyRate > 0 ? Math.round((dayUndertime / 480) * dailyRate * 100) / 100 : 0))
+              : 0
 
             regularWorkedDaysPay += dayBasePay
             regularPayableDaysFraction += dayFraction

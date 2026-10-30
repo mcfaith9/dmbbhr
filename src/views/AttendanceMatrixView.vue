@@ -406,9 +406,6 @@ const dutyCells = computed<DutyCellData[]>(() => {
       if (record?.late_minutes && record.late_minutes > 0) {
         statusLabel = `Present (Late ${record.late_minutes}m)`
         statusBadgeVariant = 'warning'
-      } else if (record?.early_out_minutes && record.early_out_minutes > 0) {
-        statusLabel = `Present (Early Out ${record.early_out_minutes}m)`
-        statusBadgeVariant = 'warning'
       } else if (record?.undertime_minutes && record.undertime_minutes > 0) {
         statusLabel = `Present (Undertime ${record.undertime_minutes}m)`
         statusBadgeVariant = 'warning'
@@ -914,7 +911,7 @@ onMounted(async () => {
                   <span v-if="cell.statusCategory === 'present' && (cell.lateMinutes ?? 0) > 0">
                     LATE
                   </span>
-                  <span v-else-if="cell.statusCategory === 'present' && ((cell.earlyOutMinutes ?? 0) > 0 || (cell.undertimeMinutes ?? 0) > 0)">
+                  <span v-else-if="cell.statusCategory === 'present' && (cell.undertimeMinutes ?? 0) > 0">
                     UNDER
                   </span>
                   <span v-else-if="cell.statusCategory === 'present' && (cell.approvedHours ?? 8) < 8">
