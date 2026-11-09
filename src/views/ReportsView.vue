@@ -22,7 +22,7 @@ import {
   Fingerprint,
   Download,
   Calendar,
-  UserX,
+  UserRoundX,
   Percent,
   SlidersHorizontal
 } from '@lucide/vue'
@@ -580,9 +580,9 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           :class="activeTab === 'absent_analytics' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = 'absent_analytics'"
         >
-          <UserX class="size-3.5 text-red-500" />
+          <UserRoundX class="size-3.5 text-red-500" />
           <span>Absent Analytics</span>
-          <Badge v-if="reportData" variant="destructive" class="text-[10px] px-1.5 py-0">
+          <Badge v-if="reportData" variant="destructive" class="text-[10px] px-1.5 py-0 text-white">
             {{ reportData.kpis.absentCount }}
           </Badge>
         </button>
@@ -1015,7 +1015,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
             <div class="flex items-center justify-between">
               <span class="text-xs font-medium text-muted-foreground">Total Absent Employees</span>
               <div class="size-7 rounded-lg bg-red-500/10 text-red-500 flex items-center justify-center">
-                <UserX class="size-4" />
+                <UserRoundX class="size-4" />
               </div>
             </div>
             <div>
@@ -1129,7 +1129,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           <div class="flex items-center justify-between border-b pb-3">
             <div>
               <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <UserX class="size-3.5 text-red-500" />
+                <UserRoundX class="size-3.5 text-red-500" />
                 <span>Top Employees with Absences</span>
               </h3>
               <p class="text-[11px] text-muted-foreground mt-0.5">
@@ -1334,7 +1334,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                     {{ rec.scheduledDuty }}
                   </TableCell>
                   <TableCell class="py-2.5">
-                    <Badge variant="destructive" class="text-[10px] font-mono">
+                    <Badge variant="destructive" class="text-[10px] font-mono text-white">
                       {{ rec.status }}
                     </Badge>
                   </TableCell>
