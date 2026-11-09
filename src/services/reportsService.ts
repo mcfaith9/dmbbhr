@@ -3,11 +3,13 @@
  *
  * Implements high-performance, non-duplicative aggregation of attendance data.
  * Reuses the authoritative Daily Attendance and Employee services.
+ * Strictly adheres to resignation-date based active eligibility and absence accounting.
  */
 
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from './attendance'
 import { employeeService } from './employees'
 import { formatDuration } from '@/lib/timeUtils'
+import { db } from '@/db'
 
 export type DateRangePreset = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'custom'
 
@@ -18,6 +20,7 @@ export interface ReportFilterOptions {
   location?: string // 'all', 'DBB CEBU', etc.
   workGroupId?: string // 'all' or specific
   employeeBioId?: string // 'all' or specific bioId
+  department?: string // 'all' or specific
 }
 
 export interface DayTrendPoint {
@@ -29,6 +32,30 @@ export interface DayTrendPoint {
   absent: number
   missingOut: number
   renderedHours: number
+  expectedScheduled: number
+}
+
+export interface WeekTrendPoint {
+  weekKey: string // e.g. "2026-W44"
+  label: string // e.g. "Oct 26 - Nov 01"
+  absentCount: number
+  eligibleWorkdays: number
+  absenceRate: number
+}
+
+export interface MonthTrendPoint {
+  monthKey: string // e.g. "2026-10"
+  label: string // e.g. "Oct 2026"
+  absentCount: number
+  eligibleWorkdays: number
+  absenceRate: number
+}
+
+export interface DepartmentAbsencePoint {
+  department: string
+  absentCount: number
+  uniqueEmployees: number
+  absenceRate: number
 }
 
 export interface LateAttendanceRecord {
@@ -47,6 +74,31 @@ export interface TopLateEmployee {
   latestLateDate: string
   lateRecords: LateAttendanceRecord[]
   lateDates?: string[]
+}
+
+export interface AbsentEmployeeRecord {
+  id: string // `${bioId}_${date}`
+  bioId: string
+  employeeName: string
+  department: string
+  position: string
+  workGroupName: string
+  date: string // YYYY-MM-DD
+  dateDisplay: string
+  dayOfWeek: string
+  scheduledDuty: string // e.g. "08:00 AM - 05:00 PM (8h)"
+  status: 'Absent'
+  remarks: string // "No attendance recorded"
+}
+
+export interface TopAbsentEmployee {
+  bioId: string
+  name: string
+  department: string
+  position: string
+  workGroupName: string
+  absentCount: number
+  dates: string[]
 }
 
 export interface MissingOutItem {
@@ -78,9 +130,18 @@ export interface ReportSummaryResult {
     totalRenderedHours: number
     avgDailyHours: number
     attendanceRate: number
+    absenceRate: number
     totalLateMinutes: number
+    uniqueAbsentEmployees: number
+    repeatedAbsenceEmployeesCount: number
+    totalEligibleWorkdays: number
   }
   dailyTrend: DayTrendPoint[]
+  weeklyTrend: WeekTrendPoint[]
+  monthlyTrend: MonthTrendPoint[]
+  departmentDistribution: DepartmentAbsencePoint[]
+  topAbsentEmployees: TopAbsentEmployee[]
+  absentRecords: AbsentEmployeeRecord[]
   statusBreakdown: AttendanceStatusBreakdown[]
   topLateEmployees: TopLateEmployee[]
   missingOutItems: MissingOutItem[]
@@ -108,9 +169,9 @@ export function getDatesInRange(startStr: string, endStr: string): string[] {
   const cur = new Date(Date.UTC(startY, startM - 1, startD))
   const end = new Date(Date.UTC(endY, endM - 1, endD))
 
-  // Limit max range to 62 days to safeguard browser performance
   let count = 0
-  while (cur <= end && count < 62) {
+  // Safe limit up to 180 days
+  while (cur <= end && count < 180) {
     const y = cur.getUTCFullYear()
     const m = String(cur.getUTCMonth() + 1).padStart(2, '0')
     const d = String(cur.getUTCDate()).padStart(2, '0')
@@ -189,15 +250,42 @@ export function resolveDateRange(preset: DateRangePreset, customStart?: string, 
   return { start, end, label: `${start} to ${end}` }
 }
 
+/**
+ * Helper to get ISO week number & key (e.g. "2026-W44")
+ */
+function getWeekKeyAndLabel(dObj: Date): { key: string; label: string } {
+  const d = new Date(Date.UTC(dObj.getUTCFullYear(), dObj.getUTCMonth(), dObj.getUTCDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+  const weekKey = `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+
+  // Compute week start (Mon) and end (Sun)
+  const cur = new Date(Date.UTC(dObj.getUTCFullYear(), dObj.getUTCMonth(), dObj.getUTCDate()))
+  const day = cur.getUTCDay()
+  const diffMon = day === 0 ? -6 : 1 - day
+  const mon = new Date(cur)
+  mon.setUTCDate(mon.getUTCDate() + diffMon)
+  const sun = new Date(mon)
+  sun.setUTCDate(sun.getUTCDate() + 6)
+
+  const mStart = mon.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
+  const mEnd = sun.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
+  const label = `W${weekNo} (${mStart} - ${mEnd})`
+
+  return { key: weekKey, label }
+}
+
 export const reportsService = {
   /**
    * Generates aggregated HR attendance report summary for the requested filter
    */
   async getReportSummary(filters: ReportFilterOptions, forceRefresh = false): Promise<ReportSummaryResult> {
-    const { preset, startDate, endDate, location = 'all', workGroupId = 'all', employeeBioId = 'all' } = filters
+    const { preset, startDate, endDate, location = 'all', workGroupId = 'all', employeeBioId = 'all', department = 'all' } = filters
     const { start, end, label } = resolveDateRange(preset, startDate, endDate)
 
-    const cacheKey = `${start}_${end}_${location}_${workGroupId}_${employeeBioId}`
+    const cacheKey = `${start}_${end}_${location}_${workGroupId}_${employeeBioId}_${department}`
     if (!forceRefresh && reportCache.has(cacheKey)) {
       const cached = reportCache.get(cacheKey)!
       if (Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -215,25 +303,55 @@ export const reportsService = {
       )
     )
 
-    // 2. Fetch employee total count for absent calculation (excluding resigned employees from expected active headcount)
-    const allEmployees = await employeeService.getEmployees({
-      location: location !== 'all' ? location : undefined,
-      workGroupId: workGroupId !== 'all' ? workGroupId : undefined
-    })
-    const activeEmployees = allEmployees.filter(e => e.status !== 'resigned')
-    const totalExpectedPerDay = bioFilter ? 1 : Math.max(activeEmployees.length, 1)
+    // 2. Fetch all employees in scope & supporting lookup tables (WorkGroups, Approved Leaves, Holidays, Manual Adjustments)
+    const [allEmployees, workGroups, leaves, holidays] = await Promise.all([
+      employeeService.getEmployees({
+        location: location !== 'all' ? location : undefined,
+        workGroupId: workGroupId !== 'all' ? workGroupId : undefined
+      }),
+      employeeService.getWorkGroups(),
+      db.leaveRecords
+        .where('status')
+        .equals('Approved')
+        .toArray()
+        .catch(() => []),
+      db.holidays
+        .toArray()
+        .catch(() => [])
+    ])
 
-    // 3. Process aggregations
+    // Filter employees by department and bioId if specified
+    const scopedEmployees = allEmployees.filter(emp => {
+      if (department !== 'all' && emp.department !== department) return false
+      if (bioFilter && emp.biometric_user_id !== bioFilter) return false
+      return true
+    })
+
+    const workGroupMap = new Map(workGroups.map(wg => [wg.id, wg]))
+    const holidayDateSet = new Set(holidays.map(h => h.date))
+
+    // Index leaves by bioId
+    const employeeLeavesMap = new Map<string, Array<{ startDate: string; endDate: string }>>()
+    for (const l of leaves) {
+      if (!employeeLeavesMap.has(l.bioId)) {
+        employeeLeavesMap.set(l.bioId, [])
+      }
+      employeeLeavesMap.get(l.bioId)!.push({ startDate: l.startDate, endDate: l.endDate })
+    }
+
+    // 3. Process daily aggregations & individual absence records
     let totalPresentDays = 0
     let totalLateDays = 0
     let totalMissingOutDays = 0
     let totalRenderedHours = 0
     let totalLateMinutes = 0
-    let totalAbsentDays = 0
+    let totalEligibleWorkdays = 0
 
     const dayTrends: DayTrendPoint[] = []
     const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string; lateRecords: LateAttendanceRecord[]; lateDates: string[] }>()
     const missingOutItems: MissingOutItem[] = []
+    const allAbsentRecords: AbsentEmployeeRecord[] = []
+    const absencesByEmployee = new Map<string, { emp: typeof scopedEmployees[0]; dates: string[] }>()
 
     let peakDayDate = start
     let peakDayHours = 0
@@ -248,6 +366,10 @@ export const reportsService = {
       const shortLabel = dObj.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
       const dayOfWeek = dObj.getUTCDay()
       const isSunday = dayOfWeek === 0
+      const isHoliday = holidayDateSet.has(dStr)
+
+      // Map of attendees with actual check-in for this day
+      const attendedBioIds = new Set<string>()
 
       let dayPresent = 0
       let dayLate = 0
@@ -256,14 +378,23 @@ export const reportsService = {
 
       for (const r of records) {
         // Exclude resigned employees from aggregated calculations unless user specifically filtered by this employee's bioId
+        // Also check resignationDate vs dStr: if resigned after dStr, they were active then
         const isResigned = r.employee_status === 'resigned'
-        if (isResigned && !bioFilter) {
+        const resDate = r.resignation_date || (r as any).resignationDate
+        const resignedBeforeDate = isResigned && (!resDate || resDate <= dStr)
+
+        if (resignedBeforeDate && !bioFilter) {
           continue
         }
 
-        // Did the employee have attendance on this day?
-        const hasAttended = r.actual_in && !r.actual_in.startsWith('Missing')
+        // Apply department filter to record
+        if (department !== 'all' && r.department !== department) {
+          continue
+        }
+
+        const hasAttended = Boolean(r.actual_in && !r.actual_in.startsWith('Missing') && r.actual_in !== '—')
         if (hasAttended) {
+          attendedBioIds.add(r.biometric_user_id)
           dayPresent++
           dayHours += r.total_hours_decimal || 0
 
@@ -292,7 +423,7 @@ export const reportsService = {
           const isMissingOut = !r.has_valid_out || r.status.includes('No OUT') || r.status === 'Awaiting OUT'
           if (isMissingOut) {
             dayMissingOut++
-            if (missingOutItems.length < 10) {
+            if (missingOutItems.length < 15) {
               missingOutItems.push({
                 bioId: r.biometric_user_id,
                 name: r.employee_name,
@@ -316,14 +447,70 @@ export const reportsService = {
         peakDayDate = dStr
       }
 
-      // Calculate estimated absents on regular working days (Mon-Sat, not Sunday)
+      // Determine eligible expected employees & absent employees for this date:
+      // Regular working days: Mon-Sat (not Sunday), and not regular company holidays
       let dayAbsent = 0
-      if (!isSunday && !bioFilter) {
-        dayAbsent = Math.max(0, totalExpectedPerDay - dayPresent)
-      } else if (bioFilter && dayPresent === 0 && !isSunday) {
-        dayAbsent = 1
+      let dayExpected = 0
+
+      if (!isSunday && !isHoliday) {
+        for (const emp of scopedEmployees) {
+          // Rule 1: Exclude resigned employees if they resigned on or before this reporting date
+          if (emp.status === 'resigned') {
+            const resDate = emp.resignation_date || (emp as any).resignationDate
+            if (!resDate || resDate <= dStr) {
+              continue // Excluded from expected duty and absence
+            }
+          }
+
+          // Rule 2: Exclude inactive/suspended if configured, but check if on approved leave
+          if (emp.status === 'inactive') {
+            continue
+          }
+
+          // Check if employee has an approved leave covering this date
+          const empLeaves = employeeLeavesMap.get(emp.biometric_user_id) || []
+          const isOnLeave = empLeaves.some(l => l.startDate <= dStr && l.endDate >= dStr)
+          if (isOnLeave) {
+            continue // Approved leave is not an absence
+          }
+
+          dayExpected++
+          totalEligibleWorkdays++
+
+          // Check if employee had attendance
+          const attended = attendedBioIds.has(emp.biometric_user_id)
+          if (!attended) {
+            dayAbsent++
+
+            const wg = workGroupMap.get(emp.work_group_id)
+            const schedStr = wg ? `${wg.standard_in} - ${wg.expected_out} (${wg.name})` : '08:00 AM - 05:00 PM (Regular)'
+
+            const absRec: AbsentEmployeeRecord = {
+              id: `${emp.biometric_user_id}_${dStr}`,
+              bioId: emp.biometric_user_id,
+              employeeName: emp.full_name,
+              department: emp.department || 'Operations',
+              position: emp.position || 'Staff',
+              workGroupName: wg?.name || 'GROUP C',
+              date: dStr,
+              dateDisplay: shortLabel,
+              dayOfWeek: dayName,
+              scheduledDuty: schedStr,
+              status: 'Absent',
+              remarks: 'No attendance recorded'
+            }
+            allAbsentRecords.push(absRec)
+
+            if (!absencesByEmployee.has(emp.biometric_user_id)) {
+              absencesByEmployee.set(emp.biometric_user_id, { emp, dates: [] })
+            }
+            absencesByEmployee.get(emp.biometric_user_id)!.dates.push(dStr)
+          }
+        }
+      } else {
+        // Sunday or Holiday: If an employee attended, that's already counted in dayPresent (rest duty)
+        dayExpected = dayPresent
       }
-      totalAbsentDays += dayAbsent
 
       dayTrends.push({
         date: dStr,
@@ -333,9 +520,28 @@ export const reportsService = {
         late: dayLate,
         absent: dayAbsent,
         missingOut: dayMissingOut,
-        renderedHours: Number(dayHours.toFixed(1))
+        renderedHours: Number(dayHours.toFixed(1)),
+        expectedScheduled: dayExpected
       })
     }
+
+    const totalAbsentOccurrences = allAbsentRecords.length
+
+    // Top absent employees
+    const topAbsentEmployees: TopAbsentEmployee[] = Array.from(absencesByEmployee.values())
+      .map(({ emp, dates }) => ({
+        bioId: emp.biometric_user_id,
+        name: emp.full_name,
+        department: emp.department || 'Operations',
+        position: emp.position || 'Staff',
+        workGroupName: workGroupMap.get(emp.work_group_id)?.name || 'GROUP C',
+        absentCount: dates.length,
+        dates: [...dates].sort()
+      }))
+      .sort((a, b) => b.absentCount - a.absentCount || a.name.localeCompare(b.name))
+
+    const uniqueAbsentEmployees = topAbsentEmployees.length
+    const repeatedAbsenceEmployeesCount = topAbsentEmployees.filter(e => e.absentCount > 1).length
 
     // Top late employees
     const topLateEmployees: TopLateEmployee[] = Array.from(lateByEmployee.values())
@@ -354,15 +560,114 @@ export const reportsService = {
       .sort((a, b) => b.lateDays - a.lateDays || b.totalLateMinutes - a.totalLateMinutes)
       .slice(0, 10)
 
+    // Weekly & Monthly Trends
+    const weekMap = new Map<string, { label: string; absentCount: number; eligible: number }>()
+    const monthMap = new Map<string, { label: string; absentCount: number; eligible: number }>()
+
+    for (const pt of dayTrends) {
+      const [y, m, d] = pt.date.split('-').map(Number)
+      const dObj = new Date(Date.UTC(y, m - 1, d))
+
+      // Week
+      const { key: wKey, label: wLabel } = getWeekKeyAndLabel(dObj)
+      if (!weekMap.has(wKey)) {
+        weekMap.set(wKey, { label: wLabel, absentCount: 0, eligible: 0 })
+      }
+      const wItem = weekMap.get(wKey)!
+      wItem.absentCount += pt.absent
+      wItem.eligible += pt.expectedScheduled
+
+      // Month
+      const mKey = `${y}-${String(m).padStart(2, '0')}`
+      const mLabel = dObj.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', year: 'numeric' })
+      if (!monthMap.has(mKey)) {
+        monthMap.set(mKey, { label: mLabel, absentCount: 0, eligible: 0 })
+      }
+      const mItem = monthMap.get(mKey)!
+      mItem.absentCount += pt.absent
+      mItem.eligible += pt.expectedScheduled
+    }
+
+    const weeklyTrend: WeekTrendPoint[] = Array.from(weekMap.entries())
+      .map(([weekKey, item]) => ({
+        weekKey,
+        label: item.label,
+        absentCount: item.absentCount,
+        eligibleWorkdays: item.eligible,
+        absenceRate: item.eligible > 0 ? Number(((item.absentCount / item.eligible) * 100).toFixed(1)) : 0
+      }))
+      .sort((a, b) => a.weekKey.localeCompare(b.weekKey))
+
+    const monthlyTrend: MonthTrendPoint[] = Array.from(monthMap.entries())
+      .map(([monthKey, item]) => ({
+        monthKey,
+        label: item.label,
+        absentCount: item.absentCount,
+        eligibleWorkdays: item.eligible,
+        absenceRate: item.eligible > 0 ? Number(((item.absentCount / item.eligible) * 100).toFixed(1)) : 0
+      }))
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+
+    // Department Distribution
+    const deptMap = new Map<string, { absentCount: number; bioIds: Set<string>; eligible: number }>()
+    for (const rec of allAbsentRecords) {
+      const dept = rec.department || 'Operations'
+      if (!deptMap.has(dept)) {
+        deptMap.set(dept, { absentCount: 0, bioIds: new Set(), eligible: 0 })
+      }
+      const dItem = deptMap.get(dept)!
+      dItem.absentCount++
+      dItem.bioIds.add(rec.bioId)
+    }
+
+    // Calculate eligible per department
+    for (const emp of scopedEmployees) {
+      const dept = emp.department || 'Operations'
+      if (!deptMap.has(dept)) {
+        deptMap.set(dept, { absentCount: 0, bioIds: new Set(), eligible: 0 })
+      }
+      // Count working days for this emp
+      let empEligible = 0
+      for (const pt of dayTrends) {
+        const [y, m, d] = pt.date.split('-').map(Number)
+        const dObj = new Date(Date.UTC(y, m - 1, d))
+        const isSun = dObj.getUTCDay() === 0
+        const isHol = holidayDateSet.has(pt.date)
+        if (isSun || isHol) continue
+
+        const resDate = emp.resignation_date || (emp as any).resignationDate
+        if (emp.status === 'resigned' && (!resDate || resDate <= pt.date)) continue
+        if (emp.status === 'inactive') continue
+
+        const empLeaves = employeeLeavesMap.get(emp.biometric_user_id) || []
+        if (empLeaves.some(l => l.startDate <= pt.date && l.endDate >= pt.date)) continue
+
+        empEligible++
+      }
+      deptMap.get(dept)!.eligible += empEligible
+    }
+
+    const departmentDistribution: DepartmentAbsencePoint[] = Array.from(deptMap.entries())
+      .map(([dept, data]) => ({
+        department: dept,
+        absentCount: data.absentCount,
+        uniqueEmployees: data.bioIds.size,
+        absenceRate: data.eligible > 0 ? Number(((data.absentCount / data.eligible) * 100).toFixed(1)) : 0
+      }))
+      .sort((a, b) => b.absentCount - a.absentCount || b.absenceRate - a.absenceRate)
+
     // Summary calculations
     const roundedTotalHours = Number(totalRenderedHours.toFixed(1))
     const avgDailyHours = totalPresentDays > 0 ? Number((totalRenderedHours / totalPresentDays).toFixed(1)) : 0
-    const totalPotential = totalPresentDays + totalAbsentDays
+    const totalPotential = totalPresentDays + totalAbsentOccurrences
     const attendanceRate = totalPotential > 0 ? Math.round((totalPresentDays / totalPotential) * 100) : 100
+    const absenceRate = totalEligibleWorkdays > 0
+      ? Number(((totalAbsentOccurrences / totalEligibleWorkdays) * 100).toFixed(1))
+      : (totalPotential > 0 ? Number(((totalAbsentOccurrences / totalPotential) * 100).toFixed(1)) : 0)
 
     // Status breakdown percentages
     const onTimeCount = Math.max(0, totalPresentDays - totalLateDays)
-    const breakdownTotal = (onTimeCount + totalLateDays + totalMissingOutDays + totalAbsentDays) || 1
+    const breakdownTotal = (onTimeCount + totalLateDays + totalMissingOutDays + totalAbsentOccurrences) || 1
 
     const statusBreakdown: AttendanceStatusBreakdown[] = [
       {
@@ -384,15 +689,25 @@ export const reportsService = {
         color: '#6366f1' // indigo-500
       },
       {
-        label: 'Absent / Unrecorded',
-        count: totalAbsentDays,
-        percentage: Math.round((totalAbsentDays / breakdownTotal) * 100),
+        label: 'Absent',
+        count: totalAbsentOccurrences,
+        percentage: Math.round((totalAbsentOccurrences / breakdownTotal) * 100),
         color: '#ef4444' // red-500
       }
     ]
 
     // Construct concise HR insights
     const insights: string[] = []
+    if (totalAbsentOccurrences > 0) {
+      insights.push(`${totalAbsentOccurrences} total absence occurrence${totalAbsentOccurrences > 1 ? 's' : ''} across ${uniqueAbsentEmployees} unique employee${uniqueAbsentEmployees > 1 ? 's' : ''} (${absenceRate}% absence rate; resigned employees accurately excluded based on effective separation dates).`)
+    } else {
+      insights.push('100% active workforce presence recorded; zero unexcused absences detected across this reporting period.')
+    }
+
+    if (repeatedAbsenceEmployeesCount > 0) {
+      insights.push(`${repeatedAbsenceEmployeesCount} employee${repeatedAbsenceEmployeesCount > 1 ? 's have' : ' has'} repeated absences (2+ missed shifts) requiring supervisory counseling.`)
+    }
+
     if (totalLateDays > 0) {
       insights.push(`${totalLateDays} late attendance instance${totalLateDays > 1 ? 's' : ''} recorded, totaling ${formatDuration(totalLateMinutes)} (${totalLateMinutes.toLocaleString()}m) lost time.`)
     } else {
@@ -401,15 +716,13 @@ export const reportsService = {
 
     if (totalMissingOutDays > 0) {
       insights.push(`${totalMissingOutDays} punch record${totalMissingOutDays > 1 ? 's' : ''} have missing OUT scans requiring HR review or manual time adjustment.`)
-    } else {
-      insights.push('All recorded shifts have complete biometric check-in and check-out pairs.')
     }
 
     insights.push(`Overall attendance rate is ${attendanceRate}% across ${dateList.length} date${dateList.length > 1 ? 's' : ''}.`)
 
-    if (topLateEmployees.length > 0) {
-      const topEmp = topLateEmployees[0]
-      insights.push(`Highest tardiness frequency: ${topEmp.name} (${topEmp.lateDays} late day${topEmp.lateDays > 1 ? 's' : ''}, ${formatDuration(topEmp.totalLateMinutes)} / ${topEmp.totalLateMinutes}m total).`)
+    if (topAbsentEmployees.length > 0) {
+      const topAbs = topAbsentEmployees[0]
+      insights.push(`Highest absence frequency: ${topAbs.name} (${topAbs.absentCount} missed shift${topAbs.absentCount > 1 ? 's' : ''}).`)
     }
 
     if (roundedTotalHours > 0) {
@@ -424,14 +737,23 @@ export const reportsService = {
       kpis: {
         presentCount: totalPresentDays,
         lateCount: totalLateDays,
-        absentCount: totalAbsentDays,
+        absentCount: totalAbsentOccurrences,
         missingOutCount: totalMissingOutDays,
         totalRenderedHours: roundedTotalHours,
         avgDailyHours,
         attendanceRate,
-        totalLateMinutes
+        absenceRate,
+        totalLateMinutes,
+        uniqueAbsentEmployees,
+        repeatedAbsenceEmployeesCount,
+        totalEligibleWorkdays
       },
       dailyTrend: dayTrends,
+      weeklyTrend,
+      monthlyTrend,
+      departmentDistribution,
+      topAbsentEmployees,
+      absentRecords: allAbsentRecords,
       statusBreakdown,
       topLateEmployees,
       missingOutItems,
