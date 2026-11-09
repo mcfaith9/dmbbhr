@@ -277,6 +277,13 @@ function getWeekKeyAndLabel(dObj: Date): { key: string; label: string } {
   return { key: weekKey, label }
 }
 
+/**
+ * Normalizes biometric IDs and employee numbers for bulletproof lookup
+ */
+function cleanBioKey(id?: string | null): string {
+  return String(id || '').replace(/^emp[-_]/i, '').trim().toLowerCase()
+}
+
 export const reportsService = {
   /**
    * Generates aggregated HR attendance report summary for the requested filter
@@ -285,10 +292,14 @@ export const reportsService = {
     const { preset, startDate, endDate, location = 'all', workGroupId = 'all', employeeBioId = 'all', department = 'all' } = filters
     const { start, end, label } = resolveDateRange(preset, startDate, endDate)
 
+    const todayStr = getManilaDateString(new Date())
+    const isSingleToday = start === todayStr && end === todayStr
+    const effectiveTtl = isSingleToday ? 10_000 : CACHE_TTL_MS
+
     const cacheKey = `${start}_${end}_${location}_${workGroupId}_${employeeBioId}_${department}`
     if (!forceRefresh && reportCache.has(cacheKey)) {
       const cached = reportCache.get(cacheKey)!
-      if (Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      if (Date.now() - cached.timestamp < effectiveTtl) {
         return cached.data
       }
     }
@@ -320,10 +331,19 @@ export const reportsService = {
         .catch(() => [])
     ])
 
+    // Build employee department map for bulletproof record filtering
+    const employeeDeptMap = new Map<string, string>()
+    for (const e of allEmployees) {
+      const dept = e.department || ''
+      employeeDeptMap.set(e.biometric_user_id, dept)
+      employeeDeptMap.set(cleanBioKey(e.biometric_user_id), dept)
+      employeeDeptMap.set(cleanBioKey(e.employee_number), dept)
+    }
+
     // Filter employees by department and bioId if specified
     const scopedEmployees = allEmployees.filter(emp => {
       if (department !== 'all' && emp.department !== department) return false
-      if (bioFilter && emp.biometric_user_id !== bioFilter) return false
+      if (bioFilter && cleanBioKey(emp.biometric_user_id) !== cleanBioKey(bioFilter)) return false
       return true
     })
 
@@ -367,6 +387,7 @@ export const reportsService = {
       const dayOfWeek = dObj.getUTCDay()
       const isSunday = dayOfWeek === 0
       const isHoliday = holidayDateSet.has(dStr)
+      const isToday = dStr === todayStr
 
       // Map of attendees with actual check-in for this day
       const attendedBioIds = new Set<string>()
@@ -387,14 +408,27 @@ export const reportsService = {
           continue
         }
 
-        // Apply department filter to record
-        if (department !== 'all' && r.department !== department) {
+        // Apply department filter to record using canonical employee department
+        const empDept = employeeDeptMap.get(cleanBioKey(r.biometric_user_id)) || r.department || ''
+        if (department !== 'all' && empDept !== department) {
           continue
         }
 
-        const hasAttended = Boolean(r.actual_in && !r.actual_in.startsWith('Missing') && r.actual_in !== '—')
-        if (hasAttended) {
+        // Attendance classification:
+        // An employee is considered to have attended (PRESENT) if:
+        // 1. actual_in has a valid recorded arrival time and is not missing/dash, OR
+        // 2. valid_punches_count > 0 or raw_punches_count > 0, OR
+        // 3. status indicates presence / manual adjustment / awaiting OUT
+        // CRITICAL: An employee with an IN punch on Today (shift in progress) or historical must NEVER count as absent.
+        const hasInPunch = Boolean(
+          (r.actual_in && !r.actual_in.startsWith('Missing') && r.actual_in !== '—' && r.actual_in !== '-') ||
+          (r.status === 'Awaiting OUT' || r.status.includes('Present') || r.status.includes('Late') || r.status.includes('Manual Time') || r.status.includes('Regular Day')) ||
+          ((r.valid_punches_count || 0) > 0 && !r.status?.toLowerCase().includes('absent'))
+        )
+
+        if (hasInPunch) {
           attendedBioIds.add(r.biometric_user_id)
+          attendedBioIds.add(cleanBioKey(r.biometric_user_id))
           dayPresent++
           dayHours += r.total_hours_decimal || 0
 
@@ -424,13 +458,14 @@ export const reportsService = {
           if (isMissingOut) {
             dayMissingOut++
             if (missingOutItems.length < 15) {
+              const displayStatus = isToday ? 'Present / In Progress' : r.status
               missingOutItems.push({
                 bioId: r.biometric_user_id,
                 name: r.employee_name,
                 date: r.date,
                 timeIn: r.actual_in,
                 workGroupName: r.work_group_name,
-                status: r.status
+                status: displayStatus
               })
             }
           }
@@ -478,7 +513,12 @@ export const reportsService = {
           totalEligibleWorkdays++
 
           // Check if employee had attendance
-          const attended = attendedBioIds.has(emp.biometric_user_id)
+          const empBio = emp.biometric_user_id
+          const empClean = cleanBioKey(emp.biometric_user_id)
+          const empNum = cleanBioKey(emp.employee_number)
+          const empId = cleanBioKey(emp.id)
+
+          const attended = attendedBioIds.has(empBio) || attendedBioIds.has(empClean) || attendedBioIds.has(empNum) || attendedBioIds.has(empId)
           if (!attended) {
             dayAbsent++
 
@@ -666,38 +706,75 @@ export const reportsService = {
       : (totalPotential > 0 ? Number(((totalAbsentOccurrences / totalPotential) * 100).toFixed(1)) : 0)
 
     // Status breakdown percentages
-    const onTimeCount = Math.max(0, totalPresentDays - totalLateDays)
-    const breakdownTotal = (onTimeCount + totalLateDays + totalMissingOutDays + totalAbsentOccurrences) || 1
+    const inProgressCount = isSingleToday && dailyRecordsArrays[0]
+      ? dailyRecordsArrays[0].filter(r => {
+          const hasIn = Boolean(r.actual_in && !r.actual_in.startsWith('Missing') && r.actual_in !== '—' && r.actual_in !== '-')
+          return hasIn && (!r.has_valid_out || r.status === 'Awaiting OUT')
+        }).length
+      : 0
 
-    const statusBreakdown: AttendanceStatusBreakdown[] = [
-      {
-        label: 'Present (On-Time)',
-        count: onTimeCount,
-        percentage: Math.round((onTimeCount / breakdownTotal) * 100),
-        color: '#10b981' // emerald-500
-      },
-      {
-        label: 'Late Arrival',
-        count: totalLateDays,
-        percentage: Math.round((totalLateDays / breakdownTotal) * 100),
-        color: '#f59e0b' // amber-500
-      },
-      {
-        label: 'Missing OUT',
-        count: totalMissingOutDays,
-        percentage: Math.round((totalMissingOutDays / breakdownTotal) * 100),
-        color: '#6366f1' // indigo-500
-      },
-      {
-        label: 'Absent',
-        count: totalAbsentOccurrences,
-        percentage: Math.round((totalAbsentOccurrences / breakdownTotal) * 100),
-        color: '#ef4444' // red-500
-      }
-    ]
+    const onTimeCount = Math.max(0, totalPresentDays - totalLateDays - inProgressCount)
+    const breakdownTotal = (onTimeCount + inProgressCount + totalLateDays + totalAbsentOccurrences) || 1
+
+    const statusBreakdown: AttendanceStatusBreakdown[] = isSingleToday && inProgressCount > 0
+      ? [
+          {
+            label: 'Present (Completed)',
+            count: onTimeCount,
+            percentage: Math.round((onTimeCount / breakdownTotal) * 100),
+            color: '#10b981' // emerald-500
+          },
+          {
+            label: 'Present / In Progress',
+            count: inProgressCount,
+            percentage: Math.round((inProgressCount / breakdownTotal) * 100),
+            color: '#3b82f6' // blue-500
+          },
+          {
+            label: 'Late Arrival',
+            count: totalLateDays,
+            percentage: Math.round((totalLateDays / breakdownTotal) * 100),
+            color: '#f59e0b' // amber-500
+          },
+          {
+            label: 'Absent',
+            count: totalAbsentOccurrences,
+            percentage: Math.round((totalAbsentOccurrences / breakdownTotal) * 100),
+            color: '#ef4444' // red-500
+          }
+        ]
+      : [
+          {
+            label: 'Present (On-Time)',
+            count: onTimeCount,
+            percentage: Math.round((onTimeCount / breakdownTotal) * 100),
+            color: '#10b981' // emerald-500
+          },
+          {
+            label: 'Late Arrival',
+            count: totalLateDays,
+            percentage: Math.round((totalLateDays / breakdownTotal) * 100),
+            color: '#f59e0b' // amber-500
+          },
+          ...(totalMissingOutDays > 0 ? [{
+            label: 'Missing OUT',
+            count: totalMissingOutDays,
+            percentage: Math.round((totalMissingOutDays / breakdownTotal) * 100),
+            color: '#6366f1' // indigo-500
+          }] : []),
+          {
+            label: 'Absent',
+            count: totalAbsentOccurrences,
+            percentage: Math.round((totalAbsentOccurrences / breakdownTotal) * 100),
+            color: '#ef4444' // red-500
+          }
+        ]
 
     // Construct concise HR insights
     const insights: string[] = []
+    if (isSingleToday && inProgressCount > 0) {
+      insights.push(`${inProgressCount} employee shift${inProgressCount > 1 ? 's are' : ' is'} currently in progress (clocked IN, awaiting OUT). Classified as Present.`)
+    }
     if (totalAbsentOccurrences > 0) {
       insights.push(`${totalAbsentOccurrences} total absence occurrence${totalAbsentOccurrences > 1 ? 's' : ''} across ${uniqueAbsentEmployees} unique employee${uniqueAbsentEmployees > 1 ? 's' : ''} (${absenceRate}% absence rate; resigned employees accurately excluded based on effective separation dates).`)
     } else {

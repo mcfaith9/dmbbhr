@@ -63,7 +63,7 @@ import * as XLSX from 'xlsx'
 const router = useRouter()
 
 // Filter State
-const selectedPreset = ref<DateRangePreset>('this_month')
+const selectedPreset = ref<DateRangePreset>('today')
 const customStartDate = ref('')
 const customEndDate = ref('')
 const selectedLocation = ref('all')
@@ -706,10 +706,10 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
             </div>
           </div>
 
-          <!-- KPI 4: Missing OUT -->
+          <!-- KPI 4: Missing OUT / Active Shifts -->
           <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs space-y-2 hover:border-indigo-500/40 transition-colors">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground">Missing OUT</span>
+              <span class="text-xs font-medium text-muted-foreground">{{ selectedPreset === 'today' ? 'Awaiting OUT / In Progress' : 'Missing OUT' }}</span>
               <div class="size-7 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
                 <FileQuestion class="size-4" />
               </div>
@@ -719,7 +719,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                 {{ reportData.kpis.missingOutCount }}
               </div>
               <div class="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">
-                Awaiting / no shift exit
+                {{ selectedPreset === 'today' ? 'Active shifts awaiting exit' : 'Awaiting / no shift exit' }}
               </div>
             </div>
           </div>
@@ -923,10 +923,10 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
               <div>
                 <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
                   <FileQuestion class="size-3.5 text-indigo-500" />
-                  <span>Missing OUT Monitoring</span>
+                  <span>{{ selectedPreset === 'today' ? 'Active Shifts & Missing OUT' : 'Missing OUT Monitoring' }}</span>
                 </h3>
                 <p class="text-[11px] text-muted-foreground">
-                  Incomplete shift records requiring employee manual adjustment or HR resolution.
+                  {{ selectedPreset === 'today' ? 'Active shifts awaiting exit punch, or records requiring manual adjustment.' : 'Incomplete shift records requiring employee manual adjustment or HR resolution.' }}
                 </p>
               </div>
 
