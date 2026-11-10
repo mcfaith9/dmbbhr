@@ -31,10 +31,8 @@ import {
   Move,
   Palette,
   Gauge,
-  Maximize2,
-  Eye
+  Maximize2
 } from '@lucide/vue'
-import PunchDisplayTicker from '@/components/PunchDisplayTicker.vue'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { punchDisplayService } from '@/services/punchDisplay'
 import { punchVoiceService } from '@/services/punchVoiceService'
@@ -892,38 +890,6 @@ onMounted(() => {
                   @update:model-value="updateTickerSettings({ enabled: $event })"
                 />
               </div>
-            </div>
-          </div>
-
-          <!-- Live Interactive Preview Box (Constrained to prevent any horizontal overflow) -->
-          <div class="rounded-xl border bg-zinc-950 p-3 sm:p-4 text-zinc-100 space-y-2.5 shadow-inner w-full max-w-full min-w-0 overflow-hidden">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs text-zinc-400 pb-1.5 border-b border-zinc-800/80">
-              <div class="flex items-center gap-2 flex-wrap">
-                <Eye class="size-3.5 text-primary shrink-0" />
-                <span class="font-bold tracking-wide text-zinc-200">Live Kiosk Ticker Preview</span>
-                <span class="text-[10px] font-mono text-zinc-400">
-                  ({{ tickerSettings.speed.toUpperCase() }} SPEED • {{ tickerSettings.widthMode.toUpperCase() }} WIDTH)
-                </span>
-              </div>
-              <div class="flex items-center gap-1.5 font-mono text-[10px] text-zinc-400 flex-wrap">
-                <span>V: {{ tickerSettings.positionVertical }}</span>
-                <span>•</span>
-                <span>H: {{ tickerSettings.positionHorizontal }}</span>
-                <span>•</span>
-                <span>Height: {{ tickerSettings.height }}px</span>
-              </div>
-            </div>
-
-            <!-- Ticker Component Mounted in Preview Mode (Strictly Clamped to Preview Container) -->
-            <div class="w-full max-w-full overflow-hidden relative rounded-lg border border-zinc-800/80 bg-zinc-900/50 py-2.5 px-2 flex items-center justify-center min-h-[58px] [&_.news-ticker-overlay]:!w-full [&_.news-ticker-overlay]:!max-w-full [&_.news-ticker-overlay]:!left-0 [&_.news-ticker-overlay]:!right-0">
-              <PunchDisplayTicker :is-settings-preview="true" />
-            </div>
-
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-zinc-400">
-              <span>✦ Hover over preview to test pause-on-hover behavior. All style adjustments update instantly across connected kiosk windows.</span>
-              <span v-if="tickerSettings.editMode" class="text-amber-400 font-semibold animate-pulse shrink-0">
-                Drag Mode ACTIVE on Punch Display
-              </span>
             </div>
           </div>
 

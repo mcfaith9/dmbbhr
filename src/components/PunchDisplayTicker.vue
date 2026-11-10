@@ -102,13 +102,30 @@ function getRgbaColor(hex: string, opacity: number): string {
 // Compute style for the container based on presets or custom offsets
 const containerStyle = computed(() => {
   const s = tickerSettings.value
+
+  // When rendering in Settings Preview:
+  // Must be strictly constrained to 100% of the settings container with zero overflow.
+  if (props.isSettingsPreview) {
+    return {
+      position: 'relative',
+      width: '100%',
+      maxWidth: '100%',
+      minWidth: '0',
+      overflow: 'hidden',
+      zIndex: '1',
+      userSelect: 'none',
+      boxSizing: 'border-box'
+    }
+  }
+
+  // When rendering in live Punch Display kiosk mode (1920x1080):
   const style: Record<string, string> = {
-    position: props.isSettingsPreview ? 'relative' : 'fixed',
-    zIndex: props.isSettingsPreview ? '10' : '9999',
+    position: 'fixed',
+    zIndex: '9999',
     userSelect: isDragging.value ? 'none' : 'auto'
   }
 
-  // Width and layout
+  // Width and layout on actual display
   if (s.widthMode === 'full') {
     style.width = '100vw'
     style.maxWidth = '100vw'
@@ -123,35 +140,32 @@ const containerStyle = computed(() => {
     style.maxWidth = '98vw'
   }
 
-  // When not in Settings preview, handle fixed screen placement
-  if (!props.isSettingsPreview) {
-    if (s.positionVertical === 'custom' || s.positionHorizontal === 'custom') {
-      style.top = `${s.offsetY}px`
-      style.left = `${s.offsetX}px`
+  if (s.positionVertical === 'custom' || s.positionHorizontal === 'custom') {
+    style.top = `${s.offsetY}px`
+    style.left = `${s.offsetX}px`
+    style.transform = 'none'
+  } else {
+    // Horizontal positioning
+    if (s.positionHorizontal === 'center') {
+      style.left = '50%'
+      style.transform = 'translateX(-50%)'
+    } else if (s.positionHorizontal === 'left') {
+      style.left = `${Math.max(0, s.offsetX || 16)}px`
       style.transform = 'none'
-    } else {
-      // Horizontal positioning
-      if (s.positionHorizontal === 'center') {
-        style.left = '50%'
-        style.transform = 'translateX(-50%)'
-      } else if (s.positionHorizontal === 'left') {
-        style.left = `${Math.max(0, s.offsetX || 16)}px`
-        style.transform = 'none'
-      } else if (s.positionHorizontal === 'right') {
-        style.right = `${Math.max(0, -(s.offsetX || 0) || 16)}px`
-        style.transform = 'none'
-      }
+    } else if (s.positionHorizontal === 'right') {
+      style.right = `${Math.max(0, -(s.offsetX || 0) || 16)}px`
+      style.transform = 'none'
+    }
 
-      // Vertical positioning
-      if (s.positionVertical === 'top') {
-        style.top = `${s.offsetY}px`
-      } else if (s.positionVertical === 'middle') {
-        style.top = `calc(50% + ${s.offsetY}px)`
-        style.transform = s.positionHorizontal === 'center' ? 'translate(-50%, -50%)' : 'translateY(-50%)'
-      } else {
-        // 'bottom' default
-        style.bottom = `${Math.max(0, -(s.offsetY || 0))}px`
-      }
+    // Vertical positioning
+    if (s.positionVertical === 'top') {
+      style.top = `${s.offsetY}px`
+    } else if (s.positionVertical === 'middle') {
+      style.top = `calc(50% + ${s.offsetY}px)`
+      style.transform = s.positionHorizontal === 'center' ? 'translate(-50%, -50%)' : 'translateY(-50%)'
+    } else {
+      // 'bottom' default
+      style.bottom = `${Math.max(0, -(s.offsetY || 0))}px`
     }
   }
 
@@ -161,6 +175,40 @@ const containerStyle = computed(() => {
 // Bar styling (colors, height, borders)
 const barStyle = computed(() => {
   const s = tickerSettings.value
+
+  // When rendering in Settings Preview:
+  if (props.isSettingsPreview) {
+    let previewWidth = '100%'
+    if (s.widthMode === 'boxed') {
+      previewWidth = '92%'
+    } else if (s.widthMode === 'custom') {
+      // Proportional visual representation scaled against 1920px kiosk width
+      const ratio = Math.max(0.45, Math.min(1.0, s.customWidth / 1920))
+      previewWidth = `${Math.round(ratio * 100)}%`
+    }
+
+    // Compact height scaled for settings panel (34px to 48px max)
+    const previewHeight = Math.max(34, Math.min(48, Math.round(s.height * 0.75)))
+    const previewRadius = s.widthMode === 'full' ? 0 : Math.min(16, s.borderRadius)
+
+    return {
+      width: previewWidth,
+      maxWidth: '100%',
+      minWidth: '0',
+      margin: '0 auto',
+      height: `${previewHeight}px`,
+      borderRadius: `${previewRadius}px`,
+      backgroundColor: getRgbaColor(s.backgroundColor, s.backgroundOpacity),
+      color: s.textColor,
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+      borderTop: `1px solid ${s.accentColor}33`,
+      borderBottom: `1px solid ${s.accentColor}33`,
+      backdropFilter: 'blur(8px)',
+      boxSizing: 'border-box' as const
+    }
+  }
+
+  // Actual display mode on kiosk:
   return {
     height: `${s.height}px`,
     borderRadius: s.widthMode === 'full' ? '0px' : `${s.borderRadius}px`,
@@ -171,6 +219,16 @@ const barStyle = computed(() => {
     borderBottom: `1px solid ${s.accentColor}33`,
     backdropFilter: 'blur(8px)'
   }
+})
+
+// Scaled font size for compact preview
+const effectiveFontSize = computed(() => {
+  const s = tickerSettings.value
+  if (props.isSettingsPreview) {
+    // Compact preview scaling for settings panel (between 11px and 14px)
+    return Math.max(11, Math.min(14, Math.round(s.fontSize * 0.72)))
+  }
+  return s.fontSize
 })
 
 // Marquee speed duration
@@ -320,13 +378,14 @@ onUnmounted(() => {
   <div
     v-if="isVisible"
     ref="tickerBarRef"
-    class="news-ticker-overlay group transition-shadow select-none"
+    class="news-ticker-overlay group transition-shadow select-none max-w-full"
     :class="[
-      tickerSettings.editMode && !isSettingsPreview ? 'ring-2 ring-primary ring-offset-2 ring-offset-black/60 cursor-move' : ''
+      tickerSettings.editMode && !isSettingsPreview ? 'ring-2 ring-primary ring-offset-2 ring-offset-black/60 cursor-move' : '',
+      isSettingsPreview ? 'w-full min-w-0 overflow-hidden' : ''
     ]"
     :style="containerStyle"
-    @mousedown="tickerSettings.editMode ? startDrag($event) : undefined"
-    @touchstart="tickerSettings.editMode ? startDrag($event) : undefined"
+    @mousedown="tickerSettings.editMode && !isSettingsPreview ? startDrag($event) : undefined"
+    @touchstart="tickerSettings.editMode && !isSettingsPreview ? startDrag($event) : undefined"
   >
     <!-- Admin Edit Handle Toolbar (Visible in Edit Mode on Punch Display) -->
     <div
@@ -388,24 +447,26 @@ onUnmounted(() => {
 
     <!-- Main Ticker Bar -->
     <div
-      class="w-full flex items-center overflow-hidden relative"
+      class="w-full max-w-full min-w-0 flex items-center overflow-hidden relative"
       :style="barStyle"
     >
       <!-- Optional Prefix Badge / Icon -->
       <div
         v-if="tickerSettings.showBadge || tickerSettings.showIcon"
-        class="flex-shrink-0 h-full flex items-center gap-2 px-3.5 sm:px-4 z-20 shadow-md"
+        class="flex-shrink-0 h-full flex items-center z-20 shadow-md select-none"
+        :class="isSettingsPreview ? 'gap-1.5 px-2.5' : 'gap-2 px-3.5 sm:px-4'"
         :style="{
           backgroundColor: tickerSettings.accentColor,
           color: '#ffffff'
         }"
       >
         <div v-if="tickerSettings.showIcon" class="flex items-center justify-center">
-          <Megaphone class="size-4.5 animate-bounce" />
+          <Megaphone :class="isSettingsPreview ? 'size-3.5' : 'size-4.5 animate-bounce'" />
         </div>
         <span
           v-if="tickerSettings.showBadge && tickerSettings.badgeText"
-          class="text-xs sm:text-sm font-extrabold tracking-wider uppercase whitespace-nowrap"
+          class="font-extrabold tracking-wider uppercase whitespace-nowrap"
+          :class="isSettingsPreview ? 'text-[10px]' : 'text-xs sm:text-sm'"
         >
           {{ tickerSettings.badgeText }}
         </span>
@@ -413,7 +474,7 @@ onUnmounted(() => {
 
       <!-- Marquee Track Wrapper -->
       <div
-        class="flex-1 overflow-hidden relative flex items-center h-full"
+        class="flex-1 min-w-0 overflow-hidden relative flex items-center h-full"
         :class="[tickerSettings.pauseOnHover ? 'hover:[&_.marquee-content]:[animation-play-state:paused]' : '']"
       >
         <!-- Continuous Smooth Marquee Track (Repeated twice to create infinite right-to-left loop) -->
@@ -424,16 +485,17 @@ onUnmounted(() => {
           }"
         >
           <!-- Loop Instance 1 -->
-          <div class="marquee-content flex items-center shrink-0 pr-8">
+          <div class="marquee-content flex items-center shrink-0 pr-6">
             <template v-for="(item, idx) in displayAnnouncements" :key="`t1-${item.id}-${idx}`">
               <div
-                class="inline-flex items-center gap-2.5 px-4"
-                :style="{ fontSize: `${tickerSettings.fontSize}px` }"
-                :class="fontClass"
+                class="inline-flex items-center"
+                :class="[fontClass, isSettingsPreview ? 'gap-1.5 px-2' : 'gap-2.5 px-4']"
+                :style="{ fontSize: `${effectiveFontSize}px` }"
               >
                 <!-- Title Pill / Accent -->
                 <span
-                  class="font-black uppercase tracking-wide opacity-95 px-1.5 py-0.5 rounded text-[0.88em]"
+                  class="font-black uppercase tracking-wide opacity-95 rounded"
+                  :class="isSettingsPreview ? 'px-1 py-0.5 text-[9px]' : 'px-1.5 py-0.5 text-[0.88em]'"
                   :style="{
                     backgroundColor: `${tickerSettings.accentColor}25`,
                     color: tickerSettings.accentColor
@@ -458,7 +520,8 @@ onUnmounted(() => {
 
               <!-- Separator Glyph -->
               <span
-                class="inline-block px-3 opacity-60 text-sm select-none"
+                class="inline-block opacity-60 select-none"
+                :class="isSettingsPreview ? 'px-2 text-xs' : 'px-3 text-sm'"
                 :style="{ color: tickerSettings.accentColor }"
               >
                 {{ tickerSettings.separator || '✦' }}
@@ -467,15 +530,16 @@ onUnmounted(() => {
           </div>
 
           <!-- Loop Instance 2 (Seamless loop repeat) -->
-          <div class="marquee-content flex items-center shrink-0 pr-8" aria-hidden="true">
+          <div class="marquee-content flex items-center shrink-0 pr-6" aria-hidden="true">
             <template v-for="(item, idx) in displayAnnouncements" :key="`t2-${item.id}-${idx}`">
               <div
-                class="inline-flex items-center gap-2.5 px-4"
-                :style="{ fontSize: `${tickerSettings.fontSize}px` }"
-                :class="fontClass"
+                class="inline-flex items-center"
+                :class="[fontClass, isSettingsPreview ? 'gap-1.5 px-2' : 'gap-2.5 px-4']"
+                :style="{ fontSize: `${effectiveFontSize}px` }"
               >
                 <span
-                  class="font-black uppercase tracking-wide opacity-95 px-1.5 py-0.5 rounded text-[0.88em]"
+                  class="font-black uppercase tracking-wide opacity-95 rounded"
+                  :class="isSettingsPreview ? 'px-1 py-0.5 text-[9px]' : 'px-1.5 py-0.5 text-[0.88em]'"
                   :style="{
                     backgroundColor: `${tickerSettings.accentColor}25`,
                     color: tickerSettings.accentColor
@@ -494,7 +558,8 @@ onUnmounted(() => {
                 </span>
               </div>
               <span
-                class="inline-block px-3 opacity-60 text-sm select-none"
+                class="inline-block opacity-60 select-none"
+                :class="isSettingsPreview ? 'px-2 text-xs' : 'px-3 text-sm'"
                 :style="{ color: tickerSettings.accentColor }"
               >
                 {{ tickerSettings.separator || '✦' }}
