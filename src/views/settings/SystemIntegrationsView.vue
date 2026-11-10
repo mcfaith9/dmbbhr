@@ -27,12 +27,23 @@ import {
   Plus,
   Pencil,
   Play,
-  RotateCcw
+  RotateCcw,
+  Move,
+  Palette,
+  Gauge,
+  Maximize2,
+  Eye
 } from '@lucide/vue'
+import PunchDisplayTicker from '@/components/PunchDisplayTicker.vue'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { punchDisplayService } from '@/services/punchDisplay'
 import { punchVoiceService } from '@/services/punchVoiceService'
-import { announcementService, type AnnouncementItem, type AnnouncementType } from '@/services/announcements'
+import {
+  announcementService,
+  type AnnouncementItem,
+  type AnnouncementType,
+  type TickerSettings
+} from '@/services/announcements'
 import { hrNoticeService, isNoticeActive } from '@/services/hrNotices'
 import HrNoticeManagerDialog from '@/components/HrNoticeManagerDialog.vue'
 import { authService } from '@/services/auth'
@@ -114,6 +125,22 @@ function clearLateGraphic() {
 
 // Announcements management & dialog form state
 const announcementsList = announcementService.announcements
+const tickerSettings = computed(() => announcementService.tickerSettings.value)
+
+function updateTickerSettings(updates: Partial<TickerSettings>) {
+  announcementService.saveTickerSettings(updates)
+}
+
+function resetTickerSettings() {
+  announcementService.resetTickerSettings()
+}
+
+function toggleTickerEditMode() {
+  announcementService.saveTickerSettings({
+    editMode: !tickerSettings.value.editMode
+  })
+}
+
 const isFormDialogOpen = ref(false)
 const editingAnnouncementId = ref<string | null>(null)
 const formType = ref<AnnouncementType>('announcement')
@@ -803,13 +830,453 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- 6. Announcements & Reminders Management Section -->
+        <!-- 6. Floating News Ticker & Announcement Overlay Configuration -->
+        <div class="p-4 sm:p-5 rounded-xl border bg-card space-y-5 shadow-2xs">
+          <!-- Header & Master Switch -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+            <div class="space-y-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <Radio class="size-4 text-primary animate-pulse" />
+                <Label class="text-sm font-bold text-foreground">Floating News Ticker / Announcement Overlay</Label>
+                <Badge
+                  :variant="tickerSettings.enabled ? 'outline' : 'secondary'"
+                  class="text-[10px] font-mono px-1.5 py-0"
+                  :class="tickerSettings.enabled ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10' : 'text-muted-foreground'"
+                >
+                  {{ tickerSettings.enabled ? 'ACTIVE ON DISPLAY' : 'DISABLED' }}
+                </Badge>
+                <Badge variant="outline" class="text-[10px] font-mono px-1.5 py-0 border-primary/30 text-primary">
+                  Z-INDEX: 9999 (TOPMOST)
+                </Badge>
+              </div>
+              <p class="text-xs text-muted-foreground">
+                Continuous right-to-left scrolling banner floating above attendance popups and dialogs on the Punch Display terminal.
+              </p>
+            </div>
+
+            <!-- Master Toggle & Quick Action Buttons -->
+            <div class="flex items-center gap-2.5 flex-wrap shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 gap-1.5 text-xs cursor-pointer font-medium"
+                :class="tickerSettings.editMode ? 'border-primary text-primary bg-primary/10' : ''"
+                title="Toggle interactive drag handles and coordinate snap on the Punch Display"
+                @click="toggleTickerEditMode"
+              >
+                <Move class="size-3.5" />
+                <span>{{ tickerSettings.editMode ? 'Lock Ticker Position' : 'Reposition on Display' }}</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 gap-1.5 text-xs cursor-pointer text-muted-foreground hover:text-foreground"
+                title="Reset ticker appearance and position to factory defaults"
+                @click="resetTickerSettings"
+              >
+                <RotateCcw class="size-3.5" />
+                <span>Reset Defaults</span>
+              </Button>
+
+              <div class="flex items-center gap-2 px-3 py-1 rounded-lg bg-muted/30 border">
+                <Label for="ticker-master-switch" class="text-xs font-semibold select-none cursor-pointer">
+                  Master Ticker
+                </Label>
+                <Switch
+                  id="ticker-master-switch"
+                  :model-value="tickerSettings.enabled"
+                  @update:model-value="updateTickerSettings({ enabled: $event })"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Interactive Preview Box -->
+          <div class="rounded-xl border bg-zinc-950 p-3 sm:p-4 text-zinc-100 space-y-2 shadow-inner overflow-hidden">
+            <div class="flex items-center justify-between text-xs text-zinc-400 pb-1 border-b border-zinc-800">
+              <div class="flex items-center gap-2">
+                <Eye class="size-3.5 text-primary" />
+                <span class="font-bold tracking-wide text-zinc-300">Live Kiosk Ticker Preview</span>
+                <span class="text-[10px] font-mono text-zinc-500">
+                  ({{ tickerSettings.speed.toUpperCase() }} SPEED • {{ tickerSettings.widthMode.toUpperCase() }} WIDTH)
+                </span>
+              </div>
+              <div class="flex items-center gap-2 font-mono text-[10px] text-zinc-400">
+                <span>V: {{ tickerSettings.positionVertical }}</span>
+                <span>•</span>
+                <span>H: {{ tickerSettings.positionHorizontal }}</span>
+                <span>•</span>
+                <span>Height: {{ tickerSettings.height }}px</span>
+              </div>
+            </div>
+
+            <!-- Ticker Component Mounted in Preview Mode -->
+            <div class="py-2 overflow-hidden flex items-center justify-center min-h-[64px] bg-zinc-900/40 rounded-lg border border-zinc-800/80">
+              <PunchDisplayTicker :is-settings-preview="true" />
+            </div>
+
+            <p class="text-[11px] text-zinc-400 flex items-center justify-between">
+              <span>✦ Hover over preview to test pause-on-hover behavior. All style adjustments update instantly across connected kiosk windows.</span>
+              <span v-if="tickerSettings.editMode" class="text-amber-400 font-medium animate-pulse">
+                Drag Mode ACTIVE on Punch Display
+              </span>
+            </p>
+          </div>
+
+          <!-- Ticker Customization Controls Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <!-- 1. Position & Placement -->
+            <div class="p-3.5 rounded-xl border bg-muted/15 space-y-3 flex flex-col justify-between">
+              <div class="space-y-2.5">
+                <div class="flex items-center gap-1.5 font-bold text-foreground">
+                  <Move class="size-3.5 text-primary" />
+                  <span>Position & Alignment</span>
+                </div>
+
+                <!-- Vertical Position Presets -->
+                <div class="space-y-1">
+                  <span class="text-[11px] text-muted-foreground font-medium">Vertical Screen Position</span>
+                  <div class="grid grid-cols-3 gap-1">
+                    <Button
+                      v-for="pos in (['top', 'middle', 'bottom'] as const)"
+                      :key="pos"
+                      type="button"
+                      size="sm"
+                      class="h-7 text-[11px] font-medium capitalize"
+                      :variant="tickerSettings.positionVertical === pos ? 'default' : 'outline'"
+                      @click="updateTickerSettings({ positionVertical: pos, offsetY: 0 })"
+                    >
+                      {{ pos }}
+                    </Button>
+                  </div>
+                </div>
+
+                <!-- Horizontal Alignment Presets -->
+                <div class="space-y-1">
+                  <span class="text-[11px] text-muted-foreground font-medium">Horizontal Alignment</span>
+                  <div class="grid grid-cols-3 gap-1">
+                    <Button
+                      v-for="align in (['left', 'center', 'right'] as const)"
+                      :key="align"
+                      type="button"
+                      size="sm"
+                      class="h-7 text-[11px] font-medium capitalize"
+                      :variant="tickerSettings.positionHorizontal === align ? 'default' : 'outline'"
+                      @click="updateTickerSettings({ positionHorizontal: align, offsetX: 0 })"
+                    >
+                      {{ align }}
+                    </Button>
+                  </div>
+                </div>
+
+                <!-- Fine Coordinate Adjustments -->
+                <div class="grid grid-cols-2 gap-2 pt-1 border-t">
+                  <div class="space-y-1">
+                    <span class="text-[11px] text-muted-foreground font-medium">Offset X (px)</span>
+                    <Input
+                      type="number"
+                      class="h-7 text-xs font-mono"
+                      :model-value="tickerSettings.offsetX"
+                      @input="updateTickerSettings({ offsetX: Number(($event.target as HTMLInputElement).value || 0) })"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <span class="text-[11px] text-muted-foreground font-medium">Offset Y (px)</span>
+                    <Input
+                      type="number"
+                      class="h-7 text-xs font-mono"
+                      :model-value="tickerSettings.offsetY"
+                      @input="updateTickerSettings({ offsetY: Number(($event.target as HTMLInputElement).value || 0) })"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="text-[10px] text-muted-foreground bg-muted/40 p-2 rounded-lg border">
+                💡 Tip: Click <strong>"Reposition on Display"</strong> above to freely drag and snap the ticker on your 1920×1080 display.
+              </div>
+            </div>
+
+            <!-- 2. Dimensions & Sizing -->
+            <div class="p-3.5 rounded-xl border bg-muted/15 space-y-3 flex flex-col justify-between">
+              <div class="space-y-2.5">
+                <div class="flex items-center gap-1.5 font-bold text-foreground">
+                  <Maximize2 class="size-3.5 text-primary" />
+                  <span>Dimensions & Layout</span>
+                </div>
+
+                <!-- Width Mode -->
+                <div class="space-y-1">
+                  <span class="text-[11px] text-muted-foreground font-medium">Width Layout</span>
+                  <div class="grid grid-cols-3 gap-1">
+                    <Button
+                      v-for="wm in (['full', 'boxed', 'custom'] as const)"
+                      :key="wm"
+                      type="button"
+                      size="sm"
+                      class="h-7 text-[11px] font-medium capitalize"
+                      :variant="tickerSettings.widthMode === wm ? 'default' : 'outline'"
+                      @click="updateTickerSettings({ widthMode: wm })"
+                    >
+                      {{ wm }}
+                    </Button>
+                  </div>
+                </div>
+
+                <!-- Custom Width if active -->
+                <div v-if="tickerSettings.widthMode === 'custom'" class="space-y-1">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-muted-foreground font-medium">Custom Width</span>
+                    <span class="font-mono text-primary font-bold">{{ tickerSettings.customWidth }}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="320"
+                    max="1920"
+                    step="20"
+                    :value="tickerSettings.customWidth"
+                    class="w-full accent-primary cursor-pointer"
+                    @input="updateTickerSettings({ customWidth: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+
+                <!-- Bar Height -->
+                <div class="space-y-1">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-muted-foreground font-medium">Bar Height</span>
+                    <span class="font-mono text-primary font-bold">{{ tickerSettings.height }}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="32"
+                    max="96"
+                    step="2"
+                    :value="tickerSettings.height"
+                    class="w-full accent-primary cursor-pointer"
+                    @input="updateTickerSettings({ height: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+
+                <!-- Corner Radius -->
+                <div class="space-y-1">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-muted-foreground font-medium">Border Radius</span>
+                    <span class="font-mono text-primary font-bold">{{ tickerSettings.borderRadius }}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="36"
+                    step="2"
+                    :value="tickerSettings.borderRadius"
+                    class="w-full accent-primary cursor-pointer"
+                    @input="updateTickerSettings({ borderRadius: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. Appearance & Colors -->
+            <div class="p-3.5 rounded-xl border bg-muted/15 space-y-3 flex flex-col justify-between">
+              <div class="space-y-2.5">
+                <div class="flex items-center gap-1.5 font-bold text-foreground">
+                  <Palette class="size-3.5 text-primary" />
+                  <span>Colors & Visuals</span>
+                </div>
+
+                <!-- Background Color & Opacity -->
+                <div class="space-y-1">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-muted-foreground font-medium">Background Color & Opacity</span>
+                    <span class="font-mono text-foreground font-bold">
+                      {{ Math.round(tickerSettings.backgroundOpacity * 100) }}%
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="color"
+                      :value="tickerSettings.backgroundColor"
+                      class="size-7 rounded border border-border cursor-pointer bg-transparent p-0.5 shrink-0"
+                      @input="updateTickerSettings({ backgroundColor: ($event.target as HTMLInputElement).value })"
+                    />
+                    <Input
+                      type="text"
+                      class="h-7 text-xs font-mono flex-1 uppercase"
+                      :model-value="tickerSettings.backgroundColor"
+                      @input="updateTickerSettings({ backgroundColor: ($event.target as HTMLInputElement).value })"
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    :value="tickerSettings.backgroundOpacity"
+                    class="w-full accent-primary cursor-pointer mt-1"
+                    @input="updateTickerSettings({ backgroundOpacity: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+
+                <!-- Text & Accent Color -->
+                <div class="grid grid-cols-2 gap-2 pt-1 border-t">
+                  <div class="space-y-1">
+                    <span class="text-[11px] text-muted-foreground font-medium">Text Color</span>
+                    <div class="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        :value="tickerSettings.textColor"
+                        class="size-6 rounded border border-border cursor-pointer bg-transparent p-0.5 shrink-0"
+                        @input="updateTickerSettings({ textColor: ($event.target as HTMLInputElement).value })"
+                      />
+                      <Input
+                        type="text"
+                        class="h-6 text-[10px] font-mono uppercase px-1.5"
+                        :model-value="tickerSettings.textColor"
+                        @input="updateTickerSettings({ textColor: ($event.target as HTMLInputElement).value })"
+                      />
+                    </div>
+                  </div>
+                  <div class="space-y-1">
+                    <span class="text-[11px] text-muted-foreground font-medium">Accent Color</span>
+                    <div class="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        :value="tickerSettings.accentColor"
+                        class="size-6 rounded border border-border cursor-pointer bg-transparent p-0.5 shrink-0"
+                        @input="updateTickerSettings({ accentColor: ($event.target as HTMLInputElement).value })"
+                      />
+                      <Input
+                        type="text"
+                        class="h-6 text-[10px] font-mono uppercase px-1.5"
+                        :model-value="tickerSettings.accentColor"
+                        @input="updateTickerSettings({ accentColor: ($event.target as HTMLInputElement).value })"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Font Size & Weight -->
+                <div class="space-y-1 pt-1 border-t">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-muted-foreground font-medium">Font Size</span>
+                    <span class="font-mono text-primary font-bold">{{ tickerSettings.fontSize }}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="12"
+                    max="32"
+                    step="1"
+                    :value="tickerSettings.fontSize"
+                    class="w-full accent-primary cursor-pointer"
+                    @input="updateTickerSettings({ fontSize: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+
+                <div class="space-y-1">
+                  <span class="text-[11px] text-muted-foreground font-medium">Font Weight</span>
+                  <div class="grid grid-cols-3 gap-1">
+                    <Button
+                      v-for="fw in (['normal', 'semibold', 'bold'] as const)"
+                      :key="fw"
+                      type="button"
+                      size="sm"
+                      class="h-6 text-[10px] font-medium capitalize"
+                      :variant="tickerSettings.fontWeight === fw ? 'default' : 'outline'"
+                      @click="updateTickerSettings({ fontWeight: fw })"
+                    >
+                      {{ fw }}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Motion, Badges & Separator -->
+            <div class="p-3.5 rounded-xl border bg-muted/15 space-y-3 flex flex-col justify-between">
+              <div class="space-y-2.5">
+                <div class="flex items-center gap-1.5 font-bold text-foreground">
+                  <Gauge class="size-3.5 text-primary" />
+                  <span>Speed & Formatting</span>
+                </div>
+
+                <!-- Scrolling Speed -->
+                <div class="space-y-1">
+                  <span class="text-[11px] text-muted-foreground font-medium">Scrolling Speed</span>
+                  <div class="grid grid-cols-3 gap-1">
+                    <Button
+                      v-for="sp in (['slow', 'normal', 'fast'] as const)"
+                      :key="sp"
+                      type="button"
+                      size="sm"
+                      class="h-7 text-[11px] font-medium capitalize"
+                      :variant="tickerSettings.speed === sp ? 'default' : 'outline'"
+                      @click="updateTickerSettings({ speed: sp })"
+                    >
+                      {{ sp }}
+                    </Button>
+                  </div>
+                </div>
+
+                <!-- Pause on Hover -->
+                <div class="flex items-center justify-between p-2 rounded-lg bg-card border">
+                  <span class="text-[11px] font-medium text-foreground">Pause on Hover</span>
+                  <Switch
+                    :model-value="tickerSettings.pauseOnHover"
+                    @update:model-value="updateTickerSettings({ pauseOnHover: $event })"
+                  />
+                </div>
+
+                <!-- Badge Toggle & Text -->
+                <div class="space-y-1.5 pt-1 border-t">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-medium text-muted-foreground">Announcement Badge</span>
+                    <Switch
+                      :model-value="tickerSettings.showBadge"
+                      @update:model-value="updateTickerSettings({ showBadge: $event })"
+                    />
+                  </div>
+                  <Input
+                    v-if="tickerSettings.showBadge"
+                    type="text"
+                    placeholder="Badge Text"
+                    class="h-7 text-xs font-bold uppercase"
+                    :model-value="tickerSettings.badgeText"
+                    @input="updateTickerSettings({ badgeText: ($event.target as HTMLInputElement).value })"
+                  />
+                </div>
+
+                <!-- Icon & Separator Glyph -->
+                <div class="grid grid-cols-2 gap-2 pt-1 border-t">
+                  <div class="flex items-center justify-between p-1.5 rounded-lg bg-card border">
+                    <span class="text-[10px] font-medium text-muted-foreground">Show Icon</span>
+                    <Switch
+                      :model-value="tickerSettings.showIcon"
+                      @update:model-value="updateTickerSettings({ showIcon: $event })"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <span class="text-[10px] text-muted-foreground font-medium">Separator</span>
+                    <Input
+                      type="text"
+                      class="h-7 text-xs text-center font-bold"
+                      :model-value="tickerSettings.separator"
+                      @input="updateTickerSettings({ separator: ($event.target as HTMLInputElement).value || '✦' })"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7. Announcements & Reminders Management Section -->
         <div class="p-4 sm:p-5 rounded-xl border bg-card space-y-4 shadow-2xs">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
             <div>
               <div class="flex items-center gap-2">
                 <Megaphone class="size-4 text-primary" />
-                <Label class="text-sm font-bold text-foreground">Announcements & Reminders</Label>
+                <Label class="text-sm font-bold text-foreground">Announcement Messages & Reminders</Label>
                 <Badge variant="outline" class="text-[10px] font-mono px-1.5 py-0">
                   {{ announcementsList.length }} items
                 </Badge>

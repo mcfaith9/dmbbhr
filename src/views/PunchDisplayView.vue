@@ -20,8 +20,10 @@ import {
   Cake,
   X,
   Sparkles,
-  UserCheck
+  UserCheck,
+  Move
 } from '@lucide/vue'
+import PunchDisplayTicker from '@/components/PunchDisplayTicker.vue'
 import { punchDisplayService, normalizeBioId, getManilaDateString, getManilaMinutesFromMidnight } from '@/services/punchDisplay'
 import { punchVoiceService } from '@/services/punchVoiceService'
 import { liveAttendanceService } from '@/services/liveAttendance'
@@ -48,7 +50,14 @@ import {
 const currentPunch = punchDisplayService.currentPunch
 const recentPunches = punchDisplayService.recentPunches
 const settings = punchDisplayService.settings
+const tickerSettings = computed(() => announcementService.tickerSettings.value)
 const isFullscreen = ref(false)
+
+function toggleTickerEditMode() {
+  announcementService.saveTickerSettings({
+    editMode: !tickerSettings.value.editMode
+  })
+}
 
 const employees = ref<Employee[]>([])
 const workGroups = ref<WorkGroup[]>([])
@@ -1124,6 +1133,9 @@ onUnmounted(() => {
     <!-- Overlay Confetti Canvas -->
     <canvas ref="canvasRef" class="pointer-events-none fixed inset-0 z-50 size-full"></canvas>
 
+    <!-- Floating News Ticker / Announcement Overlay (z-[9999], independent overlay above all elements) -->
+    <PunchDisplayTicker />
+
     <!-- Announcement / Reminder / Birthday Overlay System (High-Visibility TV / Monitor Display) -->
     <Transition name="announcement-slide">
       <div
@@ -1631,6 +1643,19 @@ onUnmounted(() => {
         >
           <Volume2 v-if="settings.soundEnabled" class="size-3.5 sm:size-4 xl:size-4.5 text-primary" />
           <VolumeX v-else class="size-3.5 sm:size-4 xl:size-4.5 text-muted-foreground" />
+        </Button>
+
+        <!-- News Ticker Reposition Toggle -->
+        <Button
+          variant="outline"
+          size="sm"
+          class="size-7.5 sm:size-8 xl:size-9 p-0 cursor-pointer"
+          :class="tickerSettings.editMode ? 'bg-primary text-primary-foreground border-primary font-bold shadow-xs' : ''"
+          :title="tickerSettings.editMode ? 'Lock Ticker Position' : 'Reposition Floating News Ticker'"
+          aria-label="Reposition news ticker"
+          @click="toggleTickerEditMode"
+        >
+          <Move class="size-3.5 sm:size-4 xl:size-4.5" />
         </Button>
 
         <!-- Fullscreen Toggle -->
