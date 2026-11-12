@@ -68,6 +68,7 @@ export interface PunchDisplayEvent {
 
 export interface PunchDisplaySettings {
   enabled: boolean // Enable Punch Display = ON / OFF (default: true)
+  popupDisplayEnabled: boolean // Master ON/OFF Switch for Popup Display = ON / OFF (default: true)
   displayDurationSeconds: number // Supported values: 2, 3, 5, 8, 10 (default: 5)
   soundEnabled: boolean // Audio chime ON / OFF (default: true)
   confettiEnabled: boolean // Confetti = ON / OFF (default: true)
@@ -125,6 +126,7 @@ function cleanLegacyStoredOffset(): void {
 
 const DEFAULT_SETTINGS: PunchDisplaySettings = {
   enabled: true,
+  popupDisplayEnabled: true,
   displayDurationSeconds: 5, // Default: 5 seconds
   soundEnabled: true,
   confettiEnabled: true,

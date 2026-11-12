@@ -21,6 +21,7 @@ import {
   Wifi,
   Sparkles,
   Trash2,
+  PowerOff,
   Megaphone,
   Bell,
   Cake,
@@ -513,9 +514,9 @@ onMounted(() => {
           </div>
 
           <!-- 5. Late Visual -->
-          <div class="p-3.5 rounded-xl border bg-card space-y-2 sm:col-span-2 lg:col-span-2">
+          <div class="p-3.5 rounded-xl border bg-card space-y-2">
             <div class="flex items-center justify-between">
-              <Label class="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <Label class="text-xs font-semibold text-foreground flex items-center gap-1.5 cursor-pointer">
                 <AlertCircle class="size-3.5 text-rose-500" />
                 <span>Late Visual Alert</span>
               </Label>
@@ -526,6 +527,33 @@ onMounted(() => {
             </div>
             <p class="text-[11px] text-muted-foreground leading-relaxed">
               Show distinct visual warning styling when an employee clocks in late after their scheduled work group shift.
+            </p>
+          </div>
+
+          <!-- 6. Master Popup Display Switch -->
+          <div class="p-3.5 rounded-xl border bg-card space-y-2">
+            <div class="flex items-center justify-between">
+              <Label for="settings-master-popup-switch" class="text-xs font-semibold text-foreground flex items-center gap-1.5 cursor-pointer">
+                <Bell class="size-3.5 text-primary" />
+                <span>Popup Display – ON / OFF</span>
+              </Label>
+              <div class="flex items-center gap-1.5">
+                <Switch
+                  id="settings-master-popup-switch"
+                  :model-value="punchDisplayService.settings.value.popupDisplayEnabled !== false"
+                  @update:model-value="punchDisplayService.saveSettings({ popupDisplayEnabled: $event })"
+                  aria-label="Master Popup Display Switch"
+                />
+                <span
+                  class="text-[10px] font-mono font-bold uppercase select-none transition-colors"
+                  :class="punchDisplayService.settings.value.popupDisplayEnabled !== false ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'"
+                >
+                  {{ punchDisplayService.settings.value.popupDisplayEnabled !== false ? 'ON' : 'OFF' }}
+                </span>
+              </div>
+            </div>
+            <p class="text-[11px] text-muted-foreground leading-relaxed">
+              Global visibility control for all popup announcement, notification, and birthday modals. Does not affect the News Ticker.
             </p>
           </div>
         </div>
@@ -847,6 +875,26 @@ onMounted(() => {
               </p>
             </div>
             <div class="flex items-center gap-2 flex-wrap shrink-0">
+              <!-- Master Popup Switch -->
+              <div class="flex items-center gap-2 px-3 py-1 rounded-lg bg-muted/40 border shrink-0">
+                <Label for="announcements-master-popup-switch" class="text-xs font-semibold select-none cursor-pointer flex items-center gap-1.5">
+                  <Bell class="size-3.5 text-primary" />
+                  <span>Popup Display – ON / OFF</span>
+                </Label>
+                <Switch
+                  id="announcements-master-popup-switch"
+                  :model-value="punchDisplayService.settings.value.popupDisplayEnabled !== false"
+                  @update:model-value="punchDisplayService.saveSettings({ popupDisplayEnabled: $event })"
+                  aria-label="Popup Display – ON / OFF"
+                />
+                <span
+                  class="text-[10px] font-mono font-bold uppercase select-none transition-colors"
+                  :class="punchDisplayService.settings.value.popupDisplayEnabled !== false ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'"
+                >
+                  {{ punchDisplayService.settings.value.popupDisplayEnabled !== false ? 'ON' : 'OFF' }}
+                </span>
+              </div>
+
               <Button
                 variant="outline"
                 size="sm"
@@ -868,6 +916,27 @@ onMounted(() => {
                 <span>+ Add Announcement</span>
               </Button>
             </div>
+          </div>
+
+          <!-- Alert banner when Master Popup Switch is OFF -->
+          <div
+            v-if="punchDisplayService.settings.value.popupDisplayEnabled === false"
+            class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between gap-2"
+          >
+            <div class="flex items-center gap-2">
+              <PowerOff class="size-3.5 shrink-0 text-amber-600" />
+              <span>
+                <strong>Popup Display is OFF:</strong> All announcement, notification, and birthday popup modals are completely suppressed on the terminal. The News Ticker continues to display enabled items normally.
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-6 px-2 text-[11px] font-medium border-amber-500/40 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 shrink-0 cursor-pointer"
+              @click="punchDisplayService.saveSettings({ popupDisplayEnabled: true })"
+            >
+              Turn Popups ON
+            </Button>
           </div>
 
           <!-- Empty State -->

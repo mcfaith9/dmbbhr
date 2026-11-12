@@ -55,17 +55,25 @@ const settings = punchDisplayService.settings
 const tickerSettings = computed(() => announcementService.tickerSettings.value)
 const isFullscreen = ref(false)
 
-// Popup Notifications Control State (Enabled by default)
-const popupsEnabled = ref(true)
-
-watch(popupsEnabled, (enabled) => {
-  if (!enabled) {
-    hideAnnouncement()
-    if (pendingHrNoticeForPunch.value) {
-      pendingHrNoticeForPunch.value = null
-    }
+// Master ON/OFF Switch for Popup Display (Synchronized via punchDisplayService.settings)
+const popupsEnabled = computed<boolean>({
+  get: () => settings.value.popupDisplayEnabled !== false,
+  set: (val: boolean) => {
+    punchDisplayService.saveSettings({ popupDisplayEnabled: val })
   }
 })
+
+watch(
+  () => popupsEnabled.value,
+  (enabled) => {
+    if (!enabled) {
+      hideAnnouncement()
+      if (pendingHrNoticeForPunch.value) {
+        pendingHrNoticeForPunch.value = null
+      }
+    }
+  }
+)
 
 function toggleTickerEditMode() {
   announcementService.saveTickerSettings({
@@ -1551,26 +1559,27 @@ onUnmounted(() => {
           <span class="hidden md:inline">{{ isDisplayPaused ? 'Resume' : 'Pause' }}</span>
         </Button>
 
-        <!-- Popup Notifications Toggle Switch Control -->
+        <!-- Master Popup Display Switch Control -->
         <div
           class="flex items-center gap-1.5 sm:gap-2 h-7.5 sm:h-8 xl:h-9 px-2 sm:px-2.5 rounded-lg border bg-card/60 backdrop-blur-xs transition-colors shrink-0"
           :class="popupsEnabled ? 'border-border/80' : 'border-muted-foreground/30 opacity-75'"
-          :title="popupsEnabled ? 'Popup Notifications: ON (Click switch to disable)' : 'Popup Notifications: OFF (Click switch to enable)'"
+          :title="popupsEnabled ? 'Popup Display – ON (Click switch to turn OFF)' : 'Popup Display – OFF (Click switch to turn ON)'"
         >
           <Label
-            for="popup-notifications-toggle"
+            for="popup-display-master-toggle"
             class="text-[11px] sm:text-xs font-mono font-medium cursor-pointer select-none flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
           >
             <Bell class="size-3 sm:size-3.5" :class="popupsEnabled ? 'text-primary' : 'text-muted-foreground/50'" />
-            <span class="hidden sm:inline">Popup Notifications</span>
+            <span class="hidden lg:inline">Popup Display – ON / OFF</span>
+            <span class="hidden sm:inline lg:hidden">Popup Display</span>
             <span class="sm:hidden inline">Popups</span>
           </Label>
           <div class="flex items-center gap-1.5">
             <Switch
-              id="popup-notifications-toggle"
+              id="popup-display-master-toggle"
               :model-value="popupsEnabled"
               @update:model-value="popupsEnabled = $event"
-              aria-label="Toggle Popup Notifications"
+              aria-label="Toggle Popup Display ON / OFF"
             />
             <span
               class="text-[9px] sm:text-[10px] font-mono font-bold uppercase select-none transition-colors"
