@@ -48,6 +48,7 @@ import {
 import { employeeRepository } from '@/repositories/employeeRepository'
 import type { Employee } from '@/types'
 import type { HolidayRecord } from '@/db'
+import { holidayService } from '@/services/holidays/holidayService'
 import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
 
 const props = defineProps<{
@@ -138,10 +139,28 @@ async function loadEmployeePayroll() {
       }
     }
 
+    let holidaysToUse = props.holidaysList || []
+    if (holidaysToUse.length === 0 && currentCutoff.value) {
+      try {
+        const res = await holidayService.getHolidays(currentCutoff.value.year)
+        if (res?.holidays && res.holidays.length > 0) {
+          holidaysToUse = res.holidays.map(h => ({
+            id: h.id,
+            name: h.name,
+            date: h.date,
+            type: h.type as any,
+            isNationwide: h.scope === 'National'
+          }))
+        }
+      } catch {
+        // fallback to service default
+      }
+    }
+
     const record = await payrollCalculationService.computeSingleEmployeePayroll(
       currentCutoff.value,
       activeEmp,
-      props.holidaysList || [],
+      holidaysToUse,
       passedRecords
     )
     currentRecord.value = record
@@ -625,7 +644,10 @@ async function triggerPrint() {
                 <span class="text-[10px] text-amber-700 dark:text-amber-400 block font-medium">Sunday Duty (+30%)</span>
                 <span class="font-bold text-amber-600 font-mono text-sm">{{ currentRecord.sundayWorkDays }} days</span>
               </div>
-              <div class="p-2 rounded-lg border bg-amber-500/5 border-amber-500/20">
+              <div
+                class="p-2 rounded-lg border bg-amber-500/5 border-amber-500/20"
+                :title="`Holiday Duty: ${currentRecord.holidayDays} day(s) (Regular: ${currentRecord.workedHolidayDays || 0}, Special: ${currentRecord.specialNonWorkingDays || 0})`"
+              >
                 <span class="text-[10px] text-amber-700 dark:text-amber-400 block font-medium">Holidays</span>
                 <span class="font-bold text-amber-600 font-mono text-sm">{{ currentRecord.holidayDays }} days</span>
               </div>
@@ -658,7 +680,15 @@ async function triggerPrint() {
                 </span>
               </div>
               <div v-if="currentRecord.earningsBreakdown.holidayPay > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">
-                <span>Holiday Duty Premium (Regular / Special):</span>
+                <span class="flex items-center gap-1.5">
+                  <CalendarDays class="size-3.5 text-amber-600" />
+                  <span>
+                    Holiday Duty Premium (Regular / Special):
+                    <span v-if="(currentRecord.workedHolidayDays || 0) > 0 || (currentRecord.specialNonWorkingDays || 0) > 0" class="text-[10px]">
+                      ({{ (currentRecord.workedHolidayDays || 0) > 0 ? `${currentRecord.workedHolidayDays} Regular` : '' }}{{ (currentRecord.workedHolidayDays || 0) > 0 && (currentRecord.specialNonWorkingDays || 0) > 0 ? ', ' : '' }}{{ (currentRecord.specialNonWorkingDays || 0) > 0 ? `${currentRecord.specialNonWorkingDays} Special` : '' }})
+                    </span>
+                  </span>
+                </span>
                 <span class="font-mono font-medium text-foreground">
                   +₱{{ currentRecord.earningsBreakdown.holidayPay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
                 </span>
