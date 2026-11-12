@@ -829,9 +829,184 @@ onMounted(() => {
               <span>Manage Punch Notices</span>
             </Button>
           </div>
+        </div>        
+
+        <!-- 6. Announcements & Reminders Management Section -->
+        <div class="p-4 sm:p-5 rounded-xl border bg-card space-y-4 shadow-2xs">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
+            <div>
+              <div class="flex items-center gap-2">
+                <Megaphone class="size-4 text-primary" />
+                <Label class="text-sm font-bold text-foreground">Announcement Messages & Reminders</Label>
+                <Badge variant="outline" class="text-[10px] font-mono px-1.5 py-0">
+                  {{ announcementsList.length }} items
+                </Badge>
+              </div>
+              <p class="text-xs text-muted-foreground mt-0.5">
+                Manage notifications that slide onto the Punch Display after <strong>1 minute of idle</strong>. Biometric punches immediately take highest priority.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 gap-1.5 text-xs shadow-2xs cursor-pointer font-medium"
+                title="Immediately test and show the active announcement overlay on the Punch Display"
+                @click="triggerAnnouncementPreview()"
+              >
+                <Play class="size-3.5 text-primary" />
+                <span>Show Preview</span>
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                class="h-8 gap-1.5 text-xs shadow-xs cursor-pointer font-bold bg-primary text-primary-foreground hover:bg-primary/90"
+                title="Create a new custom announcement, reminder, or birthday greeting"
+                @click="openCreateDialog"
+              >
+                <Plus class="size-3.5" />
+                <span>+ Add Announcement</span>
+              </Button>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div
+            v-if="announcementsList.length === 0"
+            class="py-8 text-center rounded-xl border border-dashed p-6 space-y-3 bg-muted/10"
+          >
+            <Megaphone class="size-8 mx-auto text-muted-foreground/60" />
+            <div class="space-y-1">
+              <h5 class="text-xs font-semibold text-foreground">No Announcements Configured</h5>
+              <p class="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                Add your first announcement or reminder to display on the terminal during idle periods.
+              </p>
+            </div>
+            <div class="flex items-center justify-center gap-2 pt-1">
+              <Button size="sm" class="h-7 text-xs font-medium cursor-pointer" @click="openCreateDialog">
+                <Plus class="size-3 mr-1" />
+                <span>Add Announcement</span>
+              </Button>
+              <Button variant="outline" size="sm" class="h-7 text-xs cursor-pointer" @click="resetAnnouncements">
+                <RotateCcw class="size-3 mr-1" />
+                <span>Load Defaults</span>
+              </Button>
+            </div>
+          </div>
+
+          <!-- Announcement Items List -->
+          <div v-else class="space-y-2.5">
+            <div
+              v-for="item in announcementsList"
+              :key="item.id"
+              class="p-3.5 rounded-xl border bg-muted/20 hover:bg-muted/30 transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+              :class="!item.enabled ? 'opacity-60 bg-muted/10' : ''"
+            >
+              <!-- Left info block -->
+              <div class="flex items-start gap-3 min-w-0">
+                <div
+                  class="size-9 rounded-lg flex items-center justify-center shrink-0 border mt-0.5 shadow-2xs"
+                  :class="[
+                    item.type === 'birthday'
+                      ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                      : item.type === 'reminder'
+                        ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                        : 'bg-primary/10 text-primary border-primary/20'
+                  ]"
+                >
+                  <Cake v-if="item.type === 'birthday'" class="size-4" />
+                  <Bell v-else-if="item.type === 'reminder'" class="size-4" />
+                  <Megaphone v-else class="size-4" />
+                </div>
+                <div class="min-w-0 space-y-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-bold text-foreground uppercase text-[12px] font-mono tracking-wider">
+                      {{ item.title }}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      class="text-[9px] uppercase font-mono px-1.5 py-0"
+                      :class="[
+                        item.type === 'birthday'
+                          ? 'border-rose-500/30 text-rose-600 dark:text-rose-400'
+                          : item.type === 'reminder'
+                            ? 'border-amber-500/30 text-amber-600 dark:text-amber-400'
+                            : 'border-primary/30 text-primary'
+                      ]"
+                    >
+                      {{ item.type }}
+                    </Badge>
+                    <Badge
+                      :variant="item.enabled ? 'outline' : 'secondary'"
+                      class="text-[9px] font-mono px-1.5 py-0"
+                      :class="item.enabled ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10' : 'text-muted-foreground'"
+                    >
+                      {{ item.enabled ? 'Enabled' : 'Disabled' }}
+                    </Badge>
+                  </div>
+                  <p class="text-xs text-muted-foreground leading-relaxed">
+                    <span v-if="item.type === 'birthday' && item.employeeName" class="font-semibold text-foreground mr-1">
+                      {{ item.employeeName }}:
+                    </span>
+                    {{ item.message }}
+                  </p>
+                  <div
+                    v-if="item.type === 'birthday' && (item.bioId || item.department)"
+                    class="flex items-center gap-2 text-[10px] text-muted-foreground font-mono"
+                  >
+                    <span v-if="item.bioId">Bio ID: {{ item.bioId }}</span>
+                    <span v-if="item.bioId && item.department">•</span>
+                    <span v-if="item.department">{{ item.department }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right Actions: Preview, Edit, Enable Switch, Delete -->
+              <div class="flex items-center gap-2 self-end md:self-center shrink-0 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2.5 text-[11px] cursor-pointer font-medium gap-1"
+                  title="Immediately display this specific announcement on the Punch Display"
+                  @click="triggerAnnouncementPreview(item)"
+                >
+                  <Play class="size-3 text-primary" />
+                  <span>Preview</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 px-2 text-[11px] cursor-pointer text-muted-foreground hover:text-foreground gap-1"
+                  title="Edit announcement text and configuration"
+                  @click="openEditDialog(item)"
+                >
+                  <Pencil class="size-3" />
+                  <span>Edit</span>
+                </Button>
+                <div class="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border">
+                  <span class="text-[10px] font-mono text-muted-foreground select-none">
+                    {{ item.enabled ? 'ON' : 'OFF' }}
+                  </span>
+                  <Switch
+                    :model-value="item.enabled"
+                    @update:model-value="toggleAnnouncement(item.id, $event)"
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 px-2 text-[11px] cursor-pointer text-destructive hover:bg-destructive/10"
+                  title="Delete announcement"
+                  @click="deleteAnnouncement(item.id)"
+                >
+                  <Trash2 class="size-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- 6. Floating News Ticker & Announcement Overlay Configuration -->
+        <!-- 7. Floating News Ticker & Announcement Overlay Configuration -->
         <div class="p-4 sm:p-5 sm:p-6 rounded-xl border bg-card text-card-foreground space-y-5 shadow-2xs w-full max-w-full min-w-0 overflow-hidden">
           <!-- Header & Master Switch -->
           <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b pb-4 w-full min-w-0">
@@ -1373,181 +1548,6 @@ onMounted(() => {
                 </div>
               </div>
 
-            </div>
-          </div>
-        </div>
-
-        <!-- 7. Announcements & Reminders Management Section -->
-        <div class="p-4 sm:p-5 rounded-xl border bg-card space-y-4 shadow-2xs">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3.5">
-            <div>
-              <div class="flex items-center gap-2">
-                <Megaphone class="size-4 text-primary" />
-                <Label class="text-sm font-bold text-foreground">Announcement Messages & Reminders</Label>
-                <Badge variant="outline" class="text-[10px] font-mono px-1.5 py-0">
-                  {{ announcementsList.length }} items
-                </Badge>
-              </div>
-              <p class="text-xs text-muted-foreground mt-0.5">
-                Manage notifications that slide onto the Punch Display after <strong>1 minute of idle</strong>. Biometric punches immediately take highest priority.
-              </p>
-            </div>
-            <div class="flex items-center gap-2 flex-wrap shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                class="h-8 gap-1.5 text-xs shadow-2xs cursor-pointer font-medium"
-                title="Immediately test and show the active announcement overlay on the Punch Display"
-                @click="triggerAnnouncementPreview()"
-              >
-                <Play class="size-3.5 text-primary" />
-                <span>Show Preview</span>
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                class="h-8 gap-1.5 text-xs shadow-xs cursor-pointer font-bold bg-primary text-primary-foreground hover:bg-primary/90"
-                title="Create a new custom announcement, reminder, or birthday greeting"
-                @click="openCreateDialog"
-              >
-                <Plus class="size-3.5" />
-                <span>+ Add Announcement</span>
-              </Button>
-            </div>
-          </div>
-
-          <!-- Empty State -->
-          <div
-            v-if="announcementsList.length === 0"
-            class="py-8 text-center rounded-xl border border-dashed p-6 space-y-3 bg-muted/10"
-          >
-            <Megaphone class="size-8 mx-auto text-muted-foreground/60" />
-            <div class="space-y-1">
-              <h5 class="text-xs font-semibold text-foreground">No Announcements Configured</h5>
-              <p class="text-[11px] text-muted-foreground max-w-sm mx-auto">
-                Add your first announcement or reminder to display on the terminal during idle periods.
-              </p>
-            </div>
-            <div class="flex items-center justify-center gap-2 pt-1">
-              <Button size="sm" class="h-7 text-xs font-medium cursor-pointer" @click="openCreateDialog">
-                <Plus class="size-3 mr-1" />
-                <span>Add Announcement</span>
-              </Button>
-              <Button variant="outline" size="sm" class="h-7 text-xs cursor-pointer" @click="resetAnnouncements">
-                <RotateCcw class="size-3 mr-1" />
-                <span>Load Defaults</span>
-              </Button>
-            </div>
-          </div>
-
-          <!-- Announcement Items List -->
-          <div v-else class="space-y-2.5">
-            <div
-              v-for="item in announcementsList"
-              :key="item.id"
-              class="p-3.5 rounded-xl border bg-muted/20 hover:bg-muted/30 transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
-              :class="!item.enabled ? 'opacity-60 bg-muted/10' : ''"
-            >
-              <!-- Left info block -->
-              <div class="flex items-start gap-3 min-w-0">
-                <div
-                  class="size-9 rounded-lg flex items-center justify-center shrink-0 border mt-0.5 shadow-2xs"
-                  :class="[
-                    item.type === 'birthday'
-                      ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
-                      : item.type === 'reminder'
-                        ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                        : 'bg-primary/10 text-primary border-primary/20'
-                  ]"
-                >
-                  <Cake v-if="item.type === 'birthday'" class="size-4" />
-                  <Bell v-else-if="item.type === 'reminder'" class="size-4" />
-                  <Megaphone v-else class="size-4" />
-                </div>
-                <div class="min-w-0 space-y-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="font-bold text-foreground uppercase text-[12px] font-mono tracking-wider">
-                      {{ item.title }}
-                    </span>
-                    <Badge
-                      variant="outline"
-                      class="text-[9px] uppercase font-mono px-1.5 py-0"
-                      :class="[
-                        item.type === 'birthday'
-                          ? 'border-rose-500/30 text-rose-600 dark:text-rose-400'
-                          : item.type === 'reminder'
-                            ? 'border-amber-500/30 text-amber-600 dark:text-amber-400'
-                            : 'border-primary/30 text-primary'
-                      ]"
-                    >
-                      {{ item.type }}
-                    </Badge>
-                    <Badge
-                      :variant="item.enabled ? 'outline' : 'secondary'"
-                      class="text-[9px] font-mono px-1.5 py-0"
-                      :class="item.enabled ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10' : 'text-muted-foreground'"
-                    >
-                      {{ item.enabled ? 'Enabled' : 'Disabled' }}
-                    </Badge>
-                  </div>
-                  <p class="text-xs text-muted-foreground leading-relaxed">
-                    <span v-if="item.type === 'birthday' && item.employeeName" class="font-semibold text-foreground mr-1">
-                      {{ item.employeeName }}:
-                    </span>
-                    {{ item.message }}
-                  </p>
-                  <div
-                    v-if="item.type === 'birthday' && (item.bioId || item.department)"
-                    class="flex items-center gap-2 text-[10px] text-muted-foreground font-mono"
-                  >
-                    <span v-if="item.bioId">Bio ID: {{ item.bioId }}</span>
-                    <span v-if="item.bioId && item.department">•</span>
-                    <span v-if="item.department">{{ item.department }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Right Actions: Preview, Edit, Enable Switch, Delete -->
-              <div class="flex items-center gap-2 self-end md:self-center shrink-0 flex-wrap">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="h-7 px-2.5 text-[11px] cursor-pointer font-medium gap-1"
-                  title="Immediately display this specific announcement on the Punch Display"
-                  @click="triggerAnnouncementPreview(item)"
-                >
-                  <Play class="size-3 text-primary" />
-                  <span>Preview</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-[11px] cursor-pointer text-muted-foreground hover:text-foreground gap-1"
-                  title="Edit announcement text and configuration"
-                  @click="openEditDialog(item)"
-                >
-                  <Pencil class="size-3" />
-                  <span>Edit</span>
-                </Button>
-                <div class="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border">
-                  <span class="text-[10px] font-mono text-muted-foreground select-none">
-                    {{ item.enabled ? 'ON' : 'OFF' }}
-                  </span>
-                  <Switch
-                    :model-value="item.enabled"
-                    @update:model-value="toggleAnnouncement(item.id, $event)"
-                  />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-[11px] cursor-pointer text-destructive hover:bg-destructive/10"
-                  title="Delete announcement"
-                  @click="deleteAnnouncement(item.id)"
-                >
-                  <Trash2 class="size-3" />
-                </Button>
-              </div>
             </div>
           </div>
         </div>
