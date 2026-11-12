@@ -871,7 +871,7 @@ onMounted(() => {
                 </Badge>
               </div>
               <p class="text-xs text-muted-foreground mt-0.5">
-                Manage notifications that slide onto the Punch Display after <strong>1 minute of idle</strong>. Biometric punches immediately take highest priority.
+                Manage notifications that slide onto the Punch Display after <strong>1 minute of idle</strong>.
               </p>
             </div>
             <div class="flex items-center gap-2 flex-wrap shrink-0">
@@ -879,7 +879,7 @@ onMounted(() => {
               <div class="flex items-center gap-2 px-3 py-1 rounded-lg bg-muted/40 border shrink-0">
                 <Label for="announcements-master-popup-switch" class="text-xs font-semibold select-none cursor-pointer flex items-center gap-1.5">
                   <Bell class="size-3.5 text-primary" />
-                  <span>Popup Display – ON / OFF</span>
+                  <span>Popup Display</span>
                 </Label>
                 <Switch
                   id="announcements-master-popup-switch"
@@ -896,16 +896,6 @@ onMounted(() => {
               </div>
 
               <Button
-                variant="outline"
-                size="sm"
-                class="h-8 gap-1.5 text-xs shadow-2xs cursor-pointer font-medium"
-                title="Immediately test and show the active announcement overlay on the Punch Display"
-                @click="triggerAnnouncementPreview()"
-              >
-                <Play class="size-3.5 text-primary" />
-                <span>Show Preview</span>
-              </Button>
-              <Button
                 variant="default"
                 size="sm"
                 class="h-8 gap-1.5 text-xs shadow-xs cursor-pointer font-bold bg-primary text-primary-foreground hover:bg-primary/90"
@@ -913,7 +903,7 @@ onMounted(() => {
                 @click="openCreateDialog"
               >
                 <Plus class="size-3.5" />
-                <span>+ Add Announcement</span>
+                <span>Add Announcement</span>
               </Button>
             </div>
           </div>

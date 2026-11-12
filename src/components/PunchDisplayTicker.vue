@@ -461,12 +461,11 @@ onUnmounted(() => {
         }"
       >
         <div v-if="tickerSettings.showIcon" class="flex items-center justify-center">
-          <Megaphone :class="isSettingsPreview ? 'size-3.5' : 'size-4.5 animate-bounce'" />
+          <Megaphone :class="isSettingsPreview ? 'size-8' : 'size-8 animate-bounce'" />
         </div>
         <span
           v-if="tickerSettings.showBadge && tickerSettings.badgeText"
-          class="font-extrabold tracking-wider uppercase whitespace-nowrap"
-          :class="isSettingsPreview ? 'text-[10px]' : 'text-xs sm:text-sm'"
+          class="font-extrabold tracking-wider uppercase whitespace-nowrap text-md"
         >
           {{ tickerSettings.badgeText }}
         </span>
@@ -520,8 +519,8 @@ onUnmounted(() => {
 
               <!-- Separator Glyph -->
               <span
-                class="inline-block opacity-60 select-none"
-                :class="isSettingsPreview ? 'px-2 text-xs' : 'px-3 text-sm'"
+                class="inline-block opacity-80 select-none font-bold"
+                :class="isSettingsPreview ? 'px-2 text-4xl' : 'px-3 text-4xl'"
                 :style="{ color: tickerSettings.accentColor }"
               >
                 {{ tickerSettings.separator || '✦' }}
