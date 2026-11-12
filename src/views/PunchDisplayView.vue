@@ -33,6 +33,8 @@ import { hrNoticeService, isNoticeActive, type HrNotice } from '@/services/hrNot
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import {
   Avatar,
   AvatarFallback,
@@ -52,6 +54,18 @@ const recentPunches = punchDisplayService.recentPunches
 const settings = punchDisplayService.settings
 const tickerSettings = computed(() => announcementService.tickerSettings.value)
 const isFullscreen = ref(false)
+
+// Popup Notifications Control State (Enabled by default)
+const popupsEnabled = ref(true)
+
+watch(popupsEnabled, (enabled) => {
+  if (!enabled) {
+    hideAnnouncement()
+    if (pendingHrNoticeForPunch.value) {
+      pendingHrNoticeForPunch.value = null
+    }
+  }
+})
 
 function toggleTickerEditMode() {
   announcementService.saveTickerSettings({
@@ -452,6 +466,10 @@ function resetIdleTimer() {
 }
 
 function triggerIdleAnnouncement() {
+  if (!popupsEnabled.value) {
+    resetIdleTimer()
+    return
+  }
   // If punch is actively displayed on screen, do not interrupt; wait
   if (currentPunch.value) {
     resetIdleTimer()
@@ -477,6 +495,11 @@ function enrichBirthdayCelebrant(item?: AnnouncementItem | null) {
 }
 
 function startAnnouncementSequence(startingItem?: AnnouncementItem | null) {
+  if (!popupsEnabled.value) {
+    stopAnnouncementSequence()
+    return
+  }
+
   // Biometric punch ALWAYS has immediate priority
   if (currentPunch.value) {
     return
@@ -540,7 +563,7 @@ function startAnnouncementSequence(startingItem?: AnnouncementItem | null) {
         // 1-second delay before playing active enabled sequence
         announcementDelayTimer = setTimeout(() => {
           announcementDelayTimer = null
-          if (currentPunch.value || !isPlayingSequence) {
+          if (!popupsEnabled.value || currentPunch.value || !isPlayingSequence) {
             stopAnnouncementSequence()
             return
           }
@@ -558,7 +581,7 @@ function startAnnouncementSequence(startingItem?: AnnouncementItem | null) {
 
 function playSequentialStep() {
   // Biometric punch ALWAYS has immediate absolute priority!
-  if (currentPunch.value || !isPlayingSequence) {
+  if (!popupsEnabled.value || currentPunch.value || !isPlayingSequence) {
     stopAnnouncementSequence()
     return
   }
@@ -587,8 +610,8 @@ function playSequentialStep() {
 }
 
 function onAnnouncementStepFinished() {
-  // Biometric punch interrupt check
-  if (currentPunch.value || !isPlayingSequence) {
+  // Biometric punch interrupt check or popups disabled check
+  if (!popupsEnabled.value || currentPunch.value || !isPlayingSequence) {
     stopAnnouncementSequence()
     return
   }
@@ -618,7 +641,7 @@ function onAnnouncementStepFinished() {
   announcementDelayTimer = setTimeout(() => {
     announcementDelayTimer = null
     // If a biometric punch arrived during the 1-second delay, cancel immediately
-    if (currentPunch.value || !isPlayingSequence) {
+    if (!popupsEnabled.value || currentPunch.value || !isPlayingSequence) {
       stopAnnouncementSequence()
       return
     }
@@ -628,6 +651,8 @@ function onAnnouncementStepFinished() {
 }
 
 function showAnnouncementPreview(item?: AnnouncementItem | null) {
+  if (!popupsEnabled.value) return
+
   // If punch is visible, dismiss it so preview can be viewed
   if (currentPunch.value) {
     currentPunch.value = null
@@ -783,6 +808,10 @@ function startDisplayTimer() {
 }
 
 function triggerPendingHrNoticeIfAvailable() {
+  if (!popupsEnabled.value) {
+    pendingHrNoticeForPunch.value = null
+    return
+  }
   if (!pendingHrNoticeForPunch.value) return
 
   const item = pendingHrNoticeForPunch.value
@@ -879,8 +908,8 @@ watch(
 
     const punch = currentPunch.value
 
-    // Check whether the punched employee has an active HR notice
-    if (punch?.bioId) {
+    // Check whether the punched employee has an active HR notice (only queued if popups enabled)
+    if (punch?.bioId && popupsEnabled.value) {
       const activeNotice = hrNoticeService.getActiveNoticeForBioId(punch.bioId)
       if (activeNotice && isNoticeActive(activeNotice)) {
         if (lastNoticePunchEventId.value !== punch.eventId) {
@@ -1139,7 +1168,7 @@ onUnmounted(() => {
     <!-- Announcement / Reminder / Birthday Overlay System (High-Visibility TV / Monitor Display) -->
     <Transition name="announcement-slide">
       <div
-        v-if="isAnnouncementVisible && currentAnnouncement && !currentPunch"
+        v-if="popupsEnabled && isAnnouncementVisible && currentAnnouncement && !currentPunch"
         class="fixed inset-0 z-40 flex items-center justify-center p-4 sm:p-8 md:p-12 bg-black/55 backdrop-blur-xs select-none"
       >
         <!-- Celebratory Flying Balloons and Lightweight Confetti Layer (Celebration for Birthday) -->
@@ -1521,6 +1550,36 @@ onUnmounted(() => {
           <Pause v-else class="size-3 sm:size-3.5" />
           <span class="hidden md:inline">{{ isDisplayPaused ? 'Resume' : 'Pause' }}</span>
         </Button>
+
+        <!-- Popup Notifications Toggle Switch Control -->
+        <div
+          class="flex items-center gap-1.5 sm:gap-2 h-7.5 sm:h-8 xl:h-9 px-2 sm:px-2.5 rounded-lg border bg-card/60 backdrop-blur-xs transition-colors shrink-0"
+          :class="popupsEnabled ? 'border-border/80' : 'border-muted-foreground/30 opacity-75'"
+          :title="popupsEnabled ? 'Popup Notifications: ON (Click switch to disable)' : 'Popup Notifications: OFF (Click switch to enable)'"
+        >
+          <Label
+            for="popup-notifications-toggle"
+            class="text-[11px] sm:text-xs font-mono font-medium cursor-pointer select-none flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+          >
+            <Bell class="size-3 sm:size-3.5" :class="popupsEnabled ? 'text-primary' : 'text-muted-foreground/50'" />
+            <span class="hidden sm:inline">Popup Notifications</span>
+            <span class="sm:hidden inline">Popups</span>
+          </Label>
+          <div class="flex items-center gap-1.5">
+            <Switch
+              id="popup-notifications-toggle"
+              :model-value="popupsEnabled"
+              @update:model-value="popupsEnabled = $event"
+              aria-label="Toggle Popup Notifications"
+            />
+            <span
+              class="text-[9px] sm:text-[10px] font-mono font-bold uppercase select-none transition-colors"
+              :class="popupsEnabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'"
+            >
+              {{ popupsEnabled ? 'ON' : 'OFF' }}
+            </span>
+          </div>
+        </div>
 
         <!-- Relocated: Test Simulation & Preview Tools Dropdown -->
         <DropdownMenu>
