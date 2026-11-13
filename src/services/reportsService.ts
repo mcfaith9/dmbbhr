@@ -284,6 +284,28 @@ function cleanBioKey(id?: string | null): string {
   return String(id || '').replace(/^emp[-_]/i, '').trim().toLowerCase()
 }
 
+/**
+ * Normalizes employment status string for resilient comparison
+ */
+function normalizeEmploymentStatus(status?: string | null): string {
+  return String(status || 'active').trim().toLowerCase()
+}
+
+function isResignedStatus(status?: string | null): boolean {
+  const s = normalizeEmploymentStatus(status)
+  return s === 'resigned' || s === 'r'
+}
+
+function isActiveStatus(status?: string | null): boolean {
+  const s = normalizeEmploymentStatus(status)
+  return s === 'active' || s === 'a'
+}
+
+// Clear report cache whenever employee records change (e.g. status updated to Resigned/Active)
+employeeService.onEmployeesChanged(() => {
+  reportCache.clear()
+})
+
 export const reportsService = {
   /**
    * Generates aggregated HR attendance report summary for the requested filter
@@ -294,10 +316,11 @@ export const reportsService = {
 
     const todayStr = getManilaDateString(new Date())
     const isSingleToday = start === todayStr && end === todayStr
+    const isVolatilePreset = preset === 'today' || preset === 'yesterday'
     const effectiveTtl = isSingleToday ? 10_000 : CACHE_TTL_MS
 
     const cacheKey = `${start}_${end}_${location}_${workGroupId}_${employeeBioId}_${department}`
-    if (!forceRefresh && reportCache.has(cacheKey)) {
+    if (!forceRefresh && !isVolatilePreset && reportCache.has(cacheKey)) {
       const cached = reportCache.get(cacheKey)!
       if (Date.now() - cached.timestamp < effectiveTtl) {
         return cached.data
@@ -331,13 +354,20 @@ export const reportsService = {
         .catch(() => [])
     ])
 
-    // Build employee department map for bulletproof record filtering
+    // Build canonical employee lookup maps for accurate status & department matching
     const employeeDeptMap = new Map<string, string>()
+    const employeeByKeyMap = new Map<string, typeof allEmployees[0]>()
     for (const e of allEmployees) {
       const dept = e.department || ''
       employeeDeptMap.set(e.biometric_user_id, dept)
       employeeDeptMap.set(cleanBioKey(e.biometric_user_id), dept)
       employeeDeptMap.set(cleanBioKey(e.employee_number), dept)
+
+      employeeByKeyMap.set(e.biometric_user_id, e)
+      employeeByKeyMap.set(cleanBioKey(e.biometric_user_id), e)
+      if (e.employee_number) {
+        employeeByKeyMap.set(cleanBioKey(e.employee_number), e)
+      }
     }
 
     // Filter employees by department and bioId if specified
@@ -350,13 +380,41 @@ export const reportsService = {
     const workGroupMap = new Map(workGroups.map(wg => [wg.id, wg]))
     const holidayDateSet = new Set(holidays.map(h => h.date))
 
-    // Index leaves by bioId
+    // Index approved leaves by both raw bioId and cleaned bioKey
     const employeeLeavesMap = new Map<string, Array<{ startDate: string; endDate: string }>>()
     for (const l of leaves) {
-      if (!employeeLeavesMap.has(l.bioId)) {
-        employeeLeavesMap.set(l.bioId, [])
+      const keys = [l.bioId, cleanBioKey(l.bioId)].filter(Boolean)
+      for (const k of keys) {
+        if (!employeeLeavesMap.has(k)) {
+          employeeLeavesMap.set(k, [])
+        }
+        employeeLeavesMap.get(k)!.push({ startDate: l.startDate, endDate: l.endDate })
       }
-      employeeLeavesMap.get(l.bioId)!.push({ startDate: l.startDate, endDate: l.endDate })
+    }
+
+    const isTodayScope = preset === 'today'
+
+    const isEmployeeEligibleForAbsence = (emp: typeof allEmployees[0], dStr: string): boolean => {
+      const empStatus = normalizeEmploymentStatus(emp.status)
+      // Resigned employees must NEVER be counted as Absent
+      if (isResignedStatus(empStatus)) {
+        return false
+      }
+      // For Today: include ONLY employees whose employment status is Active
+      if (isTodayScope) {
+        if (!isActiveStatus(empStatus)) return false
+      } else {
+        // Respect existing eligibility rules for Yesterday and other periods
+        if (empStatus === 'inactive' || empStatus === 'suspended' || empStatus === 'on_leave') {
+          return false
+        }
+      }
+      // Approved leave covering this date is not an unexcused absence
+      const empLeaves = employeeLeavesMap.get(emp.biometric_user_id) || employeeLeavesMap.get(cleanBioKey(emp.biometric_user_id)) || []
+      if (empLeaves.some(l => l.startDate <= dStr && l.endDate >= dStr)) {
+        return false
+      }
+      return true
     }
 
     // 3. Process daily aggregations & individual absence records
@@ -366,6 +424,7 @@ export const reportsService = {
     let totalRenderedHours = 0
     let totalLateMinutes = 0
     let totalEligibleWorkdays = 0
+    let inProgressCount = 0
 
     const dayTrends: DayTrendPoint[] = []
     const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string; lateRecords: LateAttendanceRecord[]; lateDates: string[] }>()
@@ -391,6 +450,7 @@ export const reportsService = {
 
       // Map of attendees with actual check-in for this day
       const attendedBioIds = new Set<string>()
+      const countedPresentKeys = new Set<string>()
 
       let dayPresent = 0
       let dayLate = 0
@@ -398,18 +458,26 @@ export const reportsService = {
       let dayHours = 0
 
       for (const r of records) {
-        // Exclude resigned employees from aggregated calculations unless user specifically filtered by this employee's bioId
-        // Also check resignationDate vs dStr: if resigned after dStr, they were active then
-        const isResigned = r.employee_status === 'resigned'
-        const resDate = r.resignation_date || (r as any).resignationDate
-        const resignedBeforeDate = isResigned && (!resDate || resDate <= dStr)
+        const matchedEmp = employeeByKeyMap.get(r.biometric_user_id) || employeeByKeyMap.get(cleanBioKey(r.biometric_user_id))
+        const canonicalStatus = normalizeEmploymentStatus(matchedEmp?.status ?? r.employee_status ?? 'active')
 
-        if (resignedBeforeDate && !bioFilter) {
+        // Exclude resigned employees from Present and Absent calculations
+        if (isResignedStatus(canonicalStatus)) {
+          continue
+        }
+
+        // For Today: include ONLY employees whose employment status is Active
+        if (isTodayScope && !isActiveStatus(canonicalStatus)) {
+          continue
+        }
+
+        // Exclude inactive employees across periods
+        if (canonicalStatus === 'inactive') {
           continue
         }
 
         // Apply department filter to record using canonical employee department
-        const empDept = employeeDeptMap.get(cleanBioKey(r.biometric_user_id)) || r.department || ''
+        const empDept = matchedEmp?.department || employeeDeptMap.get(cleanBioKey(r.biometric_user_id)) || r.department || ''
         if (department !== 'all' && empDept !== department) {
           continue
         }
@@ -417,7 +485,7 @@ export const reportsService = {
         // Attendance classification:
         // An employee is considered to have attended (PRESENT) if:
         // 1. actual_in has a valid recorded arrival time and is not missing/dash, OR
-        // 2. valid_punches_count > 0 or raw_punches_count > 0, OR
+        // 2. valid_punches_count > 0, OR
         // 3. status indicates presence / manual adjustment / awaiting OUT
         // CRITICAL: An employee with an IN punch on Today (shift in progress) or historical must NEVER count as absent.
         const hasInPunch = Boolean(
@@ -427,8 +495,20 @@ export const reportsService = {
         )
 
         if (hasInPunch) {
+          const cleanKey = cleanBioKey(r.biometric_user_id) || r.biometric_user_id
           attendedBioIds.add(r.biometric_user_id)
-          attendedBioIds.add(cleanBioKey(r.biometric_user_id))
+          attendedBioIds.add(cleanKey)
+          if (matchedEmp) {
+            attendedBioIds.add(matchedEmp.biometric_user_id)
+            attendedBioIds.add(cleanBioKey(matchedEmp.biometric_user_id))
+          }
+
+          // Guard against double-counting same employee on same date
+          if (countedPresentKeys.has(cleanKey)) {
+            continue
+          }
+          countedPresentKeys.add(cleanKey)
+
           dayPresent++
           dayHours += r.total_hours_decimal || 0
 
@@ -457,6 +537,9 @@ export const reportsService = {
           const isMissingOut = !r.has_valid_out || r.status.includes('No OUT') || r.status === 'Awaiting OUT'
           if (isMissingOut) {
             dayMissingOut++
+            if (isSingleToday) {
+              inProgressCount++
+            }
             if (missingOutItems.length < 15) {
               const displayStatus = isToday ? 'Present / In Progress' : r.status
               missingOutItems.push({
@@ -489,24 +572,8 @@ export const reportsService = {
 
       if (!isSunday && !isHoliday) {
         for (const emp of scopedEmployees) {
-          // Rule 1: Exclude resigned employees if they resigned on or before this reporting date
-          if (emp.status === 'resigned') {
-            const resDate = emp.resignation_date || (emp as any).resignationDate
-            if (!resDate || resDate <= dStr) {
-              continue // Excluded from expected duty and absence
-            }
-          }
-
-          // Rule 2: Exclude inactive/suspended if configured, but check if on approved leave
-          if (emp.status === 'inactive') {
+          if (!isEmployeeEligibleForAbsence(emp, dStr)) {
             continue
-          }
-
-          // Check if employee has an approved leave covering this date
-          const empLeaves = employeeLeavesMap.get(emp.biometric_user_id) || []
-          const isOnLeave = empLeaves.some(l => l.startDate <= dStr && l.endDate >= dStr)
-          if (isOnLeave) {
-            continue // Approved leave is not an absence
           }
 
           dayExpected++
@@ -666,7 +733,7 @@ export const reportsService = {
       if (!deptMap.has(dept)) {
         deptMap.set(dept, { absentCount: 0, bioIds: new Set(), eligible: 0 })
       }
-      // Count working days for this emp
+      // Count working days for this emp using unified eligibility rules
       let empEligible = 0
       for (const pt of dayTrends) {
         const [y, m, d] = pt.date.split('-').map(Number)
@@ -675,12 +742,7 @@ export const reportsService = {
         const isHol = holidayDateSet.has(pt.date)
         if (isSun || isHol) continue
 
-        const resDate = emp.resignation_date || (emp as any).resignationDate
-        if (emp.status === 'resigned' && (!resDate || resDate <= pt.date)) continue
-        if (emp.status === 'inactive') continue
-
-        const empLeaves = employeeLeavesMap.get(emp.biometric_user_id) || []
-        if (empLeaves.some(l => l.startDate <= pt.date && l.endDate >= pt.date)) continue
+        if (!isEmployeeEligibleForAbsence(emp, pt.date)) continue
 
         empEligible++
       }
@@ -704,14 +766,6 @@ export const reportsService = {
     const absenceRate = totalEligibleWorkdays > 0
       ? Number(((totalAbsentOccurrences / totalEligibleWorkdays) * 100).toFixed(1))
       : (totalPotential > 0 ? Number(((totalAbsentOccurrences / totalPotential) * 100).toFixed(1)) : 0)
-
-    // Status breakdown percentages
-    const inProgressCount = isSingleToday && dailyRecordsArrays[0]
-      ? dailyRecordsArrays[0].filter(r => {
-          const hasIn = Boolean(r.actual_in && !r.actual_in.startsWith('Missing') && r.actual_in !== '—' && r.actual_in !== '-')
-          return hasIn && (!r.has_valid_out || r.status === 'Awaiting OUT')
-        }).length
-      : 0
 
     const onTimeCount = Math.max(0, totalPresentDays - totalLateDays - inProgressCount)
     const breakdownTotal = (onTimeCount + inProgressCount + totalLateDays + totalAbsentOccurrences) || 1

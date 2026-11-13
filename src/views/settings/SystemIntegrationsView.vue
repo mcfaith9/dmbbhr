@@ -134,12 +134,6 @@ function resetTickerSettings() {
   announcementService.resetTickerSettings()
 }
 
-function toggleTickerEditMode() {
-  announcementService.saveTickerSettings({
-    editMode: !tickerSettings.value.editMode
-  })
-}
-
 type TickerCategory = 'all' | 'position' | 'appearance' | 'dimensions' | 'animation' | 'announcements'
 const activeTickerCategory = ref<TickerCategory>('all')
 

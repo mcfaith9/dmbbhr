@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Clock,
@@ -33,6 +33,7 @@ import {
   type DateRangePreset
 } from '@/services/reportsService'
 import { getManilaDateString } from '@/services/attendance'
+import { liveAttendanceService } from '@/services/liveAttendance'
 import { DatePicker } from '@/components/ui/date-picker'
 import { employeeService } from '@/services/employees'
 import { formatDuration } from '@/lib/timeUtils'
@@ -150,8 +151,11 @@ function clearEmployeeFilter() {
   isEmployeeComboboxOpen.value = false
 }
 
-// Load aggregated report data
-async function loadReport(force = false) {
+// Load aggregated report data with race-condition protection
+let activeRequestId = 0
+
+async function loadReport(force = true) {
+  const requestId = ++activeRequestId
   loading.value = true
   try {
     const filters: ReportFilterOptions = {
@@ -164,19 +168,23 @@ async function loadReport(force = false) {
       department: selectedDepartment.value
     }
 
-    reportData.value = await reportsService.getReportSummary(filters, force)
+    const result = await reportsService.getReportSummary(filters, force)
+    if (requestId !== activeRequestId) return
+    reportData.value = result
     absentTablePage.value = 1
   } finally {
-    loading.value = false
+    if (requestId === activeRequestId) {
+      loading.value = false
+    }
   }
 }
 
-// Watch filters to trigger update
+// Watch filters to trigger fresh update immediately whenever period or scope changes
 watch(
   [selectedPreset, selectedLocation, selectedWorkGroup, selectedDepartment, selectedEmployeeBioId],
   () => {
     if (selectedPreset.value !== 'custom') {
-      loadReport()
+      loadReport(true)
     } else {
       if (!customStartDate.value || !customEndDate.value) {
         const today = getManilaDateString(new Date())
@@ -184,26 +192,59 @@ watch(
         if (!customStartDate.value) customStartDate.value = `${y}-${m}-01`
         if (!customEndDate.value) customEndDate.value = today
       }
-      loadReport()
+      loadReport(true)
     }
   }
 )
 
 watch([customStartDate, customEndDate], ([newStart, newEnd]) => {
   if (selectedPreset.value === 'custom' && newStart && newEnd) {
-    loadReport()
+    loadReport(true)
   }
 })
 
 function applyCustomDateRange() {
   if (customStartDate.value && customEndDate.value) {
-    loadReport()
+    loadReport(true)
   }
+}
+
+let liveRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let unSubLogs: (() => void) | null = null
+let unSubEmployees: (() => void) | null = null
+
+function scheduleLiveRefresh(reloadEmployees = false) {
+  if (liveRefreshTimer) {
+    clearTimeout(liveRefreshTimer)
+  }
+  liveRefreshTimer = setTimeout(async () => {
+    liveRefreshTimer = null
+    reportsService.clearCache()
+    if (reloadEmployees) {
+      await loadLookups()
+    }
+    await loadReport(true)
+  }, 150)
 }
 
 onMounted(() => {
   loadLookups()
-  loadReport()
+  loadReport(true)
+  unSubLogs = liveAttendanceService.onLogs(() => {
+    scheduleLiveRefresh(false)
+  })
+  unSubEmployees = employeeService.onEmployeesChanged(() => {
+    scheduleLiveRefresh(true)
+  })
+})
+
+onUnmounted(() => {
+  if (liveRefreshTimer) {
+    clearTimeout(liveRefreshTimer)
+    liveRefreshTimer = null
+  }
+  if (unSubLogs) unSubLogs()
+  if (unSubEmployees) unSubEmployees()
 })
 
 // Helper navigation functions
