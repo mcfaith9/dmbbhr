@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   RefreshCw,
   ArrowRight,
-  TrendingUp,
   Sparkles,
   ShieldCheck,
   ChevronRight,
@@ -22,9 +21,7 @@ import {
   Fingerprint,
   Download,
   Calendar,
-  UserRoundX,
   Percent,
-  SlidersHorizontal
 } from '@lucide/vue'
 import {
   reportsService,
@@ -686,7 +683,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           :class="activeTab === 'overview' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = 'overview'"
         >
-          <TrendingUp class="size-3.5" />
           <span>Attendance Overview</span>
         </button>
 
@@ -696,7 +692,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           :class="activeTab === 'absent_analytics' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = 'absent_analytics'"
         >
-          <UserRoundX class="size-3.5 text-red-500" />
           <span>Absent Analytics</span>
           <Badge v-if="reportData" variant="destructive" class="text-[10px] px-1.5 py-0 text-white">
             {{ reportData.kpis.absentCount }}
@@ -709,7 +704,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           :class="activeTab === 'absent_table' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = 'absent_table'"
         >
-          <SlidersHorizontal class="size-3.5 text-primary" />
           <span>Absent Employee Table</span>
           <Badge v-if="reportData" variant="outline" class="text-[10px] px-1.5 py-0 font-mono">
             {{ reportData.absentRecords.length }}
@@ -991,7 +985,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
             <div class="border-b pb-3">
               <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
                 <Clock class="size-3.5 text-amber-500" />
-                <span>Repeated Lateness (Top Frequency)</span>
+                <span>Lateness (Top Frequency)</span>
               </h3>
               <p class="text-[11px] text-muted-foreground mt-0.5">
                 Employees with the highest number of late arrivals after scheduled shift start.
@@ -1445,7 +1439,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                   <TableHead class="font-semibold text-foreground min-w-[100px]">Department</TableHead>
                   <TableHead class="font-semibold text-foreground min-w-[100px]">Position</TableHead>
                   <TableHead class="font-semibold text-foreground min-w-[90px]">Date</TableHead>
-                  <TableHead class="font-semibold text-foreground min-w-[130px]">Scheduled Duty</TableHead>
                   <TableHead class="font-semibold text-foreground min-w-[90px]">Attendance Status</TableHead>
                   <TableHead class="font-semibold text-foreground min-w-[140px]">Remarks</TableHead>
                   <TableHead class="font-semibold text-foreground text-right w-[70px]">Action</TableHead>
@@ -1473,9 +1466,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                   <TableCell class="py-2.5 font-mono text-[11px] text-foreground whitespace-nowrap">
                     {{ rec.date }}
                     <span class="text-[10px] text-muted-foreground block font-sans">({{ rec.dayOfWeek }})</span>
-                  </TableCell>
-                  <TableCell class="py-2.5 text-[11px] text-muted-foreground whitespace-nowrap font-mono">
-                    {{ rec.scheduledDuty }}
                   </TableCell>
                   <TableCell class="py-2.5">
                     <Badge variant="destructive" class="text-[10px] font-mono text-white">
