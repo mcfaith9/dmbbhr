@@ -150,12 +150,18 @@ export const employeeService = {
       pagibigDeduction?: number
       other_deductions?: number
       otherDeductions?: number
+      exclude_from_biometric?: boolean
+      excludeFromBiometric?: boolean
     }
   ): Promise<Employee> {
     const hasResignationField =
       'resignation_date' in updates ||
       'resignationDate' in updates ||
       (updates.status !== undefined && updates.status !== 'resigned')
+
+    const hasExcludeBiometricField =
+      'exclude_from_biometric' in updates ||
+      'excludeFromBiometric' in updates
 
     return employeeRepository.updateEmployee(bioId, {
       fullName: updates.full_name ?? updates.fullName,
@@ -186,6 +192,11 @@ export const employeeService = {
           }
         : {}),
       status: updates.status,
+      ...(hasExcludeBiometricField
+        ? {
+            excludeFromBiometric: Boolean(updates.exclude_from_biometric ?? updates.excludeFromBiometric)
+          }
+        : {}),
       payrollStatus: updates.payroll_status ?? updates.payrollStatus,
       salaryType: updates.salary_type ?? updates.salaryType,
       basicSalary: updates.basic_salary ?? updates.basicSalary,

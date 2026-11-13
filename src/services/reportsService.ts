@@ -128,6 +128,7 @@ export interface ReportDiagnostics {
   activeEmployees: number
   resignedEmployees: number
   inactiveOrOtherStatusEmployees: number
+  excludedNoBio: number
   excludedNotYetEmployed: number
   excludedRestDayOrHoliday: number
   excludedApprovedLeave: number
@@ -192,7 +193,7 @@ export interface CanonicalEmployee {
 
 export interface EligibilityEvaluationResult {
   eligible: boolean
-  reason: 'eligible' | 'future_date' | 'resigned' | 'inactive_status' | 'not_yet_employed' | 'approved_leave'
+  reason: 'eligible' | 'future_date' | 'resigned' | 'inactive_status' | 'excluded_no_bio' | 'not_yet_employed' | 'approved_leave'
 }
 
 // In-memory cache for fast tab-switching without re-computing
@@ -572,6 +573,11 @@ export function evaluateEmployeeEligibilityOnDate(
     return { eligible: false, reason: 'inactive_status' }
   }
 
+  // Employees marked No Bio are excluded from biometric attendance monitoring and absence calculations
+  if (emp.exclude_from_biometric) {
+    return { eligible: false, reason: 'excluded_no_bio' }
+  }
+
   // Must already be employed on dStr (check earliest hire / contract date if available)
   const startDate = getEffectiveStartDate(emp)
   if (startDate && startDate > dStr) {
@@ -739,6 +745,7 @@ export const reportsService = {
       else diagInactiveOtherCount++
     }
 
+    let diagExcludedNoBio = 0
     let diagExcludedNotYetEmployed = 0
     let diagExcludedRestDayOrHoliday = 0
     let diagExcludedApprovedLeave = 0
@@ -905,6 +912,7 @@ export const reportsService = {
         for (const ce of scopedCanonicalEmployees) {
           const eligibility = evaluateEmployeeEligibilityOnDate(ce, dStr, todayStr, employeeLeavesMap)
           if (!eligibility.eligible) {
+            if (eligibility.reason === 'excluded_no_bio') diagExcludedNoBio++
             if (eligibility.reason === 'not_yet_employed') diagExcludedNotYetEmployed++
             if (eligibility.reason === 'approved_leave') diagExcludedApprovedLeave++
             continue
@@ -1165,6 +1173,7 @@ export const reportsService = {
       activeEmployees: diagActiveCount,
       resignedEmployees: diagResignedCount,
       inactiveOrOtherStatusEmployees: diagInactiveOtherCount,
+      excludedNoBio: diagExcludedNoBio,
       excludedNotYetEmployed: diagExcludedNotYetEmployed,
       excludedRestDayOrHoliday: diagExcludedRestDayOrHoliday,
       excludedApprovedLeave: diagExcludedApprovedLeave,

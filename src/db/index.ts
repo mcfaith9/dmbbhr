@@ -62,6 +62,7 @@ export interface EmployeeRecord {
   regularizationDate?: string // Date Regularized
   resignationDate?: string // Date Resigned / Effective Date
   status: EmploymentStatus
+  excludeFromBiometric?: boolean
   payrollStatus?: 'configured' | 'pending' | 'exempt'
   salaryType?: 'Monthly' | 'Daily' | 'Hourly'
   basicSalary?: number

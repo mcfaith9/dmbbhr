@@ -1099,6 +1099,13 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
 
   const cleanPhoto = getOptString(input.photo)
 
+  let cleanExcludeFromBiometric: boolean | undefined = undefined
+  if ('exclude_from_biometric' in input && input.exclude_from_biometric !== undefined) {
+    cleanExcludeFromBiometric = Boolean(input.exclude_from_biometric)
+  } else if ('excludeFromBiometric' in input && input.excludeFromBiometric !== undefined) {
+    cleanExcludeFromBiometric = Boolean(input.excludeFromBiometric)
+  }
+
   // Construct a fresh, strictly plain object literal (Object.prototype, no Vue proxies, no functions)
   const plainRecord: EmployeeRecord = {
     bioId: cleanBioId,
@@ -1125,6 +1132,7 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     regularizationDate: cleanRegDate,
     resignationDate: cleanResignationDate,
     status: cleanStatus,
+    excludeFromBiometric: cleanExcludeFromBiometric,
     payrollStatus: cleanPayrollStatus,
     salaryType: cleanSalaryType,
     basicSalary: cleanBasicSalary,
@@ -1198,6 +1206,7 @@ export const employeeRepository = {
       regularization_date: rec.regularizationDate,
       resignation_date: rec.resignationDate,
       status: rec.status,
+      exclude_from_biometric: Boolean(rec.excludeFromBiometric),
       payroll_status: rec.payrollStatus,
       salary_type: rec.salaryType,
       basic_salary: rec.basicSalary,
@@ -1325,6 +1334,8 @@ export const employeeRepository = {
       contract_date?: string
       contractDate?: string
       regularization_date?: string
+      exclude_from_biometric?: boolean
+      excludeFromBiometric?: boolean
       payroll_status?: 'configured' | 'pending' | 'exempt'
       salary_type?: 'Monthly' | 'Daily' | 'Hourly'
       basic_salary?: number

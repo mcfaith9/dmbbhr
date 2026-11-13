@@ -51,6 +51,7 @@ import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
 import { DatePicker } from '@/components/ui/date-picker'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -172,6 +173,7 @@ const formContractDate = ref('')
 const formRegularizationDate = ref('')
 const formResignationDate = ref('')
 const formStatus = ref<EmploymentStatus>('active')
+const formExcludeFromBiometric = ref(false)
 
 // Profile Photo Resolution with graceful error fallback to UserRound icon
 const failedImageBioIds = ref<Set<string>>(new Set())
@@ -320,6 +322,7 @@ function resetEmployeeForm() {
   formRegularizationDate.value = ''
   formResignationDate.value = ''
   formStatus.value = 'active'
+  formExcludeFromBiometric.value = false
   formSalaryType.value = 'Daily'
   formBasicSalary.value = ''
   formDailyRate.value = ''
@@ -371,10 +374,12 @@ const availableDepartments = computed(() => {
   return Array.from(depts).sort()
 })
 
-function formatStatusDisplay(status?: string): string {
+function formatStatusDisplay(status?: string, excludeFromBiometric?: boolean): string {
   if (!status) return '—'
   const s = status.toLowerCase().trim()
-  if (s === 'active' || s === 'a') return 'Active'
+  if (s === 'active' || s === 'a') {
+    return excludeFromBiometric ? 'Active / No Bio' : 'Active'
+  }
   if (s === 'resigned' || s === 'r') return 'Resigned'
   if (s === 'suspended' || s === 'suspension') return 'Suspension'
   if (s === 'csr') return 'CSR'
@@ -383,10 +388,12 @@ function formatStatusDisplay(status?: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
-function getStatusBadgeVariant(status?: string): 'success' | 'destructive' | 'warning' | 'outline' | 'secondary' {
+function getStatusBadgeVariant(status?: string, excludeFromBiometric?: boolean): 'success' | 'destructive' | 'warning' | 'outline' | 'secondary' {
   if (!status) return 'outline'
   const s = status.toLowerCase().trim()
-  if (s === 'active' || s === 'a') return 'success'
+  if (s === 'active' || s === 'a') {
+    return excludeFromBiometric ? 'secondary' : 'success'
+  }
   if (s === 'resigned' || s === 'r') return 'destructive'
   if (s === 'suspended' || s === 'suspension') return 'destructive'
   if (s === 'on_leave') return 'warning'
@@ -569,6 +576,7 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   formRegularizationDate.value = emp.regularization_date || ''
   formResignationDate.value = emp.resignation_date || ''
   formStatus.value = (emp.status as any) || 'active'
+  formExcludeFromBiometric.value = Boolean(emp.exclude_from_biometric)
   formSalaryType.value = normalizeSalaryType(emp.salary_type)
   formBasicSalary.value = typeof emp.basic_salary === 'number' ? emp.basic_salary : ''
   formDailyRate.value = typeof emp.daily_rate === 'number' ? emp.daily_rate : ''
@@ -652,6 +660,7 @@ async function saveProfile() {
       regularization_date: formRegularizationDate.value.trim() || undefined,
       resignation_date: formStatus.value === 'resigned' ? (formResignationDate.value.trim() || undefined) : undefined,
       status: formStatus.value,
+      exclude_from_biometric: formExcludeFromBiometric.value,
       salary_type: formSalaryType.value,
       basic_salary: parseOptionalNumber(formBasicSalary.value),
       daily_rate: parseOptionalNumber(formDailyRate.value),
@@ -1135,13 +1144,14 @@ onUnmounted(() => {
               <!-- Employment Status -->
               <TableCell>
                 <Badge
-                  :variant="getStatusBadgeVariant(emp.status)"
+                  :variant="getStatusBadgeVariant(emp.status, emp.exclude_from_biometric)"
                   :class="[
                     'text-[10px] uppercase font-mono',
-                    getStatusBadgeVariant(emp.status) === 'destructive' ? 'text-white' : ''
+                    getStatusBadgeVariant(emp.status, emp.exclude_from_biometric) === 'destructive' ? 'text-white' : '',
+                    (emp.status === 'active' && emp.exclude_from_biometric) ? 'border-border bg-muted text-muted-foreground' : ''
                   ]"
                 >
-                  {{ formatStatusDisplay(emp.status) }}
+                  {{ formatStatusDisplay(emp.status, emp.exclude_from_biometric) }}
                 </Badge>
               </TableCell>
 
@@ -1215,10 +1225,14 @@ onUnmounted(() => {
                   {{ selectedEmployee.full_name }}
                 </h2>
                 <Badge
-                  :variant="getStatusBadgeVariant(selectedEmployee.status)"
-                  class="text-[10px] uppercase font-mono px-2 py-0.5"
+                  :variant="getStatusBadgeVariant(selectedEmployee.status, selectedEmployee.exclude_from_biometric)"
+                  :class="[
+                    'text-[10px] uppercase font-mono px-2 py-0.5',
+                    getStatusBadgeVariant(selectedEmployee.status, selectedEmployee.exclude_from_biometric) === 'destructive' ? 'text-white' : '',
+                    (selectedEmployee.status === 'active' && selectedEmployee.exclude_from_biometric) ? 'border-border bg-muted text-muted-foreground' : ''
+                  ]"
                 >
-                  {{ formatStatusDisplay(selectedEmployee.status) }}
+                  {{ formatStatusDisplay(selectedEmployee.status, selectedEmployee.exclude_from_biometric) }}
                 </Badge>
               </div>
 
@@ -2389,6 +2403,33 @@ onUnmounted(() => {
                     </div>
                     <div class="text-[11px] px-2.5 py-1.5 rounded bg-muted text-muted-foreground font-mono shrink-0">
                       Terminal Key: {{ formBioId }}
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg bg-card p-3 border flex items-start justify-between gap-4">
+                    <div class="space-y-1">
+                      <label
+                        for="employee-exclude-biometric-switch"
+                        class="text-xs font-semibold text-foreground cursor-pointer block"
+                      >
+                        Exclude from Biometric Attendance
+                      </label>
+                      <p class="text-[11px] text-muted-foreground leading-relaxed">
+                        When enabled, this employee will not be included in biometric attendance monitoring or counted as Absent when they have no biometric punch.
+                      </p>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0 pt-0.5">
+                      <Switch
+                        id="employee-exclude-biometric-switch"
+                        v-model="formExcludeFromBiometric"
+                        aria-label="Exclude from Biometric Attendance"
+                      />
+                      <span
+                        class="text-[10px] font-mono font-semibold uppercase w-6 text-right select-none"
+                        :class="formExcludeFromBiometric ? 'text-foreground' : 'text-muted-foreground'"
+                      >
+                        {{ formExcludeFromBiometric ? 'ON' : 'OFF' }}
+                      </span>
                     </div>
                   </div>
 

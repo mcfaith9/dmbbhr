@@ -80,6 +80,7 @@ export interface Employee {
   regularization_date?: string // Date Regularized
   resignation_date?: string // Date Resigned / Effective Date
   status: EmploymentStatus
+  exclude_from_biometric?: boolean // Excluded from biometric attendance monitoring & absence calculation
   // Payroll Profile Information
   payroll_status?: 'configured' | 'pending' | 'exempt'
   salary_type?: 'Monthly' | 'Daily' | 'Hourly'
