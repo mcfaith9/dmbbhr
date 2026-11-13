@@ -123,6 +123,8 @@ export const employeeService = {
       contractDate?: string
       contract_date?: string
       regularizationDate?: string
+      resignationDate?: string
+      resignation_date?: string
       payrollStatus?: 'configured' | 'pending' | 'exempt'
       salaryType?: 'Monthly' | 'Daily' | 'Hourly'
       basicSalary?: number
@@ -150,6 +152,11 @@ export const employeeService = {
       otherDeductions?: number
     }
   ): Promise<Employee> {
+    const hasResignationField =
+      'resignation_date' in updates ||
+      'resignationDate' in updates ||
+      (updates.status !== undefined && updates.status !== 'resigned')
+
     return employeeRepository.updateEmployee(bioId, {
       fullName: updates.full_name ?? updates.fullName,
       preferredName: updates.preferred_name ?? updates.preferredName,
@@ -170,6 +177,14 @@ export const employeeService = {
       hireDate: updates.hire_date ?? updates.hireDate,
       contractDate: updates.contract_date ?? updates.contractDate,
       regularizationDate: updates.regularization_date ?? updates.regularizationDate,
+      ...(hasResignationField
+        ? {
+            resignationDate:
+              updates.status !== undefined && updates.status !== 'resigned'
+                ? undefined
+                : (updates.resignation_date ?? updates.resignationDate)
+          }
+        : {}),
       status: updates.status,
       payrollStatus: updates.payroll_status ?? updates.payrollStatus,
       salaryType: updates.salary_type ?? updates.salaryType,

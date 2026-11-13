@@ -34,7 +34,9 @@ import {
 } from '@/services/reportsService'
 import { getManilaDateString } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
-import { DatePicker } from '@/components/ui/date-picker'
+import { RangeCalendar } from '@/components/ui/range-calendar'
+import { DateFormatter, getLocalTimeZone, parseDate, type DateValue } from '@internationalized/date'
+import type { DateRange } from 'reka-ui'
 import { employeeService } from '@/services/employees'
 import { formatDuration } from '@/lib/timeUtils'
 import type { WorkGroup, Employee } from '@/types'
@@ -67,6 +69,8 @@ const router = useRouter()
 const selectedPreset = ref<DateRangePreset>('today')
 const customStartDate = ref('')
 const customEndDate = ref('')
+const isCustomRangeOpen = ref(false)
+const customRangeValue = ref<DateRange>({ start: undefined, end: undefined })
 const selectedLocation = ref('all')
 const selectedWorkGroup = ref('all')
 const selectedDepartment = ref('all')
@@ -179,6 +183,69 @@ async function loadReport(force = true) {
   }
 }
 
+const rangeDateFormatter = new DateFormatter('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: getLocalTimeZone()
+})
+
+function toIsoDateString(val?: DateValue): string {
+  if (!val) return ''
+  return `${val.year}-${String(val.month).padStart(2, '0')}-${String(val.day).padStart(2, '0')}`
+}
+
+function syncCustomRangeRef(startStr: string, endStr: string) {
+  try {
+    customRangeValue.value = {
+      start: startStr ? (parseDate(startStr) as DateValue) : undefined,
+      end: endStr ? (parseDate(endStr) as DateValue) : undefined
+    }
+  } catch {
+    customRangeValue.value = { start: undefined, end: undefined }
+  }
+}
+
+const formattedCustomRangeLabel = computed(() => {
+  if (!customStartDate.value) return 'Select date range'
+  try {
+    const startDv = parseDate(customStartDate.value)
+    const startText = rangeDateFormatter.format(startDv.toDate(getLocalTimeZone()))
+    if (!customEndDate.value || customEndDate.value === customStartDate.value) {
+      return startText
+    }
+    const endDv = parseDate(customEndDate.value)
+    const endText = rangeDateFormatter.format(endDv.toDate(getLocalTimeZone()))
+    return `${startText} – ${endText}`
+  } catch {
+    return customEndDate.value ? `${customStartDate.value} to ${customEndDate.value}` : customStartDate.value
+  }
+})
+
+function handleRangeUpdate(newRange: DateRange) {
+  customRangeValue.value = newRange
+  const startStr = toIsoDateString(newRange?.start as DateValue | undefined)
+  const endStr = toIsoDateString(newRange?.end as DateValue | undefined)
+  if (startStr && endStr) {
+    const [s, e] = startStr <= endStr ? [startStr, endStr] : [endStr, startStr]
+    customStartDate.value = s
+    customEndDate.value = e
+    isCustomRangeOpen.value = false
+  }
+}
+
+function applyPresetQuickCustom(daysBack: number) {
+  const todayStr = getManilaDateString(new Date())
+  const [y, m, d] = todayStr.split('-').map(Number)
+  const startObj = new Date(Date.UTC(y, m - 1, d))
+  startObj.setUTCDate(startObj.getUTCDate() - daysBack)
+  const startStr = getManilaDateString(startObj)
+  customStartDate.value = startStr
+  customEndDate.value = todayStr
+  syncCustomRangeRef(startStr, todayStr)
+  isCustomRangeOpen.value = false
+}
+
 // Watch filters to trigger fresh update immediately whenever period or scope changes
 watch(
   [selectedPreset, selectedLocation, selectedWorkGroup, selectedDepartment, selectedEmployeeBioId],
@@ -192,6 +259,7 @@ watch(
         if (!customStartDate.value) customStartDate.value = `${y}-${m}-01`
         if (!customEndDate.value) customEndDate.value = today
       }
+      syncCustomRangeRef(customStartDate.value, customEndDate.value)
       loadReport(true)
     }
   }
@@ -202,12 +270,6 @@ watch([customStartDate, customEndDate], ([newStart, newEnd]) => {
     loadReport(true)
   }
 })
-
-function applyCustomDateRange() {
-  if (customStartDate.value && customEndDate.value) {
-    loadReport(true)
-  }
-}
 
 let liveRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let unSubLogs: (() => void) | null = null
@@ -402,32 +464,45 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           </Select>
         </div>
 
-        <!-- Custom Date Range Inputs (Only shown when 'custom' is selected) -->
+        <!-- Custom Date Range Picker (Shadcn-Vue RangeCalendar, shown when 'custom' is selected) -->
         <div v-if="selectedPreset === 'custom'" class="flex flex-wrap items-center gap-2">
-          <div class="flex items-center gap-1.5">
-            <span class="text-xs font-semibold text-muted-foreground whitespace-nowrap">Start:</span>
-            <DatePicker
-              v-model="customStartDate"
-              placeholder="Start Date"
-              class="w-[145px]"
-            />
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="text-xs font-semibold text-muted-foreground whitespace-nowrap">End:</span>
-            <DatePicker
-              v-model="customEndDate"
-              placeholder="End Date"
-              class="w-[145px]"
-            />
-          </div>
-          <Button
-            size="sm"
-            class="h-8 text-xs px-3 cursor-pointer shadow-xs"
-            :disabled="!customStartDate || !customEndDate"
-            @click="applyCustomDateRange"
-          >
-            Apply
-          </Button>
+          <span class="text-xs font-semibold text-muted-foreground whitespace-nowrap">Range:</span>
+          <Popover v-model:open="isCustomRangeOpen">
+            <PopoverTrigger as-child>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs font-medium bg-card justify-start gap-2 min-w-[215px] cursor-pointer shadow-2xs"
+              >
+                <Calendar class="size-3.5 text-primary shrink-0" />
+                <span class="truncate">{{ formattedCustomRangeLabel }}</span>
+              </Button>
+            </PopoverTrigger>
+
+            <PopoverContent class="w-auto p-0 z-[60]" align="start">
+              <div class="p-2 border-b bg-muted/20 flex items-center justify-between gap-2 text-[11px]">
+                <span class="font-medium text-muted-foreground">Select start and end dates</span>
+                <div class="flex items-center gap-1">
+                  <Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-[11px] cursor-pointer" @click="applyPresetQuickCustom(6)">
+                    Last 7d
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-[11px] cursor-pointer" @click="applyPresetQuickCustom(13)">
+                    Last 14d
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-[11px] cursor-pointer" @click="applyPresetQuickCustom(29)">
+                    Last 30d
+                  </Button>
+                </div>
+              </div>
+              <RangeCalendar
+                :model-value="(customRangeValue as any)"
+                :number-of-months="2"
+                initial-focus
+                @update:model-value="handleRangeUpdate"
+              />
+            </PopoverContent>
+          </Popover>
         </div>
 
         <!-- Department Filter -->
@@ -598,7 +673,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
         <!-- Current Filter Label Badge -->
         <div v-if="reportData" class="ml-auto flex items-center gap-2">
           <span class="text-[11px] font-mono text-muted-foreground hidden lg:inline">
-            Active Range: <strong>{{ reportData.dateRangeLabel }}</strong> ({{ reportData.daysCount }} days)
+            Active Range: <strong>{{ reportData.dateRangeLabel }}</strong> ({{ reportData.daysCount }} {{ reportData.daysCount === 1 ? 'day' : 'days' }} · {{ reportData.kpis.uniqueEligibleEmployees }} eligible)
           </span>
         </div>
       </div>
@@ -688,7 +763,9 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           <!-- KPI 1: Present -->
           <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs space-y-2 hover:border-emerald-500/40 transition-colors">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground">Present</span>
+              <span class="text-xs font-medium text-muted-foreground">
+                {{ reportData.daysCount > 1 ? 'Present (Daily Total)' : 'Present' }}
+              </span>
               <div class="size-7 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
                 <CheckCircle2 class="size-4" />
               </div>
@@ -698,7 +775,12 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                 {{ reportData.kpis.presentCount }}
               </div>
               <div class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
-                <span>{{ reportData.kpis.attendanceRate }}% attendance rate</span>
+                <span v-if="reportData.daysCount > 1">
+                  {{ reportData.kpis.uniquePresentEmployees }} unique · {{ reportData.kpis.attendanceRate }}% rate
+                </span>
+                <span v-else>
+                  {{ reportData.kpis.attendanceRate }}% rate (of {{ reportData.kpis.uniqueEligibleEmployees }} eligible)
+                </span>
               </div>
             </div>
           </div>
@@ -706,7 +788,9 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           <!-- KPI 2: Late Arrivals -->
           <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs space-y-2 hover:border-amber-500/40 transition-colors">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground">Late Arrivals</span>
+              <span class="text-xs font-medium text-muted-foreground">
+                {{ reportData.daysCount > 1 ? 'Late (Daily Total)' : 'Late Arrivals' }}
+              </span>
               <div class="size-7 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center">
                 <Clock class="size-4" />
               </div>
@@ -717,7 +801,12 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
               </div>
               <div class="mt-0.5 space-y-0.5">
                 <div class="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
-                  <span>{{ formatDuration(reportData.kpis.totalLateMinutes) }} total late time</span>
+                  <span v-if="reportData.daysCount > 1">
+                    {{ reportData.kpis.uniqueLateEmployees }} unique · {{ formatDuration(reportData.kpis.totalLateMinutes) }}
+                  </span>
+                  <span v-else>
+                    {{ formatDuration(reportData.kpis.totalLateMinutes) }} total late time
+                  </span>
                 </div>
                 <div class="text-[10px] text-muted-foreground font-mono">
                   {{ reportData.kpis.totalLateMinutes.toLocaleString() }} minute{{ reportData.kpis.totalLateMinutes === 1 ? '' : 's' }}
@@ -732,7 +821,9 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
             @click="activeTab = 'absent_analytics'"
           >
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground">Absent</span>
+              <span class="text-xs font-medium text-muted-foreground">
+                {{ reportData.daysCount > 1 ? 'Absent (Daily Total)' : 'Absent' }}
+              </span>
               <div class="size-7 rounded-lg bg-red-500/10 text-red-500 flex items-center justify-center">
                 <AlertCircle class="size-4" />
               </div>
@@ -742,7 +833,12 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                 {{ reportData.kpis.absentCount }}
               </div>
               <div class="text-[11px] text-muted-foreground font-medium mt-0.5">
-                {{ reportData.kpis.absenceRate }}% absence rate ({{ reportData.kpis.uniqueAbsentEmployees }} unique)
+                <span v-if="reportData.daysCount > 1">
+                  {{ reportData.kpis.uniqueAbsentEmployees }} unique · {{ reportData.kpis.absenceRate }}% rate
+                </span>
+                <span v-else>
+                  {{ reportData.kpis.absenceRate }}% absence rate ({{ reportData.kpis.uniqueEligibleEmployees }} eligible)
+                </span>
               </div>
             </div>
           </div>
@@ -750,7 +846,9 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           <!-- KPI 4: Missing OUT / Active Shifts -->
           <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs space-y-2 hover:border-indigo-500/40 transition-colors">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-muted-foreground">{{ selectedPreset === 'today' ? 'Awaiting OUT / In Progress' : 'Missing OUT' }}</span>
+              <span class="text-xs font-medium text-muted-foreground">
+                {{ selectedPreset === 'today' ? 'Awaiting OUT / In Progress' : (reportData.daysCount > 1 ? 'Missing OUT (Daily Total)' : 'Missing OUT') }}
+              </span>
               <div class="size-7 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
                 <FileQuestion class="size-4" />
               </div>
@@ -760,7 +858,12 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                 {{ reportData.kpis.missingOutCount }}
               </div>
               <div class="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">
-                {{ selectedPreset === 'today' ? 'Active shifts awaiting exit' : 'Awaiting / no shift exit' }}
+                <span v-if="reportData.daysCount > 1">
+                  {{ reportData.kpis.uniqueMissingOutEmployees }} unique employees
+                </span>
+                <span v-else>
+                  {{ selectedPreset === 'today' ? 'Active shifts awaiting exit' : 'Awaiting / no shift exit' }}
+                </span>
               </div>
             </div>
           </div>

@@ -12,6 +12,31 @@ import { employeeRepository } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
 import { manualAttendanceRepository } from './manualAttendanceRepository'
 
+import type { EmployeeRecord } from '@/db'
+
+function normalizeCanonicalBioId(id?: string | null): string {
+  const cleaned = String(id ?? '')
+    .trim()
+    .replace(/^(?:emp|user)[-_]/i, '')
+    .trim()
+    .toLowerCase()
+  if (!cleaned) return ''
+  return /^\d+$/.test(cleaned) ? (cleaned.replace(/^0+/, '') || '0') : cleaned
+}
+
+function matchesLocationFilter(empLocation: string, locationFilter?: string): boolean {
+  if (!locationFilter || locationFilter === 'all') return true
+  const target = locationFilter.toLowerCase().trim()
+  const current = (empLocation || '').toLowerCase().trim()
+  return (
+    current === target ||
+    (target === 'loc-dmbb-cebu' && current === 'dmbb cebu') ||
+    (target === 'loc-dbb-cebu' && current === 'dbb cebu') ||
+    (target === 'loc-dbb-negros' && current === 'dbb negros') ||
+    (target === 'loc-dbb-iloilo' && current === 'dbb iloilo')
+  )
+}
+
 export const attendanceRepository = {
   /**
    * Retrieves daily attendance records for a target date.
@@ -31,24 +56,9 @@ export const attendanceRepository = {
 
     const selectedDate = targetDate || getManilaDateString(new Date())
 
-    // 1. Fetch only this single day's raw punches via indexed query
-    let dayPunches = await punchRepository.getPunchesByDate(selectedDate)
-    if (bioIdFilter && bioIdFilter.trim()) {
-      dayPunches = dayPunches.filter(p => p.user_id.toLowerCase() === bioIdFilter.trim().toLowerCase())
-    }
-
-    // 2. Group punches by Bio ID
-    const userGroups = new Map<string, AttendanceLog[]>()
-    for (let i = 0; i < dayPunches.length; i++) {
-      const p = dayPunches[i]
-      const uid = p.user_id
-      if (!userGroups.has(uid)) {
-        userGroups.set(uid, [])
-      }
-      userGroups.get(uid)!.push(p)
-    }
-
-    const [employeeMap, workGroupMap, manualAdjustmentsMap, leaves] = await Promise.all([
+    // 1. Fetch day punches & lookup tables concurrently
+    const [rawDayPunches, employeeMap, workGroupMap, manualAdjustmentsMap, leaves] = await Promise.all([
+      punchRepository.getPunchesByDate(selectedDate),
       employeeRepository.getEmployeeMap(),
       workGroupRepository.getMap(),
       manualAttendanceRepository.getAdjustmentsMapForDate(selectedDate),
@@ -60,37 +70,73 @@ export const attendanceRepository = {
         .catch(() => [])
     ])
 
+    // Build canonical lookup maps so 05007 / 5007 / EMP-5007 resolve deterministically
+    const canonicalEmployeeMap = new Map<string, EmployeeRecord>()
+    for (const emp of employeeMap.values()) {
+      const k1 = normalizeCanonicalBioId(emp.bioId)
+      const k2 = normalizeCanonicalBioId(emp.employeeNumber)
+      if (k1 && !canonicalEmployeeMap.has(k1)) canonicalEmployeeMap.set(k1, emp)
+      if (k2 && !canonicalEmployeeMap.has(k2)) canonicalEmployeeMap.set(k2, emp)
+    }
+
+    const canonicalAdjustmentsMap = new Map<string, any>()
+    for (const [k, adj] of manualAdjustmentsMap.entries()) {
+      const ck = normalizeCanonicalBioId(k)
+      if (ck && !canonicalAdjustmentsMap.has(ck)) canonicalAdjustmentsMap.set(ck, adj)
+    }
+
     const leaveMap = new Map<string, any>()
+    const canonicalLeaveMap = new Map<string, any>()
     for (const l of leaves) {
       leaveMap.set(l.bioId, l)
+      const ck = normalizeCanonicalBioId(l.bioId)
+      if (ck && !canonicalLeaveMap.has(ck)) canonicalLeaveMap.set(ck, l)
+    }
+
+    let dayPunches = rawDayPunches
+    if (bioIdFilter && bioIdFilter.trim()) {
+      const filterNorm = normalizeCanonicalBioId(bioIdFilter)
+      const filterLower = bioIdFilter.trim().toLowerCase()
+      dayPunches = dayPunches.filter(p => {
+        const pNorm = normalizeCanonicalBioId(p.user_id)
+        return p.user_id.trim().toLowerCase() === filterLower || (filterNorm !== '' && pNorm === filterNorm)
+      })
+    }
+
+    // 2. Group punches by canonical Bio ID (preserving official employee bioId when matched)
+    const userGroups = new Map<string, AttendanceLog[]>()
+    for (let i = 0; i < dayPunches.length; i++) {
+      const p = dayPunches[i]
+      const rawUid = String(p.user_id || '').trim()
+      const canonUid = normalizeCanonicalBioId(rawUid)
+      const matchedEmp = employeeMap.get(rawUid) || (canonUid ? canonicalEmployeeMap.get(canonUid) : undefined)
+      const groupKey = matchedEmp?.bioId || rawUid
+      if (!userGroups.has(groupKey)) {
+        userGroups.set(groupKey, [])
+      }
+      userGroups.get(groupKey)!.push(p)
     }
 
     const records: DailyAttendanceRecord[] = []
     const processedBioIds = new Set<string>()
+    const processedCanonicalIds = new Set<string>()
 
     // 3. Process each employee's daily punches with Work Group context
     for (const [bioId, punches] of userGroups.entries()) {
+      const canonUid = normalizeCanonicalBioId(bioId)
       processedBioIds.add(bioId)
-      const emp = employeeMap.get(bioId)
+      if (canonUid) processedCanonicalIds.add(canonUid)
+
+      const emp = employeeMap.get(bioId) || (canonUid ? canonicalEmployeeMap.get(canonUid) : undefined)
       const empLocation = emp?.location || punches[0].location_name || 'DBB CEBU'
       const empWgId = emp?.workGroupId || 'wg-group-c'
       const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
-      const manualAdj = manualAdjustmentsMap.get(bioId)
-      const leaveRec = leaveMap.get(bioId)
+      const manualAdj = manualAdjustmentsMap.get(bioId) || (canonUid ? canonicalAdjustmentsMap.get(canonUid) : undefined)
+      const leaveRec = leaveMap.get(bioId) || (canonUid ? canonicalLeaveMap.get(canonUid) : undefined)
 
       // Location filter
-      if (locationFilter && locationFilter !== 'all') {
-        const target = locationFilter.toLowerCase().trim()
-        const current = empLocation.toLowerCase().trim()
-        const matches =
-          current === target ||
-          (target === 'loc-dmbb-cebu' && current === 'dmbb cebu') ||
-          (target === 'loc-dbb-cebu' && current === 'dbb cebu') ||
-          (target === 'loc-dbb-negros' && current === 'dbb negros') ||
-          (target === 'loc-dbb-iloilo' && current === 'dbb iloilo')
-        if (!matches) {
-          continue
-        }
+      if (!matchesLocationFilter(empLocation, locationFilter)) {
+        continue
       }
 
       // Work Group filter
@@ -101,7 +147,7 @@ export const attendanceRepository = {
       }
 
       const empContext: EmployeeScheduleContext = {
-        bioId,
+        bioId: emp?.bioId || bioId,
         name: emp?.fullName || punches[0].employee_name || `User ${bioId}`,
         department: emp?.department || '',
         location: empLocation,
@@ -118,7 +164,7 @@ export const attendanceRepository = {
         resignationDate: emp?.resignationDate
       }
 
-      const dailyRecord = processEmployeeDayPunches(bioId, punches, selectedDate, empContext, customConfig)
+      const dailyRecord = processEmployeeDayPunches(empContext.bioId, punches, selectedDate, empContext, customConfig)
       if (dailyRecord) {
         records.push(dailyRecord)
       }
@@ -126,26 +172,30 @@ export const attendanceRepository = {
 
     // Process employees with approved leave who had 0 punches
     for (const [bioId, leaveRec] of leaveMap.entries()) {
-      if (processedBioIds.has(bioId)) continue
-      const emp = employeeMap.get(bioId)
-      if (!emp || emp.status === 'resigned') continue
+      const canonUid = normalizeCanonicalBioId(bioId)
+      if (processedBioIds.has(bioId) || (canonUid && processedCanonicalIds.has(canonUid))) continue
+      const emp = employeeMap.get(bioId) || (canonUid ? canonicalEmployeeMap.get(canonUid) : undefined)
+      const isResignedOnSelectedDate =
+        emp &&
+        (emp.status === 'resigned' || (emp.status as string).toLowerCase() === 'r') &&
+        (!emp.resignationDate || emp.resignationDate <= selectedDate)
+      if (!emp || isResignedOnSelectedDate) continue
 
       const empLocation = emp.location || 'DBB CEBU'
       const empWgId = emp.workGroupId || 'wg-group-c'
       const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
 
-      if (locationFilter && locationFilter !== 'all') {
-        const target = locationFilter.toLowerCase().trim()
-        const current = empLocation.toLowerCase().trim()
-        if (target !== current) continue
-      }
+      if (!matchesLocationFilter(empLocation, locationFilter)) continue
       if (workGroupFilter && workGroupFilter !== 'all') {
         if (empWgId !== workGroupFilter) continue
       }
 
+      processedBioIds.add(emp.bioId)
+      if (canonUid) processedCanonicalIds.add(canonUid)
+
       const empContext: EmployeeScheduleContext = {
-        bioId,
-        name: emp.fullName || `User ${bioId}`,
+        bioId: emp.bioId,
+        name: emp.fullName || `User ${emp.bioId}`,
         department: emp.department || '',
         location: empLocation,
         workGroupId: empWgId,
@@ -155,10 +205,12 @@ export const attendanceRepository = {
         lunchStart: wg?.lunchStart || '12:00',
         lunchEnd: wg?.lunchEnd || '13:00',
         gracePeriodMinutes: wg?.gracePeriodMinutes || 0,
-        approvedLeave: leaveRec
+        approvedLeave: leaveRec,
+        employeeStatus: emp.status,
+        resignationDate: emp.resignationDate
       }
 
-      const dailyRecord = processEmployeeDayPunches(bioId, [], selectedDate, empContext, customConfig)
+      const dailyRecord = processEmployeeDayPunches(emp.bioId, [], selectedDate, empContext, customConfig)
       if (dailyRecord) {
         records.push(dailyRecord)
       }
@@ -187,7 +239,9 @@ export const attendanceRepository = {
    * Updates the aggregated summary table for calendar Month views.
    */
   async updateDailySummaryCache(dateStr: string, records: DailyAttendanceRecord[]): Promise<DailySummaryRecord> {
-    const activeRecords = records.filter(r => r.employee_status !== 'resigned')
+    const activeRecords = records.filter(
+      r => r.employee_status !== 'resigned' || (r.resignation_date && r.resignation_date > dateStr)
+    )
     const presentRecords = activeRecords.filter(r => r.status !== 'Leave' && r.status !== 'On Leave')
     const presentCount = presentRecords.length
     const onTimeCount = presentRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
