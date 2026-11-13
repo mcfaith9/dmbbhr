@@ -838,7 +838,7 @@ onMounted(() => {
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div class="space-y-1">
               <div class="flex items-center gap-2">
-                <Bell class="size-4 text-blue-500" />
+                <Bell class="size-4" />
                 <Label class="text-sm font-bold text-foreground">Employee Biometric Punch Notifications</Label>
                 <Badge variant="outline" class="text-[10px] font-mono px-1.5 py-0 border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/10">
                   {{ activeHrNoticesCount }} Active
@@ -850,7 +850,7 @@ onMounted(() => {
             </div>
             <Button
               size="sm"
-              class="h-8 gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white shrink-0 shadow-xs font-medium cursor-pointer"
+              class="h-8 gap-1.5 text-xs shrink-0 shadow-xs font-medium cursor-pointer"
               @click="showHrNoticeDialog = true"
             >
               <Bell class="size-3.5" />
@@ -1091,18 +1091,6 @@ onMounted(() => {
 
             <!-- Master Toggle & Quick Action Buttons -->
             <div class="flex items-center gap-2 flex-wrap shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                class="h-8 gap-1.5 text-xs cursor-pointer font-medium shrink-0"
-                :class="tickerSettings.editMode ? 'border-primary text-primary bg-primary/10' : ''"
-                title="Toggle interactive drag handles and coordinate snap on the Punch Display"
-                @click="toggleTickerEditMode"
-              >
-                <Move class="size-3.5" />
-                <span>{{ tickerSettings.editMode ? 'Lock Position' : 'Reposition on Display' }}</span>
-              </Button>
-
               <Button
                 variant="outline"
                 size="sm"
@@ -1598,7 +1586,7 @@ onMounted(() => {
                     @click="openCreateDialog"
                   >
                     <Plus class="size-3.5" />
-                    <span>+ Add Announcement</span>
+                    <span>Add Announcement</span>
                   </Button>
                 </div>
 
