@@ -558,6 +558,7 @@ export function findCachedEmployee(identifier?: string | null): { key: string; r
 
 export interface EmploymentStatusParseResult {
   status?: EmploymentStatus
+  excludeFromBiometric?: boolean
   isValid: boolean
   display: string
   raw: string
@@ -570,8 +571,13 @@ export function parseEmploymentStatus(val: any): EmploymentStatusParseResult | n
   if (str === '' || str === '-' || str === '—') return null
 
   const upper = str.toUpperCase()
+  const normalized = upper.replace(/[\s\-\/]+/g, ' ').trim()
+
+  if (normalized === 'ACTIVE NB' || normalized === 'ACTIVE NO BIO' || normalized === 'ACTIVE NOBIO') {
+    return { status: 'active', excludeFromBiometric: true, isValid: true, display: 'Active - NB', raw: str }
+  }
   if (upper === 'A' || upper === 'ACTIVE') {
-    return { status: 'active', isValid: true, display: 'Active', raw: str }
+    return { status: 'active', excludeFromBiometric: false, isValid: true, display: 'Active', raw: str }
   }
   if (upper === 'R' || upper === 'RESIGNED') {
     return { status: 'resigned', isValid: true, display: 'Resigned', raw: str }
@@ -592,10 +598,12 @@ export function parseEmploymentStatus(val: any): EmploymentStatusParseResult | n
   return { isValid: false, isUnsupported: true, display: str, raw: str }
 }
 
-export function getStatusDisplayName(status?: string): string {
+export function getStatusDisplayName(status?: string, excludeFromBiometric?: boolean): string {
   if (!status) return '—'
   const s = status.toLowerCase().trim()
-  if (s === 'active' || s === 'a') return 'Active'
+  if (s === 'active' || s === 'a') {
+    return excludeFromBiometric ? 'Active - NB' : 'Active'
+  }
   if (s === 'resigned' || s === 'r') return 'Resigned'
   if (s === 'suspended' || s === 'suspension') return 'Suspension'
   if (s === 'csr') return 'CSR'
@@ -778,9 +786,11 @@ export interface PeopleImportRowItem {
   philhealthNumber?: string
   tin?: string
   rawStatus?: string
-  displayStatus: string // e.g. "Active → Resigned", "Active", "Resigned"
+  displayStatus: string // e.g. "Active → Resigned", "Active", "Active - NB", "Resigned"
   previousStatus?: string
+  previousExcludeFromBiometric?: boolean
   newStatus?: string
+  newExcludeFromBiometric?: boolean
   isStatusChanged: boolean
   action: 'UPDATE' | 'CREATE' | 'UNCHANGED' | 'SKIP'
   status: string
@@ -1700,9 +1710,12 @@ export const employeeRepository = {
       }
 
       const bioId = String(rawId).trim()
+      const existingLookup = findCachedEmployee(bioId)
+      const existingRecord = existingLookup?.record
+      const canonicalBioId = existingRecord ? existingRecord.bioId : bioId
 
       // Guard against duplicate Bio IDs in the same import file
-      if (seenBioIdsInImport.has(bioId)) {
+      if (seenBioIdsInImport.has(canonicalBioId)) {
         const item: PeopleImportRowItem = {
           rowNumber: rowNum,
           id: bioId,
@@ -1728,7 +1741,7 @@ export const employeeRepository = {
         errorsCount++
         continue
       }
-      seenBioIdsInImport.add(bioId)
+      seenBioIdsInImport.add(canonicalBioId)
 
       // Resolve Work Group if provided
       let matchedWg: WorkGroup | undefined = undefined
@@ -1750,8 +1763,6 @@ export const employeeRepository = {
         }
       }
 
-      const existingRecord = employeeCache!.get(bioId)
-
       if (existingRecord) {
         // CASE A: Existing Employee Match
         const existingWg = workGroups.find(w => w.id === (existingRecord.workGroupId || 'wg-group-c'))
@@ -1769,6 +1780,12 @@ export const employeeRepository = {
         const targetStatus: EmploymentStatus = (parsedStatus && parsedStatus.isValid)
           ? parsedStatus.status!
           : existingRecord.status
+
+        const existingExcludeBio = Boolean(existingRecord.excludeFromBiometric)
+        const targetExcludeFromBiometric: boolean | undefined =
+          parsedStatus && parsedStatus.isValid && parsedStatus.excludeFromBiometric !== undefined
+            ? parsedStatus.excludeFromBiometric
+            : existingRecord.excludeFromBiometric
 
         const targetDateOfBirth = (parsedBirthday && parsedBirthday.isValid)
           ? parsedBirthday.formatted
@@ -1803,6 +1820,13 @@ export const employeeRepository = {
         const isStatusUpdated = Boolean(
           parsedStatus && parsedStatus.isValid && parsedStatus.status !== existingRecord.status
         )
+        const isBiometricExclusionUpdated = Boolean(
+          parsedStatus &&
+          parsedStatus.isValid &&
+          parsedStatus.excludeFromBiometric !== undefined &&
+          Boolean(targetExcludeFromBiometric) !== existingExcludeBio
+        )
+        const isEffectiveStatusChanged = isStatusUpdated || isBiometricExclusionUpdated
         const isBirthdayUpdated = Boolean(
           parsedBirthday && parsedBirthday.isValid && parsedBirthday.formatted !== (existingRecord.dateOfBirth || '')
         )
@@ -1822,7 +1846,7 @@ export const employeeRepository = {
           cleanTin !== undefined && cleanTin !== (existingRecord.tin || '')
         )
 
-        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isStatusUpdated || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated
+        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isEffectiveStatusChanged || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -1848,6 +1872,7 @@ export const employeeRepository = {
           contractDate: targetContractDate,
           dateOfBirth: targetDateOfBirth,
           status: targetStatus,
+          excludeFromBiometric: targetExcludeFromBiometric,
           resignationDate,
           sssNumber: targetSss,
           pagibigNumber: targetHdmf,
@@ -1857,16 +1882,19 @@ export const employeeRepository = {
           updatedAt: new Date().toISOString()
         })
 
+        const prevStatusDisplay = getStatusDisplayName(existingRecord.status, existingExcludeBio)
+        const nextStatusDisplay = getStatusDisplayName(targetStatus, Boolean(targetExcludeFromBiometric))
+
         if (hasChanges) {
           updatedCount++
-          if (isStatusUpdated) {
+          if (isEffectiveStatusChanged) {
             statusUpdatedCount++
           }
-          recordsToApplyMap.set(bioId, targetRecord)
+          recordsToApplyMap.set(canonicalBioId, targetRecord)
 
           const changeNotes: string[] = []
-          if (isStatusUpdated) {
-            changeNotes.push(`Status: ${getStatusDisplayName(existingRecord.status)} → ${getStatusDisplayName(targetStatus)}`)
+          if (isEffectiveStatusChanged) {
+            changeNotes.push(`Status: ${prevStatusDisplay} → ${nextStatusDisplay}`)
           }
           if (isNameUpdated) changeNotes.push(`Name: ${cleanName}`)
           if (isDeptUpdated) changeNotes.push(`Dept: ${cleanDept}`)
@@ -1884,13 +1912,13 @@ export const employeeRepository = {
             statusText += ` (Warning: ${rowWarnings.join('; ')})`
           }
 
-          const displayStatus = isStatusUpdated
-            ? `${getStatusDisplayName(existingRecord.status)} → ${getStatusDisplayName(targetStatus)}`
-            : getStatusDisplayName(existingRecord.status)
+          const displayStatus = isEffectiveStatusChanged
+            ? `${prevStatusDisplay} → ${nextStatusDisplay}`
+            : prevStatusDisplay
 
           const rowItem: PeopleImportRowItem = {
             rowNumber: rowNum,
-            id: bioId,
+            id: canonicalBioId,
             name: targetName,
             group: cleanGroupStr || '',
             department: targetDept,
@@ -1904,8 +1932,10 @@ export const employeeRepository = {
             rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
             displayStatus,
             previousStatus: existingRecord.status,
+            previousExcludeFromBiometric: existingExcludeBio,
             newStatus: targetStatus,
-            isStatusChanged: isStatusUpdated,
+            newExcludeFromBiometric: Boolean(targetExcludeFromBiometric),
+            isStatusChanged: isEffectiveStatusChanged,
             action: 'UPDATE',
             status: statusText,
             isWarning: hasUnknownGroup || rowWarnings.length > 0,
@@ -1916,7 +1946,7 @@ export const employeeRepository = {
           allRows.push(rowItem)
 
           matchedUpdated.push({
-            bioId,
+            bioId: canonicalBioId,
             existingName: existingRecord.fullName,
             newName: targetName,
             existingGroup: existingWg?.name || existingRecord.workGroupId,
@@ -1928,7 +1958,7 @@ export const employeeRepository = {
             isNameUpdated,
             isGroupUpdated,
             isDeptUpdated,
-            isStatusUpdated,
+            isStatusUpdated: isEffectiveStatusChanged,
             existingContractDate: existingRecord.contractDate,
             newContractDate: targetContractDate,
             isContractDateUpdated,
@@ -1938,8 +1968,8 @@ export const employeeRepository = {
           unchangedCount++
           const rawStatusStr = rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : ''
           const displayStatus = (rawStatusStr !== '' && parsedStatus && parsedStatus.isValid)
-            ? `${rawStatusStr.toUpperCase()} → ${getStatusDisplayName(existingRecord.status)}`
-            : getStatusDisplayName(existingRecord.status)
+            ? `${rawStatusStr.toUpperCase()} → ${prevStatusDisplay}`
+            : prevStatusDisplay
           let statusText = 'No changes'
           if (rowWarnings.length > 0) {
             statusText = `No changes (Warning: ${rowWarnings.join('; ')})`
@@ -1949,7 +1979,7 @@ export const employeeRepository = {
 
           const rowItem: PeopleImportRowItem = {
             rowNumber: rowNum,
-            id: bioId,
+            id: canonicalBioId,
             name: existingRecord.fullName,
             group: cleanGroupStr || '',
             department: existingRecord.department || 'Operations',
@@ -1963,7 +1993,9 @@ export const employeeRepository = {
             rawStatus: rawStatus !== undefined && rawStatus !== null ? String(rawStatus).trim() : undefined,
             displayStatus,
             previousStatus: existingRecord.status,
+            previousExcludeFromBiometric: existingExcludeBio,
             newStatus: existingRecord.status,
+            newExcludeFromBiometric: existingExcludeBio,
             isStatusChanged: false,
             action: 'UNCHANGED',
             status: statusText,
@@ -1990,6 +2022,9 @@ export const employeeRepository = {
         const targetStatus: EmploymentStatus = (parsedStatus && parsedStatus.isValid)
           ? parsedStatus.status!
           : 'active'
+        const targetExcludeFromBiometric = Boolean(
+          parsedStatus && parsedStatus.isValid && parsedStatus.excludeFromBiometric
+        )
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -2012,6 +2047,7 @@ export const employeeRepository = {
           contractDate: targetContractDate,
           dateOfBirth: targetDateOfBirth,
           status: targetStatus,
+          excludeFromBiometric: targetExcludeFromBiometric,
           resignationDate,
           sssNumber: cleanSss,
           pagibigNumber: cleanHdmf,
@@ -2021,7 +2057,7 @@ export const employeeRepository = {
           updatedAt: new Date().toISOString()
         })
 
-        recordsToApplyMap.set(bioId, targetRecord)
+        recordsToApplyMap.set(canonicalBioId, targetRecord)
 
         let statusText = 'New employee'
         if (hasUnknownGroup) {
@@ -2031,9 +2067,10 @@ export const employeeRepository = {
           statusText += ` (Warning: ${rowWarnings.join('; ')})`
         }
 
+        const targetStatusDisplay = getStatusDisplayName(targetStatus, targetExcludeFromBiometric)
         const displayStatus = (parsedStatus && parsedStatus.raw && parsedStatus.isValid)
-          ? `${parsedStatus.raw.toUpperCase()} → ${getStatusDisplayName(targetStatus)}`
-          : getStatusDisplayName(targetStatus)
+          ? `${parsedStatus.raw.toUpperCase()} → ${targetStatusDisplay}`
+          : targetStatusDisplay
 
         const rowItem: PeopleImportRowItem = {
           rowNumber: rowNum,
@@ -2052,6 +2089,7 @@ export const employeeRepository = {
           displayStatus,
           previousStatus: undefined,
           newStatus: targetStatus,
+          newExcludeFromBiometric: targetExcludeFromBiometric,
           isStatusChanged: false,
           action: 'CREATE',
           status: statusText,
@@ -2200,7 +2238,7 @@ export const employeeRepository = {
       'DEPARTMENT': emp.department || 'Operations',
       'LOCATION': emp.location,
       'POSITION': emp.position || 'Staff',
-      'STATUS': getStatusDisplayName(emp.status),
+      'STATUS': getStatusDisplayName(emp.status, emp.exclude_from_biometric),
       'CONTRACT DATE': emp.contract_date || '',
       'MOBILE': emp.mobile_number || '',
       'EMAIL': emp.email || '',

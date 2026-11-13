@@ -378,7 +378,7 @@ function formatStatusDisplay(status?: string, excludeFromBiometric?: boolean): s
   if (!status) return '—'
   const s = status.toLowerCase().trim()
   if (s === 'active' || s === 'a') {
-    return excludeFromBiometric ? 'Active / No Bio' : 'Active'
+    return excludeFromBiometric ? 'Active - NB' : 'Active'
   }
   if (s === 'resigned' || s === 'r') return 'Resigned'
   if (s === 'suspended' || s === 'suspension') return 'Suspension'
@@ -2828,14 +2828,26 @@ onUnmounted(() => {
                 <!-- Dedicated Status column per Requirement 7 -->
                 <TableCell>
                   <div v-if="row.isStatusChanged" class="flex items-center gap-1 font-medium text-xs">
-                    <span class="text-muted-foreground line-through text-[11px]">{{ formatStatusDisplay(row.previousStatus) }}</span>
+                    <span class="text-muted-foreground line-through text-[11px]">{{ formatStatusDisplay(row.previousStatus, row.previousExcludeFromBiometric) }}</span>
                     <span class="text-muted-foreground">→</span>
-                    <Badge :variant="getStatusBadgeVariant(row.newStatus)" class="text-[10px] px-1.5 py-0 font-semibold">
-                      {{ formatStatusDisplay(row.newStatus) }}
+                    <Badge
+                      :variant="getStatusBadgeVariant(row.newStatus, row.newExcludeFromBiometric)"
+                      :class="[
+                        'text-[10px] px-1.5 py-0 font-semibold',
+                        (row.newStatus === 'active' && row.newExcludeFromBiometric) ? 'border-border bg-muted text-muted-foreground' : ''
+                      ]"
+                    >
+                      {{ formatStatusDisplay(row.newStatus, row.newExcludeFromBiometric) }}
                     </Badge>
                   </div>
                   <div v-else-if="row.displayStatus" class="text-xs">
-                    <Badge :variant="getStatusBadgeVariant(row.newStatus || row.previousStatus)" class="text-[10px] px-1.5 py-0 font-normal">
+                    <Badge
+                      :variant="getStatusBadgeVariant(row.newStatus || row.previousStatus, row.newExcludeFromBiometric ?? row.previousExcludeFromBiometric)"
+                      :class="[
+                        'text-[10px] px-1.5 py-0 font-normal',
+                        ((row.newStatus || row.previousStatus) === 'active' && (row.newExcludeFromBiometric ?? row.previousExcludeFromBiometric)) ? 'border-border bg-muted text-muted-foreground' : ''
+                      ]"
+                    >
                       {{ row.displayStatus }}
                     </Badge>
                   </div>
