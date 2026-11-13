@@ -932,16 +932,8 @@ onUnmounted(() => {
           <Button
             variant="ghost"
             size="sm"
-            class="h-8 px-2.5 text-xs rounded-r-none border-r"
+            class="h-8 px-2.5 text-xs"
             @click="exportPeople('xlsx')"
-          >
-            <Download class="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            class="h-8 px-2.5 text-xs rounded-l-none"
-            @click="exportPeople('csv')"
           >
             <Download class="size-3.5" />
           </Button>
