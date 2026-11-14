@@ -22,6 +22,8 @@ import {
   Download,
   Calendar,
   Percent,
+  UserRoundX,
+  TrendingUp
 } from '@lucide/vue'
 import {
   reportsService,
