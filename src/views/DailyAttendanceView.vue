@@ -18,7 +18,8 @@ import {
   Trash2,
   Fingerprint,
   ShieldCheck,
-  Send
+  Send,
+  AlertTriangle
 } from '@lucide/vue'
 import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
@@ -276,6 +277,8 @@ const filteredRecords = computed(() => {
     const q = searchQuery.value.toLowerCase().trim()
     list = list.filter(r =>
       r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q))) ||
       r.employee_name.toLowerCase().includes(q) ||
       r.work_group_name.toLowerCase().includes(q) ||
       r.location.toLowerCase().includes(q)
@@ -975,9 +978,9 @@ onUnmounted(() => {
                                 v-for="scan in getScansForIn(row.scan_breakdown)"
                                 :key="scan.id"
                                 class="flex items-center justify-between p-1.5 rounded-md border text-[11px]"
-                                :class="scan.isPrimary ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-muted/40 border-muted'"
+                                :class="scan.isDeactivatedBioId ? 'bg-amber-500/10 border-amber-500/40' : scan.isPrimary ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-muted/40 border-muted'"
                               >
-                                <div class="flex items-center gap-1.5">
+                                <div class="flex items-center gap-1.5 flex-wrap">
                                   <span class="font-mono font-bold" :class="scan.isPrimary ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'">
                                     {{ scan.timeFormatted }}
                                   </span>
@@ -992,6 +995,18 @@ onUnmounted(() => {
                                     class="px-1 py-0.2 rounded text-[9px] bg-muted text-muted-foreground"
                                   >
                                     Duplicate (+{{ scan.diffSeconds }}s)
+                                  </span>
+                                  <span
+                                    v-if="scan.sourceBioId"
+                                    class="px-1 py-0.2 rounded text-[9px] font-mono bg-muted/70 text-muted-foreground"
+                                  >
+                                    ID {{ scan.sourceBioId }}
+                                  </span>
+                                  <span
+                                    v-if="scan.isDeactivatedBioId"
+                                    class="px-1 py-0.2 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-800 dark:text-amber-300"
+                                  >
+                                    Inactive ID
                                   </span>
                                 </div>
                                 <span class="font-mono text-[9px] text-muted-foreground truncate max-w-[100px]" :title="scan.deviceName">
@@ -1015,9 +1030,9 @@ onUnmounted(() => {
                                 v-for="scan in getScansForOut(row.scan_breakdown)"
                                 :key="scan.id"
                                 class="flex items-center justify-between p-1.5 rounded-md border text-[11px]"
-                                :class="scan.isPrimary ? 'bg-blue-500/10 border-blue-500/30' : 'bg-muted/40 border-muted'"
+                                :class="scan.isDeactivatedBioId ? 'bg-amber-500/10 border-amber-500/40' : scan.isPrimary ? 'bg-blue-500/10 border-blue-500/30' : 'bg-muted/40 border-muted'"
                               >
-                                <div class="flex items-center gap-1.5">
+                                <div class="flex items-center gap-1.5 flex-wrap">
                                   <span class="font-mono font-bold" :class="scan.isPrimary ? 'text-blue-700 dark:text-blue-300' : 'text-foreground'">
                                     {{ scan.timeFormatted }}
                                   </span>
@@ -1032,6 +1047,18 @@ onUnmounted(() => {
                                     class="px-1 py-0.2 rounded text-[9px] bg-muted text-muted-foreground"
                                   >
                                     Duplicate (+{{ scan.diffSeconds }}s)
+                                  </span>
+                                  <span
+                                    v-if="scan.sourceBioId"
+                                    class="px-1 py-0.2 rounded text-[9px] font-mono bg-muted/70 text-muted-foreground"
+                                  >
+                                    ID {{ scan.sourceBioId }}
+                                  </span>
+                                  <span
+                                    v-if="scan.isDeactivatedBioId"
+                                    class="px-1 py-0.2 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-800 dark:text-amber-300"
+                                  >
+                                    Inactive ID
                                   </span>
                                 </div>
                                 <span class="font-mono text-[9px] text-muted-foreground truncate max-w-[100px]" :title="scan.deviceName">
@@ -1048,9 +1075,24 @@ onUnmounted(() => {
                               <div
                                 v-for="scan in getScansForOther(row.scan_breakdown)"
                                 :key="scan.id"
-                                class="flex items-center justify-between p-1.5 rounded-md border text-[11px] bg-muted/40"
+                                class="flex items-center justify-between p-1.5 rounded-md border text-[11px]"
+                                :class="scan.isDeactivatedBioId ? 'bg-amber-500/10 border-amber-500/40' : 'bg-muted/40'"
                               >
-                                <span class="font-mono font-medium">{{ scan.timeFormatted }}</span>
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                  <span class="font-mono font-medium">{{ scan.timeFormatted }}</span>
+                                  <span
+                                    v-if="scan.sourceBioId"
+                                    class="px-1 py-0.2 rounded text-[9px] font-mono bg-muted/70 text-muted-foreground"
+                                  >
+                                    ID {{ scan.sourceBioId }}
+                                  </span>
+                                  <span
+                                    v-if="scan.isDeactivatedBioId"
+                                    class="px-1 py-0.2 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-800 dark:text-amber-300"
+                                  >
+                                    Inactive ID
+                                  </span>
+                                </div>
                                 <span class="font-mono text-[9px] text-muted-foreground">{{ scan.deviceName || 'BISBIO B-29b' }}</span>
                               </div>
                             </div>
@@ -1201,6 +1243,31 @@ onUnmounted(() => {
                   >
                     <span>{{ row.status }}</span>
                   </div>
+
+                  <!-- Admin Review Flag (Deactivated Bio ID / Multi-ID Conflict) -->
+                  <Popover v-if="row.requires_admin_review">
+                    <PopoverTrigger as-child>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-300 hover:bg-amber-500/25 cursor-pointer"
+                      >
+                        <AlertTriangle class="size-2.5" />
+                        <span>Admin Review</span>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" class="w-72">
+                      <div class="space-y-1.5 text-xs">
+                        <p class="font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                          <AlertTriangle class="size-3.5" />
+                          <span>Multi-ID / Biometric Review</span>
+                        </p>
+                        <ul v-if="row.review_reasons?.length" class="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
+                          <li v-for="(reason, idx) in row.review_reasons" :key="idx">{{ reason }}</li>
+                        </ul>
+                        <p v-else class="text-[11px] text-muted-foreground">{{ row.notes }}</p>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
 
                   <!-- Notes / attendance details -->
                   <Popover v-if="row.manual_adjustment_reason || row.notes">

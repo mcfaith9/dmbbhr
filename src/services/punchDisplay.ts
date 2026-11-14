@@ -1318,13 +1318,23 @@ class PunchDisplayService {
     const rawUserId = log.user_id || log.employee_id || ''
     const normalizedBioId = normalizeBioId(rawUserId)
 
-    // Lookup employee from the existing employee directory
+    // Lookup employee from the existing employee directory (resolves primary, secondary, and linked Bio IDs)
     let employee = undefined
     if (normalizedBioId) {
       try {
         employee = await employeeService.getEmployeeByBioId(normalizedBioId)
       } catch {
         // ignore
+      }
+    }
+
+    const canonicalBioId = employee ? normalizeBioId(employee.canonical_bio_id || employee.biometric_user_id) : normalizedBioId
+    const displayBioId = employee ? normalizeBioId(employee.primary_bio_id || employee.biometric_user_id) : normalizedBioId
+    const employeeAllNormalizedIds = new Set<string>([normalizedBioId, canonicalBioId, displayBioId].filter(Boolean))
+    if (employee?.linked_bio_ids) {
+      for (const lid of employee.linked_bio_ids) {
+        const n = normalizeBioId(lid)
+        if (n) employeeAllNormalizedIds.add(n)
       }
     }
 
@@ -1380,15 +1390,15 @@ class PunchDisplayService {
     const punchDate = new Date(log.attendance_time || Date.now())
     const currentMs = punchDate.getTime()
 
-    // Retrieve prior primary punches for this employee today
+    // Retrieve prior primary punches for this canonical employee today (across all linked Bio IDs)
     const todayStr = getManilaDateString(punchDate)
-    const sessionKey = `${todayStr}_${normalizedBioId}`
+    const sessionKey = `${todayStr}_${canonicalBioId || normalizedBioId}`
     const inMemLogs = this.sessionPunchHistory.get(sessionKey) || []
 
     let allCandidatePunches: AttendanceLog[] = [...inMemLogs]
     try {
       const todayPunches = await punchRepository.getPunchesByDate(todayStr)
-      const userPunchesToday = todayPunches.filter(p => normalizeBioId(p.user_id) === normalizedBioId)
+      const userPunchesToday = todayPunches.filter(p => employeeAllNormalizedIds.has(normalizeBioId(p.user_id)))
       for (const p of userPunchesToday) {
         if (!allCandidatePunches.some(x => x.id === p.id || (Math.abs(new Date(x.attendance_time).getTime() - new Date(p.attendance_time).getTime()) < 1000))) {
           allCandidatePunches.push(p)
@@ -1424,7 +1434,9 @@ class PunchDisplayService {
 
     // Check recent punches in memory if morning arrival was already established (for non-simulation punches)
     if (!extra?.isSimulation && resolvedFirstInLate === undefined) {
-      const prevRecent = this.recentPunches.value.find(p => p.bioId === normalizedBioId && p.firstInLate !== undefined)
+      const prevRecent = this.recentPunches.value.find(
+        p => employeeAllNormalizedIds.has(normalizeBioId(p.bioId)) && p.firstInLate !== undefined
+      )
       if (prevRecent) {
         resolvedFirstInLate = prevRecent.firstInLate
         resolvedFirstInLateMinutes = prevRecent.firstInLateMinutes
@@ -1473,10 +1485,11 @@ class PunchDisplayService {
       }
     }
 
-    // Resolve punch direction and status using isolated display resolver
+    // Resolve punch direction and status using isolated display resolver keyed by canonical employee
+    const resolverKey = canonicalBioId || normalizedBioId
     const resolved = punchDirectionResolver.resolve({
-      bioId: normalizedBioId,
-      eventId: log.id || `punch-${normalizedBioId}-${currentMs}`,
+      bioId: resolverKey,
+      eventId: log.id || `punch-${resolverKey}-${currentMs}`,
       timestamp: log.attendance_time || new Date(),
       explicitDirection: extra?.direction,
       explicitState: (log.state && [2, 3, 4, 5, 6].includes(Number(log.state))) ? Number(log.state) : undefined,
@@ -1505,17 +1518,17 @@ class PunchDisplayService {
     // Generate guaranteed unique event identity so repeated punches from same employee are distinct
     const seq = ++eventCounter
     const eventTimestamp = new Date(log.attendance_time || Date.now()).getTime()
-    const uniqueEventId = log.id || `punch-${normalizedBioId}-${eventTimestamp}-${seq}`
+    const uniqueEventId = log.id || `punch-${resolverKey}-${eventTimestamp}-${seq}`
 
-    const resolvedPhoto = employee?.photo || (normalizedBioId ? `/employee-photos/${normalizedBioId}.jpg` : undefined) || extra?.photoUrl
+    const resolvedPhoto = employee?.photo || (canonicalBioId ? `/employee-photos/${canonicalBioId}.jpg` : undefined) || extra?.photoUrl
 
     const event: PunchDisplayEvent = {
       id: uniqueEventId,
       eventId: uniqueEventId,
-      userId: normalizedBioId,
-      bioId: normalizedBioId,
+      userId: displayBioId || normalizedBioId,
+      bioId: displayBioId || normalizedBioId,
       employeeName: resolvedName,
-      employeeId: normalizedBioId,
+      employeeId: displayBioId || normalizedBioId,
       photoUrl: resolvedPhoto,
       workGroup: wgName,
       workGroupCode: wgCode,

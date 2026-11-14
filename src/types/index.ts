@@ -45,10 +45,27 @@ export interface WorkGroup {
 
 export type EmploymentStatus = 'active' | 'inactive' | 'on_leave' | 'resigned' | 'suspended' | 'csr'
 
+export type BiometricIdRole = 'primary' | 'secondary'
+export type BiometricIdStatus = 'active' | 'inactive'
+
+export interface BiometricIdEntry {
+  bioId: string
+  role: BiometricIdRole
+  status: BiometricIdStatus
+  addedAt: string
+  deactivatedAt?: string
+  reactivatedAt?: string
+  notes?: string
+}
+
 export interface Employee {
   id: string
-  employee_number: string // Strictly identical to biometric_user_id (Employee ID = Bio ID)
-  biometric_user_id: string // Permanent hardware identifier (Bio ID)
+  employee_number: string // Canonical Employee ID (= primary/canonical Bio ID)
+  biometric_user_id: string // Canonical primary Bio ID
+  canonical_bio_id?: string // Permanent underlying canonical profile key (EmployeeRecord.bioId)
+  primary_bio_id?: string // Active primary biometric ID for attendance & display
+  biometric_ids?: BiometricIdEntry[] // Full list of primary, secondary, and inactive biometric IDs
+  linked_bio_ids?: string[] // Convenience array of all linked Bio IDs
   full_name: string
   preferred_name?: string
   photo?: string | null // Photo path e.g. /employee-photos/25065.jpg or data URL
@@ -125,6 +142,8 @@ export interface AttendanceLog {
   device_ip: string
   location_id: string
   location_name?: string
+  source_bio_id?: string // Original device biometric ID when resolved via a secondary/linked Bio ID
+  linked_employee_bio_id?: string // Canonical employee primary Bio ID if resolved across multiple Bio IDs
   is_duplicate?: boolean
   created_at: string
 }

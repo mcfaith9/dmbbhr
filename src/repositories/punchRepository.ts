@@ -1,9 +1,10 @@
-import { db, type BiometricPunchRecord } from '@/db'
+import { db, type BiometricPunchRecord, type EmployeeRecord } from '@/db'
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta } from '@/types'
 import { getManilaDateString } from '@/services/attendanceEngine'
 import { parseBiometricTimestamp } from '@/utils/attendanceTimestampParser'
-import { employeeRepository } from './employeeRepository'
+import { employeeRepository, findCachedEmployee } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
+import { getEmployeeAllBioIds, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
 
 export interface ImportResult {
   totalInFile: number
@@ -222,6 +223,29 @@ export const punchRepository = {
     let collection = db.biometricPunches.toCollection()
 
     // 1. Date range indexed filtering
+    const [employeeMap, workGroupMap] = await Promise.all([
+      employeeRepository.getEmployeeMap(),
+      workGroupRepository.getMap()
+    ])
+
+    const resolveEmployee = (rawBioId: string): EmployeeRecord | undefined => {
+      return employeeMap.get(rawBioId) || findCachedEmployee(rawBioId)?.record
+    }
+
+    const userFilterTargets = new Set<string>()
+    if (params.userId && params.userId.trim()) {
+      const cleanU = params.userId.trim()
+      userFilterTargets.add(cleanU.toLowerCase())
+      userFilterTargets.add(cleanU)
+      const matchedEmp = resolveEmployee(cleanU)
+      if (matchedEmp) {
+        for (const lid of getEmployeeAllBioIds(matchedEmp)) {
+          userFilterTargets.add(lid)
+          userFilterTargets.add(lid.toLowerCase())
+        }
+      }
+    }
+
     if (params.quickRange === 'today') {
       const today = getManilaDateString(new Date())
       collection = db.biometricPunches.where('date').equals(today)
@@ -239,15 +263,12 @@ export const punchRepository = {
       const end = params.endDate || '2099-12-31'
       collection = db.biometricPunches.where('date').between(start, end, true, true)
     } else if (params.userId && params.userId.trim()) {
-      collection = db.biometricPunches.where('bioId').equals(params.userId.trim())
+      const queryIds = Array.from(userFilterTargets).filter(id => id.length > 0)
+      collection = db.biometricPunches.where('bioId').anyOf(queryIds)
     }
 
     // Apply secondary filters
     let filteredRecords: BiometricPunchRecord[]
-    const [employeeMap, workGroupMap] = await Promise.all([
-      employeeRepository.getEmployeeMap(),
-      workGroupRepository.getMap()
-    ])
 
     const hasSecondaryFilters = Boolean(
       (params.type !== undefined && params.type !== '' && params.type !== 'all') ||
@@ -271,12 +292,12 @@ export const punchRepository = {
         if (typeNum !== null && r.type !== typeNum) return false
         if (stateNum !== null && r.state !== stateNum) return false
 
-        const emp = employeeMap.get(r.bioId)
+        const emp = resolveEmployee(r.bioId)
         const empLoc = (emp?.location || r.locationName || '').toLowerCase()
         const empName = emp?.fullName || r.employeeName || ''
         const empWg = emp?.workGroupId || r.workGroupId || 'wg-group-c'
 
-        if (userQ && r.bioId.toLowerCase() !== userQ) return false
+        if (userQ && !userFilterTargets.has(r.bioId.toLowerCase()) && r.bioId.toLowerCase() !== userQ) return false
 
         // If date filter was applied alongside userId
         if (params.date && r.date !== params.date) return false
@@ -298,7 +319,8 @@ export const punchRepository = {
         }
 
         if (searchQ) {
-          const matchSearch = r.bioId.toLowerCase().includes(searchQ) || empName.toLowerCase().includes(searchQ)
+          const linkedMatch = emp ? getEmployeeAllBioIds(emp).some(id => id.toLowerCase().includes(searchQ)) : false
+          const matchSearch = r.bioId.toLowerCase().includes(searchQ) || empName.toLowerCase().includes(searchQ) || linkedMatch
           if (!matchSearch) return false
         }
 
@@ -316,15 +338,17 @@ export const punchRepository = {
     const offset = (page - 1) * pageSize
     const pageRecords = filteredRecords.slice(offset, offset + pageSize)
 
-    // Convert to AttendanceLog with latest employee & work group metadata
+    // Convert to AttendanceLog with latest employee & work group metadata (preserving raw bioId on log.user_id)
     const logs = pageRecords.map(r => {
-      const emp = employeeMap.get(r.bioId)
+      const emp = resolveEmployee(r.bioId)
       const log = this.toLog(r)
+      log.source_bio_id = r.bioId
       if (emp) {
         log.employee_name = emp.fullName
         log.department = emp.department || ''
         log.location_name = emp.location
         log.work_group_id = emp.workGroupId || 'wg-group-c'
+        log.linked_employee_bio_id = getEmployeePrimaryBioId(emp)
         const wg = workGroupMap.get(log.work_group_id)
         log.work_group_name = wg?.name || 'GROUP C'
       }
@@ -350,13 +374,15 @@ export const punchRepository = {
     const employeeMap = await employeeRepository.getEmployeeMap()
 
     return records.map(r => {
-      const emp = employeeMap.get(r.bioId)
+      const emp = employeeMap.get(r.bioId) || findCachedEmployee(r.bioId)?.record
       const log = this.toLog(r)
+      log.source_bio_id = r.bioId
       if (emp) {
         log.employee_name = emp.fullName
         log.department = emp.department || ''
         log.location_name = emp.location
         log.work_group_id = emp.workGroupId || 'wg-group-c'
+        log.linked_employee_bio_id = getEmployeePrimaryBioId(emp)
       }
       return log
     })

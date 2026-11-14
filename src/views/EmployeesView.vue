@@ -30,7 +30,13 @@ import {
   Calculator,
   ChevronLeft,
   ChevronRight,
-  Bell
+  Bell,
+  Plus,
+  Star,
+  Power,
+  RotateCcw,
+  Trash2,
+  Link2
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -40,10 +46,16 @@ import {
   type PeopleImportRowItem,
   type PeopleImportApplyResult
 } from '@/services/employees'
+import {
+  getEmployeeBiometricEntries,
+  getEmployeePrimaryBioId,
+  getEmployeeAllBioIds,
+  normalizeBiometricIdToken
+} from '@/lib/employeeIdentity'
 import { hrNoticeService, isNoticeActive } from '@/services/hrNotices'
 import { normalizeBioId } from '@/services/punchDisplay'
 import HrNoticeManagerDialog from '@/components/HrNoticeManagerDialog.vue'
-import type { Employee, EmployeeLocation, EmploymentStatus, WorkGroup } from '@/types'
+import type { BiometricIdEntry, Employee, EmployeeLocation, EmploymentStatus, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -174,6 +186,195 @@ const formRegularizationDate = ref('')
 const formResignationDate = ref('')
 const formStatus = ref<EmploymentStatus>('active')
 const formExcludeFromBiometric = ref(false)
+
+// Multi-Biometric ID management state
+const newSecondaryBioId = ref('')
+const newSecondaryBioIdNotes = ref('')
+const bioIdActionLoading = ref(false)
+const bioIdErrorMsg = ref('')
+const bioIdSuccessMsg = ref('')
+const pendingBioIdLinkConfirm = ref<{ bioId: string; notes?: string } | null>(null)
+const pendingBioIdRemoveConfirm = ref<string | null>(null)
+
+function resetBioIdManagementState() {
+  newSecondaryBioId.value = ''
+  newSecondaryBioIdNotes.value = ''
+  bioIdActionLoading.value = false
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  pendingBioIdLinkConfirm.value = null
+  pendingBioIdRemoveConfirm.value = null
+}
+
+function getBioIdEntries(emp?: Employee | null): BiometricIdEntry[] {
+  return getEmployeeBiometricEntries(emp)
+}
+
+function getPrimaryBioIdDisplay(emp?: Employee | null): string {
+  return getEmployeePrimaryBioId(emp) || emp?.biometric_user_id || ''
+}
+
+function getSecondaryBioIdEntries(emp?: Employee | null): BiometricIdEntry[] {
+  return getEmployeeBiometricEntries(emp).filter(e => e.role !== 'primary')
+}
+
+function formatIsoShortDate(iso?: string): string {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  } catch {
+    return iso.slice(0, 10)
+  }
+}
+
+async function requestLinkSecondaryBioId() {
+  if (!selectedEmployee.value) return
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  pendingBioIdLinkConfirm.value = null
+  pendingBioIdRemoveConfirm.value = null
+
+  const cleanNewId = normalizeBiometricIdToken(newSecondaryBioId.value)
+  if (!cleanNewId || !/^[a-zA-Z0-9_-]+$/.test(cleanNewId)) {
+    bioIdErrorMsg.value = 'Enter a valid Biometric ID (letters, numbers, dash, or underscore only).'
+    return
+  }
+
+  const currentEntries = getEmployeeBiometricEntries(selectedEmployee.value)
+  const selfMatch = currentEntries.find(e => e.bioId.toLowerCase() === cleanNewId.toLowerCase())
+  if (selfMatch) {
+    bioIdErrorMsg.value = selfMatch.status === 'active'
+      ? `Biometric ID ${cleanNewId} is already actively linked to this employee.`
+      : `Biometric ID ${cleanNewId} is already linked as Inactive. Click Reactivate instead.`
+    return
+  }
+
+  bioIdActionLoading.value = true
+  try {
+    const conflict = await employeeService.findBioIdConflict(cleanNewId, selectedEmployee.value.biometric_user_id)
+    if (conflict) {
+      const conflictPrimary = getEmployeePrimaryBioId(conflict.conflictEmployee)
+      bioIdErrorMsg.value = `Cannot link Biometric ID ${cleanNewId}: already assigned to ${conflict.conflictEmployee.full_name} (Primary ID: ${conflictPrimary}, Status: ${conflict.entryStatus === 'active' ? 'Active' : 'Inactive'}).`
+      return
+    }
+
+    pendingBioIdLinkConfirm.value = {
+      bioId: cleanNewId,
+      notes: newSecondaryBioIdNotes.value.trim() || undefined
+    }
+  } catch (err: any) {
+    bioIdErrorMsg.value = err?.message || 'Failed to validate Biometric ID.'
+  } finally {
+    bioIdActionLoading.value = false
+  }
+}
+
+async function confirmLinkSecondaryBioId() {
+  if (!selectedEmployee.value || !pendingBioIdLinkConfirm.value) return
+  bioIdActionLoading.value = true
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  try {
+    const updated = await employeeService.linkSecondaryBioId(
+      selectedEmployee.value.biometric_user_id,
+      pendingBioIdLinkConfirm.value.bioId,
+      {
+        confirmedByAdmin: true,
+        notes: pendingBioIdLinkConfirm.value.notes
+      }
+    )
+    selectedEmployee.value = updated
+    bioIdSuccessMsg.value = `Biometric ID ${pendingBioIdLinkConfirm.value.bioId} linked to ${updated.full_name}. Future and historical punches for this ID now resolve to this employee.`
+    newSecondaryBioId.value = ''
+    newSecondaryBioIdNotes.value = ''
+    pendingBioIdLinkConfirm.value = null
+    await executeLoadEmployees()
+  } catch (err: any) {
+    bioIdErrorMsg.value = err?.message || 'Failed to link Biometric ID.'
+  } finally {
+    bioIdActionLoading.value = false
+  }
+}
+
+async function handleSetPrimaryBioId(targetBioId: string) {
+  if (!selectedEmployee.value) return
+  bioIdActionLoading.value = true
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  pendingBioIdLinkConfirm.value = null
+  pendingBioIdRemoveConfirm.value = null
+  try {
+    const updated = await employeeService.setPrimaryBioId(selectedEmployee.value.biometric_user_id, targetBioId)
+    selectedEmployee.value = updated
+    bioIdSuccessMsg.value = `Biometric ID ${targetBioId} is now the Primary Bio ID for ${updated.full_name}.`
+    await executeLoadEmployees()
+  } catch (err: any) {
+    bioIdErrorMsg.value = err?.message || 'Failed to set Primary Bio ID.'
+  } finally {
+    bioIdActionLoading.value = false
+  }
+}
+
+async function handleDeactivateBioId(targetBioId: string) {
+  if (!selectedEmployee.value) return
+  bioIdActionLoading.value = true
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  pendingBioIdLinkConfirm.value = null
+  pendingBioIdRemoveConfirm.value = null
+  try {
+    const updated = await employeeService.deactivateLinkedBioId(selectedEmployee.value.biometric_user_id, targetBioId)
+    selectedEmployee.value = updated
+    bioIdSuccessMsg.value = `Biometric ID ${targetBioId} deactivated. Historical attendance is preserved; new punches on this ID will be flagged for admin review.`
+    await executeLoadEmployees()
+  } catch (err: any) {
+    bioIdErrorMsg.value = err?.message || 'Failed to deactivate Biometric ID.'
+  } finally {
+    bioIdActionLoading.value = false
+  }
+}
+
+async function handleReactivateBioId(targetBioId: string) {
+  if (!selectedEmployee.value) return
+  bioIdActionLoading.value = true
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  pendingBioIdLinkConfirm.value = null
+  pendingBioIdRemoveConfirm.value = null
+  try {
+    const updated = await employeeService.reactivateLinkedBioId(selectedEmployee.value.biometric_user_id, targetBioId)
+    selectedEmployee.value = updated
+    bioIdSuccessMsg.value = `Biometric ID ${targetBioId} reactivated for ${updated.full_name}.`
+    await executeLoadEmployees()
+  } catch (err: any) {
+    bioIdErrorMsg.value = err?.message || 'Failed to reactivate Biometric ID.'
+  } finally {
+    bioIdActionLoading.value = false
+  }
+}
+
+async function confirmRemoveBioId(targetBioId: string) {
+  if (!selectedEmployee.value) return
+  bioIdActionLoading.value = true
+  bioIdErrorMsg.value = ''
+  bioIdSuccessMsg.value = ''
+  pendingBioIdLinkConfirm.value = null
+  try {
+    const updated = await employeeService.removeLinkedBioId(selectedEmployee.value.biometric_user_id, targetBioId)
+    selectedEmployee.value = updated
+    pendingBioIdRemoveConfirm.value = null
+    bioIdSuccessMsg.value = `Secondary Biometric ID ${targetBioId} unlinked from ${updated.full_name}. Raw punch logs remain safely preserved.`
+    await executeLoadEmployees()
+  } catch (err: any) {
+    bioIdErrorMsg.value = err?.message || 'Failed to remove Biometric ID.'
+  } finally {
+    bioIdActionLoading.value = false
+  }
+}
 
 // Profile Photo Resolution with graceful error fallback to UserRound icon
 const failedImageBioIds = ref<Set<string>>(new Set())
@@ -525,6 +726,7 @@ const filteredEmployees = computed(() => {
       e.full_name.toLowerCase().includes(q) ||
       e.biometric_user_id.toLowerCase().includes(q) ||
       e.employee_number.toLowerCase().includes(q) ||
+      getEmployeeAllBioIds(e).some(id => id.toLowerCase().includes(q)) ||
       (e.preferred_name && e.preferred_name.toLowerCase().includes(q)) ||
       (e.work_group_name && e.work_group_name.toLowerCase().includes(q)) ||
       (e.work_group_code && e.work_group_code.toLowerCase().includes(q)) ||
@@ -599,6 +801,7 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
 
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
+  resetBioIdManagementState()
   showProfileModal.value = true
 
   nextTick(() => {
@@ -610,6 +813,7 @@ function closeProfileModal() {
   showProfileModal.value = false
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
+  resetBioIdManagementState()
   resetEmployeeForm()
   if (route.query.returnTo === 'payroll-records') {
     router.push('/payroll/records')
@@ -832,7 +1036,8 @@ async function checkRouteParams() {
     e.biometric_user_id.toLowerCase() === rawLower ||
     e.employee_number.toLowerCase() === rawLower ||
     e.biometric_user_id.toLowerCase() === stripped ||
-    e.employee_number.toLowerCase() === stripped
+    e.employee_number.toLowerCase() === stripped ||
+    getEmployeeAllBioIds(e).some(id => id.toLowerCase() === rawLower || id.toLowerCase() === stripped)
   )
 
   if (!emp) {
@@ -1073,11 +1278,24 @@ onUnmounted(() => {
               class="cursor-pointer hover:bg-muted/40 transition-colors"
               @click="openProfile(emp, 'overview')"
             >
-              <!-- Bio ID / Employee ID (Immutable Core Identifier) -->
+              <!-- Bio ID / Employee ID (Primary + Linked Secondary Count) -->
               <TableCell class="font-mono font-semibold text-primary">
-                <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20 text-xs font-semibold">
-                  <Fingerprint class="size-3.5 text-primary" />
-                  <span>{{ emp.biometric_user_id }}</span>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <div
+                    class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20 text-xs font-semibold"
+                    :title="getSecondaryBioIdEntries(emp).length > 0 ? `Linked IDs: ${getEmployeeAllBioIds(emp).join(', ')}` : `Bio ID: ${getPrimaryBioIdDisplay(emp)}`"
+                  >
+                    <Fingerprint class="size-3.5 text-primary" />
+                    <span>{{ getPrimaryBioIdDisplay(emp) }}</span>
+                  </div>
+                  <Badge
+                    v-if="getSecondaryBioIdEntries(emp).length > 0"
+                    variant="secondary"
+                    class="text-[10px] px-1.5 py-0 font-mono"
+                    :title="`Additional Bio IDs: ${getSecondaryBioIdEntries(emp).map(e => `${e.bioId} (${e.status})`).join(', ')}`"
+                  >
+                    +{{ getSecondaryBioIdEntries(emp).length }}
+                  </Badge>
                 </div>
               </TableCell>
 
@@ -1228,15 +1446,23 @@ onUnmounted(() => {
                 </Badge>
               </div>
 
-              <!-- Core Identifier Display: Employee ID = Bio ID -->
+              <!-- Core Identifier Display: Primary Bio ID + Linked Secondary Count -->
               <div class="flex items-center gap-2 mt-1 flex-wrap text-xs">
                 <span class="inline-flex items-center gap-1.5 font-mono px-2 py-0.5 rounded bg-primary/10 border border-primary/20 text-primary font-semibold">
                   <Fingerprint class="size-3.5 text-primary" />
-                  <span>Employee ID / Bio ID: {{ selectedEmployee.biometric_user_id }}</span>
+                  <span>Primary Bio ID: {{ getPrimaryBioIdDisplay(selectedEmployee) }}</span>
                 </span>
+                <Badge
+                  v-if="getSecondaryBioIdEntries(selectedEmployee).length > 0"
+                  variant="secondary"
+                  class="text-[10px] font-mono gap-1"
+                >
+                  <Link2 class="size-2.5" />
+                  <span>+{{ getSecondaryBioIdEntries(selectedEmployee).length }} Linked ID(s)</span>
+                </Badge>
                 <span class="text-muted-foreground text-[11px] flex items-center gap-1 font-mono">
                   <Lock class="size-3 text-muted-foreground/80" />
-                  <span>Hardware Key (Read-Only)</span>
+                  <span>Profile Key: {{ selectedEmployee.biometric_user_id }}</span>
                 </span>
               </div>
             </div>
@@ -1511,8 +1737,8 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- Card: Biometric Hardware Key (Read-Only) -->
-            <div class="rounded-xl border bg-muted/20 p-3.5 space-y-2">
+            <!-- Card: Biometric Device Registration & Linked IDs -->
+            <div class="rounded-xl border bg-muted/20 p-3.5 space-y-2.5">
               <div class="flex items-center justify-between pb-1 border-b">
                 <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                   <Fingerprint class="size-4 text-primary" />
@@ -1524,27 +1750,46 @@ onUnmounted(() => {
                     class="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-medium"
                     @click="openEditSection('biometric')"
                   >
-                    <Eye class="size-3" />
-                    <span>Hardware Info</span>
+                    <Link2 class="size-3" />
+                    <span>Manage Bio IDs</span>
                   </button>
                   <Badge variant="outline" class="text-[10px] font-mono gap-1">
                     <Lock class="size-2.5" />
-                    Read-Only Key
+                    Canonical Key: {{ selectedEmployee.biometric_user_id }}
                   </Badge>
                 </div>
               </div>
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs pt-1">
-                <div class="space-y-0.5">
-                  <div class="font-mono font-semibold text-foreground text-sm flex items-center gap-2">
-                    <span>Bio ID: {{ selectedEmployee.biometric_user_id }}</span>
-                    <span class="text-muted-foreground font-normal text-xs">= Employee ID</span>
+                <div class="space-y-1">
+                  <div class="font-mono font-semibold text-foreground text-sm flex items-center gap-2 flex-wrap">
+                    <span>Primary Bio ID: {{ getPrimaryBioIdDisplay(selectedEmployee) }}</span>
+                    <Badge v-if="getSecondaryBioIdEntries(selectedEmployee).length > 0" variant="secondary" class="text-[10px] font-mono">
+                      {{ getBioIdEntries(selectedEmployee).filter(b => b.status === 'active').length }} Active
+                    </Badge>
                   </div>
                   <p class="text-muted-foreground text-[11px]">
-                    Directly maps to the BISBIO B-29b hardware attendance scanner and attendance interpretation engine.
+                    All active linked biometric IDs map interchangeably to this canonical employee record across attendance and payroll.
                   </p>
                 </div>
-                <div class="text-[11px] px-2.5 py-1.5 rounded bg-muted text-muted-foreground font-mono">
-                  IndexedDB Key: {{ selectedEmployee.biometric_user_id }}
+              </div>
+              <div v-if="getBioIdEntries(selectedEmployee).length > 0" class="flex flex-wrap gap-1.5 pt-1">
+                <div
+                  v-for="entry in getBioIdEntries(selectedEmployee)"
+                  :key="entry.bioId"
+                  class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-mono"
+                  :class="
+                    entry.status === 'inactive'
+                      ? 'bg-muted/60 text-muted-foreground border-border opacity-80'
+                      : entry.role === 'primary'
+                        ? 'bg-primary/10 text-primary border-primary/30 font-semibold'
+                        : 'bg-card text-foreground border-border'
+                  "
+                >
+                  <Fingerprint class="size-3" />
+                  <span>{{ entry.bioId }}</span>
+                  <span class="text-[9px] uppercase px-1 rounded bg-muted/80 text-muted-foreground">
+                    {{ entry.status === 'inactive' ? 'Inactive' : entry.role === 'primary' ? 'Primary' : 'Secondary' }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -2375,26 +2620,23 @@ onUnmounted(() => {
                   <div class="flex items-center justify-between pb-1 border-b">
                     <div class="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                       <Fingerprint class="size-4 text-primary" />
-                      <span>Biometric Hardware Scanner Key</span>
+                      <span>Biometric Hardware Registrations</span>
                     </div>
                     <Badge variant="outline" class="text-[10px] font-mono gap-1">
                       <Lock class="size-2.5" />
-                      Permanent Hardware Key
+                      Canonical Key: {{ formBioId }}
                     </Badge>
                   </div>
 
                   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs pt-1">
                     <div class="space-y-1">
-                      <div class="font-mono font-semibold text-foreground text-sm flex items-center gap-2">
-                        <span>Bio ID: {{ formBioId }}</span>
-                        <span class="text-muted-foreground font-normal text-xs">= Employee ID</span>
+                      <div class="font-mono font-semibold text-foreground text-sm flex items-center gap-2 flex-wrap">
+                        <span>Primary Bio ID: {{ getPrimaryBioIdDisplay(selectedEmployee) }}</span>
+                        <span class="text-muted-foreground font-normal text-xs">(Profile Key: {{ formBioId }})</span>
                       </div>
                       <p class="text-muted-foreground text-[11px] max-w-lg">
-                        Directly links this employee profile to physical punches received from the BISMAC BISBIO B-29b hardware terminal (Port 4370 TCP).
+                        Link additional BISMAC BISBIO B-29b terminal IDs belonging to this employee so punches from any linked ID combine into one daily attendance and payroll record.
                       </p>
-                    </div>
-                    <div class="text-[11px] px-2.5 py-1.5 rounded bg-muted text-muted-foreground font-mono shrink-0">
-                      Terminal Key: {{ formBioId }}
                     </div>
                   </div>
 
@@ -2425,10 +2667,226 @@ onUnmounted(() => {
                     </div>
                   </div>
 
-                  <div class="rounded-lg bg-card p-3 border space-y-2 text-xs">
-                    <div class="font-semibold text-foreground text-[11px]">Hardware Integrity Rule</div>
-                    <p class="text-muted-foreground text-[11px]">
-                      The Bio ID cannot be changed here because all historic biometric clockings and daily attendance interpretations in IndexedDB are indexed by this key. To alter the hardware registration, adjust the user enrollment on the physical terminal and perform a biometric sync.
+                  <!-- Multi-Biometric ID Management Card -->
+                  <div class="rounded-lg bg-card p-3 border space-y-3 text-xs">
+                    <div class="flex items-center justify-between gap-2 flex-wrap border-b pb-2">
+                      <div class="flex items-center gap-1.5 font-semibold text-foreground">
+                        <Link2 class="size-3.5 text-primary" />
+                        <span>Linked Biometric IDs</span>
+                      </div>
+                      <span class="text-[10px] text-muted-foreground font-mono">
+                        {{ getBioIdEntries(selectedEmployee).length }} linked registration(s)
+                      </span>
+                    </div>
+
+                    <!-- Feedback banners -->
+                    <div
+                      v-if="bioIdErrorMsg"
+                      class="p-2.5 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-[11px] flex items-start gap-2"
+                    >
+                      <AlertCircle class="size-3.5 shrink-0 mt-0.5" />
+                      <span>{{ bioIdErrorMsg }}</span>
+                    </div>
+                    <div
+                      v-if="bioIdSuccessMsg"
+                      class="p-2.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-[11px] flex items-start gap-2"
+                    >
+                      <CheckCircle2 class="size-3.5 shrink-0 mt-0.5 text-emerald-600" />
+                      <span>{{ bioIdSuccessMsg }}</span>
+                    </div>
+
+                    <!-- Linked Biometric IDs Table/List -->
+                    <div class="space-y-1.5">
+                      <div
+                        v-for="entry in getBioIdEntries(selectedEmployee)"
+                        :key="entry.bioId"
+                        class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-md border bg-muted/20"
+                      >
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-mono font-bold text-foreground text-xs">Bio ID {{ entry.bioId }}</span>
+                            <Badge
+                              :variant="entry.role === 'primary' ? 'default' : 'secondary'"
+                              class="text-[9px] uppercase font-mono px-1.5 py-0"
+                            >
+                              {{ entry.role === 'primary' ? 'Primary' : 'Secondary' }}
+                            </Badge>
+                            <Badge
+                              :variant="entry.status === 'active' ? 'success' : 'outline'"
+                              class="text-[9px] uppercase font-mono px-1.5 py-0"
+                            >
+                              {{ entry.status === 'active' ? 'Active' : 'Inactive' }}
+                            </Badge>
+                            <Badge
+                              v-if="entry.bioId === formBioId"
+                              variant="outline"
+                              class="text-[9px] font-mono px-1.5 py-0"
+                            >
+                              Canonical Key
+                            </Badge>
+                          </div>
+                          <div class="text-[10px] text-muted-foreground flex items-center gap-2 flex-wrap">
+                            <span v-if="entry.addedAt">Added: {{ formatIsoShortDate(entry.addedAt) }}</span>
+                            <span v-if="entry.deactivatedAt">• Deactivated: {{ formatIsoShortDate(entry.deactivatedAt) }}</span>
+                            <span v-if="entry.notes">• {{ entry.notes }}</span>
+                          </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 flex-wrap shrink-0">
+                          <Button
+                            v-if="entry.role !== 'primary' && entry.status === 'active'"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-6 px-2 text-[10px] gap-1"
+                            :disabled="bioIdActionLoading"
+                            @click="handleSetPrimaryBioId(entry.bioId)"
+                          >
+                            <Star class="size-2.5 text-amber-500" />
+                            <span>Set Primary</span>
+                          </Button>
+
+                          <Button
+                            v-if="entry.role !== 'primary' && entry.status === 'active'"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-6 px-2 text-[10px] gap-1 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/10"
+                            :disabled="bioIdActionLoading"
+                            @click="handleDeactivateBioId(entry.bioId)"
+                          >
+                            <Power class="size-2.5" />
+                            <span>Deactivate</span>
+                          </Button>
+
+                          <Button
+                            v-if="entry.status === 'inactive'"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-6 px-2 text-[10px] gap-1 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/10"
+                            :disabled="bioIdActionLoading"
+                            @click="handleReactivateBioId(entry.bioId)"
+                          >
+                            <RotateCcw class="size-2.5" />
+                            <span>Reactivate</span>
+                          </Button>
+
+                          <template v-if="entry.bioId !== formBioId && entry.role !== 'primary'">
+                            <Button
+                              v-if="pendingBioIdRemoveConfirm !== entry.bioId"
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              class="h-6 px-2 text-[10px] gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                              :disabled="bioIdActionLoading"
+                              @click="pendingBioIdRemoveConfirm = entry.bioId"
+                            >
+                              <Trash2 class="size-2.5" />
+                              <span>Remove</span>
+                            </Button>
+                            <div v-else class="inline-flex items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                class="h-6 px-2 text-[10px]"
+                                :disabled="bioIdActionLoading"
+                                @click="confirmRemoveBioId(entry.bioId)"
+                              >
+                                Confirm Unlink
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                class="h-6 px-1.5 text-[10px]"
+                                :disabled="bioIdActionLoading"
+                                @click="pendingBioIdRemoveConfirm = null"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Add Secondary Biometric ID Form -->
+                    <div class="pt-2 border-t space-y-2">
+                      <label class="text-[11px] font-semibold text-foreground block">
+                        Add Secondary Biometric ID
+                      </label>
+                      <div class="flex flex-col sm:flex-row gap-2">
+                        <Input
+                          v-model="newSecondaryBioId"
+                          type="text"
+                          placeholder="e.g. 50305"
+                          class="h-8 text-xs font-mono sm:w-40"
+                          @keyup.enter.prevent="requestLinkSecondaryBioId"
+                        />
+                        <Input
+                          v-model="newSecondaryBioIdNotes"
+                          type="text"
+                          placeholder="Optional note (e.g. Second terminal registration)"
+                          class="h-8 text-xs flex-1"
+                          @keyup.enter.prevent="requestLinkSecondaryBioId"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          class="h-8 text-xs gap-1.5 shrink-0"
+                          :disabled="bioIdActionLoading || !newSecondaryBioId.trim()"
+                          @click="requestLinkSecondaryBioId"
+                        >
+                          <Plus class="size-3.5 text-primary" />
+                          <span>Check & Link ID</span>
+                        </Button>
+                      </div>
+
+                      <!-- Explicit Administrator Confirmation Prompt -->
+                      <div
+                        v-if="pendingBioIdLinkConfirm"
+                        class="p-2.5 rounded-md border border-primary/30 bg-primary/5 space-y-2"
+                      >
+                        <div class="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                          <ShieldAlert class="size-3.5 text-primary shrink-0" />
+                          <span>Confirm Administrator Biometric ID Link</span>
+                        </div>
+                        <p class="text-[11px] text-muted-foreground leading-relaxed">
+                          Link Biometric ID <strong class="font-mono text-foreground">{{ pendingBioIdLinkConfirm.bioId }}</strong> to
+                          <strong class="text-foreground">{{ selectedEmployee?.full_name }}</strong>
+                          (Primary ID: <strong class="font-mono text-foreground">{{ getPrimaryBioIdDisplay(selectedEmployee) }}</strong>)?
+                          All punches from ID {{ pendingBioIdLinkConfirm.bioId }} will combine with this employee's attendance and payroll.
+                        </p>
+                        <div class="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            class="h-7 text-xs gap-1"
+                            :disabled="bioIdActionLoading"
+                            @click="confirmLinkSecondaryBioId"
+                          >
+                            <CheckCircle2 class="size-3" />
+                            <span>Confirm & Link Bio ID</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-7 text-xs"
+                            :disabled="bioIdActionLoading"
+                            @click="pendingBioIdLinkConfirm = null"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p class="text-muted-foreground text-[10px] leading-relaxed">
+                      <strong>Duplicate & Merge Safety:</strong> Similar employee names never merge automatically. Each linked Biometric ID must be unique across all employees and explicitly confirmed by an administrator. Deactivating a secondary ID preserves historical attendance while flagging any future punches on that ID for admin review.
                     </p>
                   </div>
 

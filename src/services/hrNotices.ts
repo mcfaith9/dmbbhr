@@ -191,16 +191,21 @@ class HrNoticeService {
   }
 
   /**
-   * Fast synchronous lookup to check whether an active HR notice exists for an employee Bio ID.
-   * Compares normalized Bio IDs.
+   * Fast synchronous lookup to check whether an active HR notice exists for an employee Bio ID
+   * (or any of the employee's linked Biometric IDs).
    */
-  public getActiveNoticeForBioId(bioId: string): HrNotice | null {
-    const cleanBio = normalizeBioId(bioId)
-    if (!cleanBio) return null
+  public getActiveNoticeForBioId(bioId: string | string[]): HrNotice | null {
+    const candidates = Array.isArray(bioId) ? bioId : [bioId]
+    const targetKeys = new Set<string>()
+    for (const c of candidates) {
+      const norm = normalizeBioId(c)
+      if (norm) targetKeys.add(norm)
+    }
+    if (targetKeys.size === 0) return null
 
     // Look through current notices in memory
     const matches = this.notices.value.filter(n => {
-      return normalizeBioId(n.bioId) === cleanBio && isNoticeActive(n)
+      return targetKeys.has(normalizeBioId(n.bioId)) && isNoticeActive(n)
     })
 
     if (matches.length === 0) return null

@@ -17,9 +17,10 @@
  * - Seamless integration with approved Leave, Manual Time, and HR context
  */
 
-import type { AttendanceLog, EmploymentStatus } from '@/types'
+import type { AttendanceLog, BiometricIdEntry, EmploymentStatus } from '@/types'
 import type { ManualAttendanceRecord } from '@/db'
 import { calculateExpectedOutMinutes, formatTime12h } from '@/repositories/workGroupRepository'
+import { normalizeBiometricIdKey, normalizeBiometricIdToken } from '@/lib/employeeIdentity'
 export { parseBiometricTimestamp, type ParsedBiometricTimestamp } from '@/utils/attendanceTimestampParser'
 
 export interface AttendanceEngineConfig {
@@ -61,6 +62,8 @@ export interface EmployeeScheduleContext {
   isFieldWorkApproved?: boolean
   employeeStatus?: EmploymentStatus
   resignationDate?: string
+  primaryBioId?: string
+  biometricIds?: BiometricIdEntry[]
 }
 
 export interface ScanItem {
@@ -72,6 +75,8 @@ export interface ScanItem {
   diffSeconds?: number
   type: number
   state: number
+  sourceBioId?: string
+  isDeactivatedBioId?: boolean
   deviceName?: string
   deviceIp?: string
   windowRole?: 'IN' | 'OUT' | 'BREAK_OUT' | 'BREAK_IN' | 'EXTRA'
@@ -125,6 +130,10 @@ export interface DailyAttendanceRecord {
   raw_punches: AttendanceLog[]
   valid_punches: AttendanceLog[]
   scan_breakdown: ScanItem[]
+  primary_bio_id?: string
+  source_bio_ids?: string[]
+  requires_admin_review?: boolean
+  review_reasons?: string[]
   notes?: string
 }
 
@@ -467,12 +476,23 @@ export function processEmployeeDayPunches(
     (a, b) => new Date(a.attendance_time).getTime() - new Date(b.attendance_time).getTime()
   )
 
-  // 3. Duplicate scan clustering (consecutive scans within duplicatePunchThresholdSeconds e.g. 60s)
+  // 3. Duplicate scan clustering & Multi-Bio-ID audit checks
+  const bioEntryMap = new Map<string, BiometricIdEntry>()
+  if (Array.isArray(employeeContext?.biometricIds)) {
+    for (const entry of employeeContext.biometricIds) {
+      const k = normalizeBiometricIdKey(entry.bioId)
+      if (k) bioEntryMap.set(k, entry)
+    }
+  }
+  const sourceBioIdSet = new Set<string>()
+  const reviewReasonsSet = new Set<string>()
+
   const thresholdMs = (config.duplicatePunchThresholdSeconds || 60) * 1000
   const validPunches: AttendanceLog[] = []
   const scanBreakdown: ScanItem[] = []
 
   let currentClusterPrimary: AttendanceLog | null = null
+  let currentClusterPrimarySourceBio = ''
   let currentClusterPrimaryMs = -Infinity
   let lastPunchMs = -Infinity
 
@@ -482,8 +502,28 @@ export function processEmployeeDayPunches(
     const diffFromPrimary = ms - currentClusterPrimaryMs
     const diffFromLast = ms - lastPunchMs
 
+    const sourceBioId = normalizeBiometricIdToken(log.source_bio_id || log.user_id) || String(log.user_id || bioId).trim()
+    if (sourceBioId) sourceBioIdSet.add(sourceBioId)
+
+    const linkedEntry = bioEntryMap.get(normalizeBiometricIdKey(sourceBioId))
+    let isDeactivatedBioId = false
+    if (linkedEntry && linkedEntry.status === 'inactive') {
+      const deactivatedMs = linkedEntry.deactivatedAt ? new Date(linkedEntry.deactivatedAt).getTime() : 0
+      if (!deactivatedMs || isNaN(deactivatedMs) || ms >= deactivatedMs) {
+        isDeactivatedBioId = true
+        reviewReasonsSet.add(
+          `Punch at ${formatManilaTime(log.attendance_time)} used deactivated Bio ID ${sourceBioId} (requires admin review)`
+        )
+      }
+    }
+
     if (currentClusterPrimary && diffFromLast <= thresholdMs && diffFromLast >= 0) {
       const diffSec = Math.max(1, Math.round(diffFromPrimary / 1000))
+      if (currentClusterPrimarySourceBio && sourceBioId && currentClusterPrimarySourceBio !== sourceBioId) {
+        reviewReasonsSet.add(
+          `Conflicting rapid scans across linked Bio IDs (${currentClusterPrimarySourceBio} and ${sourceBioId} within ${diffSec}s) — raw logs preserved`
+        )
+      }
       scanBreakdown.push({
         id: log.id || `scan-${bioId}-${ms}-${i}`,
         timeFormatted: formatManilaTime(log.attendance_time),
@@ -493,11 +533,14 @@ export function processEmployeeDayPunches(
         diffSeconds: diffSec,
         type: Number(log.type ?? 1),
         state: Number(log.state ?? 1),
+        sourceBioId,
+        isDeactivatedBioId,
         deviceName: log.device_name || 'BISBIO B-29b',
         deviceIp: log.device_ip || '192.168.1.201'
       })
     } else {
       currentClusterPrimary = log
+      currentClusterPrimarySourceBio = sourceBioId
       currentClusterPrimaryMs = ms
       validPunches.push(log)
       scanBreakdown.push({
@@ -507,6 +550,8 @@ export function processEmployeeDayPunches(
         isPrimary: true,
         type: Number(log.type ?? 1),
         state: Number(log.state ?? 1),
+        sourceBioId,
+        isDeactivatedBioId,
         deviceName: log.device_name || 'BISBIO B-29b',
         deviceIp: log.device_ip || '192.168.1.201'
       })
@@ -1082,6 +1127,19 @@ export function processEmployeeDayPunches(
     year: 'numeric'
   }).format(new Date(firstPunch.attendance_time))
 
+  if (otherPunches.length > 0 && sourceBioIdSet.size > 1) {
+    reviewReasonsSet.add(
+      `Multiple punches across linked Bio IDs (${Array.from(sourceBioIdSet).join(', ')}) include midday/extra scan(s) requiring review`
+    )
+  }
+
+  const reviewReasons = Array.from(reviewReasonsSet)
+  const requiresAdminReview = reviewReasons.length > 0
+  if (requiresAdminReview) {
+    const reviewSummary = reviewReasons.join(' | ')
+    notes = notes ? `${notes} • ${reviewSummary}` : reviewSummary
+  }
+
   return {
     id: `daily-${bioId}-${selectedDate}`,
     biometric_user_id: bioId,
@@ -1129,6 +1187,10 @@ export function processEmployeeDayPunches(
     raw_punches: sortedLogs,
     valid_punches: validPunches,
     scan_breakdown: scanBreakdown,
+    primary_bio_id: employeeContext?.primaryBioId || bioId,
+    source_bio_ids: Array.from(sourceBioIdSet),
+    requires_admin_review: requiresAdminReview,
+    review_reasons: reviewReasons,
     notes
   }
 }

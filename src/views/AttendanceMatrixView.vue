@@ -29,7 +29,12 @@ import { attendanceService, type DailyAttendanceRecord } from '@/services/attend
 import { resolveApprovedDutyHours } from '@/services/attendanceEngine'
 import { holidayService } from '@/services/holidays/holidayService'
 import { overtimeRepository } from '@/repositories/overtimeRepository'
-import { collectEmployeeIdKeys } from '@/lib/employeeIdentity'
+import {
+  collectEmployeeIdKeys,
+  getEmployeeAllBioIds,
+  getEmployeePrimaryBioId,
+  recordMatchesEmployee
+} from '@/lib/employeeIdentity'
 import type { ManualAttendanceRecord, OvertimeAuthorizationRecord } from '@/db'
 import type { Employee, WorkGroup } from '@/types'
 import {
@@ -210,6 +215,7 @@ const selectableEmployees = computed(() => {
     e.full_name.toLowerCase().includes(q) ||
     String(e.biometric_user_id).includes(q) ||
     String(e.employee_number || '').toLowerCase().includes(q) ||
+    getEmployeeAllBioIds(e).some(id => id.toLowerCase().includes(q)) ||
     String(e.department || '').toLowerCase().includes(q)
   )
 })
@@ -218,7 +224,10 @@ const selectableEmployees = computed(() => {
 const selectedEmployee = computed(() => {
   if (!selectedBioId.value) return null
   return employees.value.find(
-    e => e.biometric_user_id === selectedBioId.value || e.employee_number === selectedBioId.value
+    e =>
+      e.biometric_user_id === selectedBioId.value ||
+      e.employee_number === selectedBioId.value ||
+      recordMatchesEmployee(selectedBioId.value, collectEmployeeIdKeys(e))
   ) || null
 })
 
@@ -577,8 +586,16 @@ onMounted(async () => {
 
     // Pre-select employee from query params if supplied
     const queryBioId = (route.query.bioId || route.query.id || route.query.userId) as string | undefined
-    if (queryBioId && empList.some(e => e.biometric_user_id === queryBioId || e.employee_number === queryBioId)) {
-      selectedBioId.value = queryBioId
+    const matchedQueryEmp = queryBioId
+      ? empList.find(
+          e =>
+            e.biometric_user_id === queryBioId ||
+            e.employee_number === queryBioId ||
+            recordMatchesEmployee(queryBioId, collectEmployeeIdKeys(e))
+        )
+      : undefined
+    if (matchedQueryEmp) {
+      selectedBioId.value = matchedQueryEmp.biometric_user_id
     } else {
       // Default to first active non-resigned employee
       const firstActive = empList.find(e => e.status !== 'resigned')
@@ -752,8 +769,13 @@ onMounted(async () => {
                 ID: {{ selectedEmployee.employee_number || selectedEmployee.biometric_user_id }}
               </Badge>
             </span>
-            <span class="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-              <span>Bio ID: <strong class="font-mono text-foreground">{{ selectedEmployee.biometric_user_id }}</strong></span>
+            <span class="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>
+                Bio ID: <strong class="font-mono text-foreground">{{ getEmployeePrimaryBioId(selectedEmployee) || selectedEmployee.biometric_user_id }}</strong>
+                <span v-if="getEmployeeAllBioIds(selectedEmployee).length > 1" class="text-[10px] font-mono text-primary ml-1">
+                  ({{ getEmployeeAllBioIds(selectedEmployee).join(', ') }})
+                </span>
+              </span>
               <span>•</span>
               <span>{{ selectedEmployee.department || 'Operations' }}</span>
               <span>•</span>

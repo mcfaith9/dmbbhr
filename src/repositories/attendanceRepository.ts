@@ -11,6 +11,7 @@ import { punchRepository } from './punchRepository'
 import { employeeRepository } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
 import { manualAttendanceRepository } from './manualAttendanceRepository'
+import { getEmployeeAllBioIds, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
 
 import type { EmployeeRecord } from '@/db'
 
@@ -70,17 +71,43 @@ export const attendanceRepository = {
         .catch(() => [])
     ])
 
-    // Build canonical lookup maps so 05007 / 5007 / EMP-5007 resolve deterministically
+    // Build canonical lookup maps covering primary, secondary, and historical/inactive linked Bio IDs
     const canonicalEmployeeMap = new Map<string, EmployeeRecord>()
+    const rawEmployeeLookup = new Map<string, EmployeeRecord>()
     for (const emp of employeeMap.values()) {
+      rawEmployeeLookup.set(emp.bioId, emp)
+      rawEmployeeLookup.set(emp.bioId.toLowerCase(), emp)
+      const allIds = getEmployeeAllBioIds(emp)
+      for (const linkedId of allIds) {
+        const cleanLinked = String(linkedId).trim()
+        if (!cleanLinked) continue
+        if (!rawEmployeeLookup.has(cleanLinked)) rawEmployeeLookup.set(cleanLinked, emp)
+        if (!rawEmployeeLookup.has(cleanLinked.toLowerCase())) rawEmployeeLookup.set(cleanLinked.toLowerCase(), emp)
+        const ck = normalizeCanonicalBioId(cleanLinked)
+        if (ck && !canonicalEmployeeMap.has(ck)) canonicalEmployeeMap.set(ck, emp)
+      }
       const k1 = normalizeCanonicalBioId(emp.bioId)
       const k2 = normalizeCanonicalBioId(emp.employeeNumber)
       if (k1 && !canonicalEmployeeMap.has(k1)) canonicalEmployeeMap.set(k1, emp)
       if (k2 && !canonicalEmployeeMap.has(k2)) canonicalEmployeeMap.set(k2, emp)
     }
 
+    const resolveEmployee = (id?: string | null): EmployeeRecord | undefined => {
+      const raw = String(id || '').trim()
+      if (!raw) return undefined
+      const direct = employeeMap.get(raw) || rawEmployeeLookup.get(raw) || rawEmployeeLookup.get(raw.toLowerCase())
+      if (direct) return direct
+      const norm = normalizeCanonicalBioId(raw)
+      return norm ? canonicalEmployeeMap.get(norm) : undefined
+    }
+
     const canonicalAdjustmentsMap = new Map<string, any>()
     for (const [k, adj] of manualAdjustmentsMap.entries()) {
+      const matchedEmp = resolveEmployee(k)
+      if (matchedEmp) {
+        const empCanon = normalizeCanonicalBioId(matchedEmp.bioId)
+        if (empCanon && !canonicalAdjustmentsMap.has(empCanon)) canonicalAdjustmentsMap.set(empCanon, adj)
+      }
       const ck = normalizeCanonicalBioId(k)
       if (ck && !canonicalAdjustmentsMap.has(ck)) canonicalAdjustmentsMap.set(ck, adj)
     }
@@ -89,32 +116,53 @@ export const attendanceRepository = {
     const canonicalLeaveMap = new Map<string, any>()
     for (const l of leaves) {
       leaveMap.set(l.bioId, l)
+      const matchedEmp = resolveEmployee(l.bioId)
+      if (matchedEmp) {
+        leaveMap.set(matchedEmp.bioId, l)
+        const empCanon = normalizeCanonicalBioId(matchedEmp.bioId)
+        if (empCanon && !canonicalLeaveMap.has(empCanon)) canonicalLeaveMap.set(empCanon, l)
+      }
       const ck = normalizeCanonicalBioId(l.bioId)
       if (ck && !canonicalLeaveMap.has(ck)) canonicalLeaveMap.set(ck, l)
     }
 
     let dayPunches = rawDayPunches
     if (bioIdFilter && bioIdFilter.trim()) {
-      const filterNorm = normalizeCanonicalBioId(bioIdFilter)
-      const filterLower = bioIdFilter.trim().toLowerCase()
+      const matchedFilterEmp = resolveEmployee(bioIdFilter)
+      const allowedFilterKeys = new Set<string>()
+      const addFilterKey = (v?: string | null) => {
+        if (!v) return
+        const l = String(v).trim().toLowerCase()
+        const n = normalizeCanonicalBioId(v)
+        if (l) allowedFilterKeys.add(l)
+        if (n) allowedFilterKeys.add(n)
+      }
+      addFilterKey(bioIdFilter)
+      if (matchedFilterEmp) {
+        addFilterKey(matchedFilterEmp.bioId)
+        for (const lid of getEmployeeAllBioIds(matchedFilterEmp)) addFilterKey(lid)
+      }
       dayPunches = dayPunches.filter(p => {
+        const pLower = p.user_id.trim().toLowerCase()
         const pNorm = normalizeCanonicalBioId(p.user_id)
-        return p.user_id.trim().toLowerCase() === filterLower || (filterNorm !== '' && pNorm === filterNorm)
+        return allowedFilterKeys.has(pLower) || (pNorm !== '' && allowedFilterKeys.has(pNorm))
       })
     }
 
-    // 2. Group punches by canonical Bio ID (preserving official employee bioId when matched)
+    // 2. Group punches by canonical employee record (combining primary & secondary Bio IDs into one daily attendance record)
     const userGroups = new Map<string, AttendanceLog[]>()
     for (let i = 0; i < dayPunches.length; i++) {
       const p = dayPunches[i]
       const rawUid = String(p.user_id || '').trim()
-      const canonUid = normalizeCanonicalBioId(rawUid)
-      const matchedEmp = employeeMap.get(rawUid) || (canonUid ? canonicalEmployeeMap.get(canonUid) : undefined)
+      const matchedEmp = resolveEmployee(rawUid)
       const groupKey = matchedEmp?.bioId || rawUid
       if (!userGroups.has(groupKey)) {
         userGroups.set(groupKey, [])
       }
-      userGroups.get(groupKey)!.push(p)
+      userGroups.get(groupKey)!.push({
+        ...p,
+        source_bio_id: p.source_bio_id || rawUid
+      })
     }
 
     const records: DailyAttendanceRecord[] = []
@@ -127,7 +175,7 @@ export const attendanceRepository = {
       processedBioIds.add(bioId)
       if (canonUid) processedCanonicalIds.add(canonUid)
 
-      const emp = employeeMap.get(bioId) || (canonUid ? canonicalEmployeeMap.get(canonUid) : undefined)
+      const emp = resolveEmployee(bioId)
       const empLocation = emp?.location || punches[0].location_name || 'DBB CEBU'
       const empWgId = emp?.workGroupId || 'wg-group-c'
       const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
@@ -148,6 +196,8 @@ export const attendanceRepository = {
 
       const empContext: EmployeeScheduleContext = {
         bioId: emp?.bioId || bioId,
+        primaryBioId: emp ? getEmployeePrimaryBioId(emp) : bioId,
+        biometricIds: emp?.biometricIds,
         name: emp?.fullName || punches[0].employee_name || `User ${bioId}`,
         department: emp?.department || '',
         location: empLocation,
@@ -366,15 +416,32 @@ export const attendanceRepository = {
     customConfig: Partial<AttendanceEngineConfig> = {}
   ): Promise<DailyAttendanceRecord[]> {
     const cleanBioId = String(bioId).trim()
-    const rawPunches = await db.biometricPunches.where('bioId').equals(cleanBioId).toArray()
-    const [employeeMap, workGroupMap, adjustments, leaves] = await Promise.all([
+    const [resolvedEmployee, employeeMap, workGroupMap] = await Promise.all([
+      employeeRepository.getByBioId(cleanBioId),
       employeeRepository.getEmployeeMap(),
-      workGroupRepository.getMap(),
-      db.manualAdjustments.where('bioId').equals(cleanBioId).toArray().catch(() => []),
-      db.leaveRecords.where('bioId').equals(cleanBioId).toArray().catch(() => [])
+      workGroupRepository.getMap()
     ])
 
-    const emp = employeeMap.get(cleanBioId)
+    const canonicalId = resolvedEmployee?.canonical_bio_id || resolvedEmployee?.biometric_user_id || cleanBioId
+    const emp = employeeMap.get(canonicalId) || employeeMap.get(cleanBioId)
+
+    // Collect all linked Bio IDs (canonical, primary, secondary, inactive, plus raw variants)
+    const idCandidates = new Set<string>([cleanBioId, canonicalId])
+    if (emp) {
+      for (const lid of getEmployeeAllBioIds(emp)) {
+        idCandidates.add(lid)
+        idCandidates.add(`user${lid}`)
+        idCandidates.add(`emp-${lid}`)
+      }
+    }
+    const queryIds = Array.from(idCandidates).filter(Boolean)
+
+    const [rawPunches, adjustments, leaves] = await Promise.all([
+      db.biometricPunches.where('bioId').anyOf(queryIds).toArray(),
+      db.manualAdjustments.where('bioId').anyOf(queryIds).toArray().catch(() => []),
+      db.leaveRecords.where('bioId').anyOf(queryIds).toArray().catch(() => [])
+    ])
+
     const empLocation = emp?.location || rawPunches[0]?.locationName || 'DBB CEBU'
     const empWgId = emp?.workGroupId || 'wg-group-c'
     const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
@@ -391,15 +458,20 @@ export const attendanceRepository = {
       }
     }
 
-    // Group punches by date
+    // Group punches by date across all linked Bio IDs (deduplicated by punch id)
     const dateMap = new Map<string, AttendanceLog[]>()
+    const seenPunchIds = new Set<string>()
     for (const r of rawPunches) {
+      if (seenPunchIds.has(r.id)) continue
+      seenPunchIds.add(r.id)
       const log = punchRepository.toLog(r)
+      log.source_bio_id = r.bioId
       if (emp) {
         log.employee_name = emp.fullName
         log.department = emp.department || ''
         log.location_name = emp.location
         log.work_group_id = emp.workGroupId || 'wg-group-c'
+        log.linked_employee_bio_id = getEmployeePrimaryBioId(emp)
       }
       if (!dateMap.has(r.date)) {
         dateMap.set(r.date, [])
@@ -419,8 +491,10 @@ export const attendanceRepository = {
 
     for (const [dateStr, punches] of dateMap.entries()) {
       const empContext: EmployeeScheduleContext = {
-        bioId: cleanBioId,
-        name: emp?.fullName || `User ${cleanBioId}`,
+        bioId: canonicalId,
+        primaryBioId: emp ? getEmployeePrimaryBioId(emp) : canonicalId,
+        biometricIds: emp?.biometricIds,
+        name: emp?.fullName || `User ${canonicalId}`,
         department: emp?.department || '',
         location: empLocation,
         workGroupId: empWgId,
@@ -436,7 +510,7 @@ export const attendanceRepository = {
         resignationDate: emp?.resignationDate
       }
 
-      const rec = processEmployeeDayPunches(cleanBioId, punches, dateStr, empContext, customConfig)
+      const rec = processEmployeeDayPunches(canonicalId, punches, dateStr, empContext, customConfig)
       if (rec) {
         records.push(rec)
       }

@@ -30,6 +30,7 @@ import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
 import { announcementService, type AnnouncementItem } from '@/services/announcements'
 import { hrNoticeService, isNoticeActive, type HrNotice } from '@/services/hrNotices'
+import { collectEmployeeIdKeys, getEmployeeAllBioIds, recordMatchesEmployee } from '@/lib/employeeIdentity'
 import type { Employee, WorkGroup, AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -89,16 +90,19 @@ const displayedRecentPunches = computed(() => {
   return recentPunches.value.slice(0, 5)
 })
 
-// Employee profile photo resolution reusing directory and fallback
+// Employee profile photo resolution reusing directory and fallback (supports secondary Bio IDs)
 function getEmployeePhoto(bioId?: string, punchPhotoUrl?: string): string {
   if (punchPhotoUrl && punchPhotoUrl.trim()) return punchPhotoUrl.trim()
   if (!bioId) return ''
   const normalized = normalizeBioId(bioId)
   const emp = employees.value.find(
-    e => e.biometric_user_id === normalized || normalizeBioId(e.biometric_user_id) === normalized
+    e => e.biometric_user_id === normalized ||
+      normalizeBioId(e.biometric_user_id) === normalized ||
+      recordMatchesEmployee(normalized, collectEmployeeIdKeys(e))
   )
   if (emp?.photo && emp.photo.trim()) return emp.photo.trim()
-  return normalized ? `/employee-photos/${normalized}.jpg` : ''
+  const canonicalId = emp?.biometric_user_id || normalized
+  return canonicalId ? `/employee-photos/${canonicalId}.jpg` : ''
 }
 
 // Real-time Clock in Manila / Local Time
@@ -916,9 +920,13 @@ watch(
 
     const punch = currentPunch.value
 
-    // Check whether the punched employee has an active HR notice (only queued if popups enabled)
+    // Check whether the punched employee has an active HR notice across any linked Bio ID
     if (punch?.bioId && popupsEnabled.value) {
-      const activeNotice = hrNoticeService.getActiveNoticeForBioId(punch.bioId)
+      const matchedEmp = employees.value.find(e => recordMatchesEmployee(punch.bioId, collectEmployeeIdKeys(e)))
+      const candidateNoticeIds = matchedEmp
+        ? Array.from(new Set([punch.bioId, ...getEmployeeAllBioIds(matchedEmp)]))
+        : punch.bioId
+      const activeNotice = hrNoticeService.getActiveNoticeForBioId(candidateNoticeIds)
       if (activeNotice && isNoticeActive(activeNotice)) {
         if (lastNoticePunchEventId.value !== punch.eventId) {
           pendingHrNoticeForPunch.value = {
@@ -970,7 +978,9 @@ async function triggerTestPunch(
   }
 
   const normalizedId = normalizeBioId(rawUserId)
-  const foundEmp = employees.value.find(e => e.biometric_user_id === normalizedId)
+  const foundEmp = employees.value.find(
+    e => e.biometric_user_id === normalizedId || recordMatchesEmployee(normalizedId, collectEmployeeIdKeys(e))
+  )
   
   const empWorkGroup = foundEmp?.work_group_name || 'Group C'
   const empWorkGroupCode = foundEmp?.work_group_code || 'C'
@@ -980,7 +990,7 @@ async function triggerTestPunch(
   // If this is an independent test scenario (not the sequential same_employee test),
   // reset the resolver session state for this employee so the test evaluates with clean isolation.
   if (scenario !== 'same_employee') {
-    punchDisplayService.resetResolverEmployee(normalizedId)
+    punchDisplayService.resetResolverEmployee(foundEmp?.biometric_user_id || normalizedId)
   }
 
   const mockDate = new Date()

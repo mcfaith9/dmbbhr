@@ -1,6 +1,13 @@
 import { db, type EmployeeRecord, type WorkGroupRecord } from '@/db'
-import type { Employee, EmployeeLocation, WorkGroup, EmploymentStatus } from '@/types'
+import type { BiometricIdEntry, Employee, EmployeeLocation, WorkGroup, EmploymentStatus } from '@/types'
 import { workGroupRepository } from './workGroupRepository'
+import {
+  deriveLinkedBioIds,
+  ensureBiometricIdsList,
+  getEmployeePrimaryBioId,
+  normalizeBiometricIdKey,
+  normalizeBiometricIdToken
+} from '@/lib/employeeIdentity'
 
 export const VALID_LOCATIONS: EmployeeLocation[] = [
   'DMBB CEBU',
@@ -483,10 +490,41 @@ const DEFAULT_INITIAL_EMPLOYEES: EmployeeRecord[] = [
 ]
 
 let employeeCache: Map<string, EmployeeRecord> | null = null
+let linkedBioIdIndex: Map<string, string> | null = null
 const changeListeners = new Set<() => void>()
 
+function indexEmployeeRecord(rec: EmployeeRecord) {
+  if (!employeeCache) employeeCache = new Map<string, EmployeeRecord>()
+  if (!linkedBioIdIndex) linkedBioIdIndex = new Map<string, string>()
+
+  const canonicalId = String(rec.bioId || '').trim()
+  if (!canonicalId) return
+
+  // Remove stale linkedBioIdIndex pointers to this canonicalId before re-indexing
+  for (const [key, mappedCanonical] of linkedBioIdIndex.entries()) {
+    if (mappedCanonical === canonicalId) {
+      linkedBioIdIndex.delete(key)
+    }
+  }
+
+  employeeCache.set(canonicalId, rec)
+
+  const entries = ensureBiometricIdsList(canonicalId, rec.biometricIds, rec.primaryBioId, rec.createdAt)
+  const linked = deriveLinkedBioIds(canonicalId, entries, rec.primaryBioId)
+  rec.biometricIds = entries
+  rec.primaryBioId = entries.find(e => e.role === 'primary' && e.status === 'active')?.bioId || rec.primaryBioId || canonicalId
+  rec.linkedBioIds = linked
+
+  for (const id of linked) {
+    const lower = id.toLowerCase()
+    const normKey = normalizeBiometricIdKey(id)
+    if (lower) linkedBioIdIndex.set(lower, canonicalId)
+    if (normKey) linkedBioIdIndex.set(normKey, canonicalId)
+  }
+}
+
 async function ensureInitialized() {
-  if (employeeCache !== null) return
+  if (employeeCache !== null && linkedBioIdIndex !== null) return
 
   const count = await db.employees.count()
   if (count === 0) {
@@ -495,31 +533,33 @@ async function ensureInitialized() {
 
   const all = await db.employees.toArray()
   employeeCache = new Map<string, EmployeeRecord>()
+  linkedBioIdIndex = new Map<string, string>()
   for (const emp of all) {
     if (!emp.workGroupId || emp.workGroupId === 'wg-group-a' || emp.workGroupId === 'wg-group-b') {
       emp.workGroupId = 'wg-group-c'
       db.employees.update(emp.bioId, { workGroupId: 'wg-group-c' }).catch(() => {})
     }
-    // Core Identifier Rule: Employee ID = Bio ID
+    // Core Identifier Rule: Employee ID = Canonical Bio ID
     if (emp.employeeNumber !== emp.bioId) {
       emp.employeeNumber = emp.bioId
     }
-    employeeCache.set(emp.bioId, emp)
+    indexEmployeeRecord(emp)
   }
 
   // Ensure default seeds like Cantillas, Ronald (25065) and Alfanta, Cristine (50291) are always present
   for (const seed of DEFAULT_INITIAL_EMPLOYEES) {
     if (!employeeCache.has(seed.bioId)) {
       const cleanSeed = { ...seed, employeeNumber: seed.bioId }
-      employeeCache.set(seed.bioId, cleanSeed)
+      indexEmployeeRecord(cleanSeed)
       db.employees.put(cleanSeed).catch(() => {})
     }
   }
 }
 
 /**
- * Resilient lookup helper that matches an employee across bioId, employeeNumber,
- * prefix variants (emp-25065 vs 25065), and case insensitivity.
+ * Resilient lookup helper that matches an employee across canonical bioId,
+ * primaryBioId, secondary/inactive linkedBioIds, employeeNumber,
+ * prefix variants (emp-25065 / user25065 vs 25065), and case insensitivity.
  */
 export function findCachedEmployee(identifier?: string | null): { key: string; record: EmployeeRecord } | null {
   if (!employeeCache) return null
@@ -531,23 +571,41 @@ export function findCachedEmployee(identifier?: string | null): { key: string; r
     return { key: raw, record: employeeCache.get(raw)! }
   }
 
-  // 2. Prefix stripped (emp-25065 -> 25065)
+  // 2. Prefix stripped (emp-25065 -> 25065, user25065 -> 25065)
   const stripped = raw.replace(/^emp[-_]/i, '').trim()
   if (employeeCache.has(stripped)) {
     return { key: stripped, record: employeeCache.get(stripped)! }
   }
+  const normalizedToken = normalizeBiometricIdToken(raw)
+  if (normalizedToken && employeeCache.has(normalizedToken)) {
+    return { key: normalizedToken, record: employeeCache.get(normalizedToken)! }
+  }
 
-  // 3. Match across bioId or employeeNumber (case-insensitive)
+  // 3. O(1) lookup via linkedBioIdIndex (covers primary, secondary, and historical/inactive linked Bio IDs)
   const rawLower = raw.toLowerCase()
   const strippedLower = stripped.toLowerCase()
+  const normKey = normalizeBiometricIdKey(raw)
+  if (linkedBioIdIndex) {
+    const mappedCanonical =
+      linkedBioIdIndex.get(rawLower) ||
+      linkedBioIdIndex.get(strippedLower) ||
+      (normKey ? linkedBioIdIndex.get(normKey) : undefined)
+    if (mappedCanonical && employeeCache.has(mappedCanonical)) {
+      return { key: mappedCanonical, record: employeeCache.get(mappedCanonical)! }
+    }
+  }
+
+  // 4. Fallback scan across bioId, primaryBioId, employeeNumber, and linkedBioIds
   for (const [k, rec] of employeeCache.entries()) {
     if (
       k.toLowerCase() === rawLower ||
       k.toLowerCase() === strippedLower ||
       rec.bioId.toLowerCase() === rawLower ||
       rec.bioId.toLowerCase() === strippedLower ||
+      (rec.primaryBioId && rec.primaryBioId.toLowerCase() === normKey) ||
       rec.employeeNumber.toLowerCase() === rawLower ||
-      rec.employeeNumber.toLowerCase() === strippedLower
+      rec.employeeNumber.toLowerCase() === strippedLower ||
+      (Array.isArray(rec.linkedBioIds) && rec.linkedBioIds.some(id => id.toLowerCase() === normKey || id.toLowerCase() === rawLower))
     ) {
       return { key: k, record: rec }
     }
@@ -1109,17 +1167,31 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
 
   const cleanPhoto = getOptString(input.photo)
 
-  let cleanExcludeFromBiometric: boolean | undefined = undefined
-  if ('exclude_from_biometric' in input && input.exclude_from_biometric !== undefined) {
-    cleanExcludeFromBiometric = Boolean(input.exclude_from_biometric)
-  } else if ('excludeFromBiometric' in input && input.excludeFromBiometric !== undefined) {
-    cleanExcludeFromBiometric = Boolean(input.excludeFromBiometric)
-  }
+  const cleanExcludeFromBiometric: boolean | undefined =
+    'exclude_from_biometric' in input && input.exclude_from_biometric !== undefined
+      ? Boolean(input.exclude_from_biometric)
+      : ('excludeFromBiometric' in input && input.excludeFromBiometric !== undefined
+          ? Boolean(input.excludeFromBiometric)
+          : undefined)
+
+  const rawBiometricIds = input.biometricIds ?? input.biometric_ids
+  const rawPrimaryBioId = getOptString(input.primaryBioId, input.primary_bio_id) || cleanBioId
+  const cleanBiometricIds: BiometricIdEntry[] = ensureBiometricIdsList(
+    cleanBioId,
+    Array.isArray(rawBiometricIds) ? rawBiometricIds : undefined,
+    rawPrimaryBioId,
+    cleanCreatedAt
+  )
+  const resolvedPrimaryBioId = cleanBiometricIds.find(e => e.role === 'primary' && e.status === 'active')?.bioId || rawPrimaryBioId || cleanBioId
+  const cleanLinkedBioIds = deriveLinkedBioIds(cleanBioId, cleanBiometricIds, resolvedPrimaryBioId)
 
   // Construct a fresh, strictly plain object literal (Object.prototype, no Vue proxies, no functions)
   const plainRecord: EmployeeRecord = {
     bioId: cleanBioId,
     employeeNumber: cleanEmpNum,
+    primaryBioId: resolvedPrimaryBioId,
+    biometricIds: cleanBiometricIds,
+    linkedBioIds: cleanLinkedBioIds,
     fullName: cleanName || `User ${cleanBioId}`,
     preferredName: cleanPreferredName,
     photo: cleanPhoto,
@@ -1188,10 +1260,17 @@ export const employeeRepository = {
   toEmployee(rec: EmployeeRecord, wgMap?: Map<string, WorkGroupRecord>): Employee {
     const wgId = rec.workGroupId || 'wg-group-c'
     const wg = wgMap ? (wgMap.get(wgId) || wgMap.get('wg-group-c')) : workGroupRepository.getRecordByIdSync(wgId)
+    const biometricIds = ensureBiometricIdsList(rec.bioId, rec.biometricIds, rec.primaryBioId, rec.createdAt)
+    const primaryBioId = biometricIds.find(e => e.role === 'primary' && e.status === 'active')?.bioId || rec.primaryBioId || rec.bioId
+    const linkedBioIds = deriveLinkedBioIds(rec.bioId, biometricIds, primaryBioId)
     return {
       id: `emp-${rec.bioId}`,
-      employee_number: rec.bioId, // Core Rule: Employee ID = Bio ID
+      employee_number: rec.bioId, // Canonical Employee ID
       biometric_user_id: rec.bioId,
+      canonical_bio_id: rec.bioId,
+      primary_bio_id: primaryBioId,
+      biometric_ids: biometricIds,
+      linked_bio_ids: linkedBioIds,
       full_name: rec.fullName,
       preferred_name: rec.preferredName,
       photo: rec.photo !== undefined ? rec.photo : `/employee-photos/${rec.bioId}.jpg`,
@@ -1282,10 +1361,13 @@ export const employeeRepository = {
 
     if (params.search && params.search.trim()) {
       const q = params.search.trim().toLowerCase()
+      const normQ = normalizeBiometricIdKey(q)
       records = records.filter(e =>
         e.fullName.toLowerCase().includes(q) ||
         e.bioId.toLowerCase().includes(q) ||
+        (e.primaryBioId && e.primaryBioId.toLowerCase().includes(q)) ||
         e.employeeNumber.toLowerCase().includes(q) ||
+        (Array.isArray(e.linkedBioIds) && e.linkedBioIds.some(id => id.toLowerCase().includes(q) || (normQ && id.toLowerCase().includes(normQ)))) ||
         (e.department && e.department.toLowerCase().includes(q))
       )
     }
@@ -1303,7 +1385,7 @@ export const employeeRepository = {
   },
 
   /**
-   * Get single employee by Bio ID (supports bioId, employeeNumber, and stripped prefixes)
+   * Get single employee by Bio ID (supports canonical bioId, primaryBioId, secondary/inactive linkedBioIds, and stripped prefixes)
    */
   async getByBioId(bioId: string): Promise<Employee | undefined> {
     await ensureInitialized()
@@ -1313,10 +1395,17 @@ export const employeeRepository = {
       return this.toEmployee(found.record)
     }
     const clean = String(bioId || '').trim()
-    const stripped = clean.replace(/^emp[-_]/i, '').trim()
-    const dbRec = (await db.employees.get(clean)) || (stripped !== clean ? await db.employees.get(stripped) : undefined)
+    const stripped = normalizeBiometricIdToken(clean) || clean.replace(/^emp[-_]/i, '').trim()
+    let dbRec = (await db.employees.get(clean)) || (stripped !== clean ? await db.employees.get(stripped) : undefined)
+    if (!dbRec && stripped) {
+      try {
+        dbRec = await db.employees.where('linkedBioIds').equals(stripped).first()
+      } catch {
+        // fallback ignored if table lacks index in older environment
+      }
+    }
     if (dbRec) {
-      employeeCache!.set(dbRec.bioId, dbRec)
+      indexEmployeeRecord(dbRec)
       return this.toEmployee(dbRec)
     }
     return undefined
@@ -1393,14 +1482,311 @@ export const employeeRepository = {
     })
 
     await db.employees.put(record)
-    employeeCache!.set(canonicalBioId, record)
+    indexEmployeeRecord(record)
     this.notifyChange()
 
     return this.toEmployee(record)
   },
 
   /**
-   * Registers or updates an employee discovered during biometric import/scan
+   * Checks whether a given Biometric ID is already assigned to another canonical employee
+   * (active or inactive). Never auto-merges; used for duplicate protection and admin confirmation.
+   */
+  async findBioIdConflict(
+    targetBioId: string,
+    excludeCanonicalBioId?: string
+  ): Promise<{ conflictEmployee: Employee; entryStatus: 'active' | 'inactive' } | null> {
+    await ensureInitialized()
+    await workGroupRepository.getMap()
+    const normTarget = normalizeBiometricIdKey(targetBioId)
+    if (!normTarget) return null
+
+    const cleanExclude = excludeCanonicalBioId ? normalizeBiometricIdKey(excludeCanonicalBioId) : ''
+
+    for (const rec of employeeCache!.values()) {
+      if (cleanExclude && rec.bioId.toLowerCase() === cleanExclude) continue
+
+      const entries = ensureBiometricIdsList(rec.bioId, rec.biometricIds, rec.primaryBioId, rec.createdAt)
+      const matchedEntry = entries.find(e => normalizeBiometricIdKey(e.bioId) === normTarget)
+      if (matchedEntry) {
+        return {
+          conflictEmployee: this.toEmployee(rec),
+          entryStatus: matchedEntry.status
+        }
+      }
+
+      if (
+        normalizeBiometricIdKey(rec.bioId) === normTarget ||
+        (Array.isArray(rec.linkedBioIds) && rec.linkedBioIds.some(id => normalizeBiometricIdKey(id) === normTarget))
+      ) {
+        return {
+          conflictEmployee: this.toEmployee(rec),
+          entryStatus: 'active'
+        }
+      }
+    }
+
+    return null
+  },
+
+  /**
+   * Explicitly links an additional (secondary) Biometric ID to an existing canonical employee.
+   * Requires explicit administrator confirmation and enforces cross-employee uniqueness.
+   */
+  async linkSecondaryBioId(
+    canonicalBioId: string,
+    newBioId: string,
+    options: { confirmedByAdmin: boolean; notes?: string }
+  ): Promise<Employee> {
+    await ensureInitialized()
+    if (!options?.confirmedByAdmin) {
+      throw new Error('Administrator confirmation is required before linking a biometric ID.')
+    }
+
+    const found = findCachedEmployee(canonicalBioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${canonicalBioId}" was not found.`)
+    }
+    const existing = found.record
+
+    const cleanNewId = normalizeBiometricIdToken(newBioId)
+    if (!cleanNewId || !/^[a-zA-Z0-9_-]+$/.test(cleanNewId)) {
+      throw new Error('Please enter a valid Biometric ID (letters, numbers, dash, or underscore only).')
+    }
+
+    const normNewKey = normalizeBiometricIdKey(cleanNewId)
+    const currentEntries = ensureBiometricIdsList(existing.bioId, existing.biometricIds, existing.primaryBioId, existing.createdAt)
+    const selfMatch = currentEntries.find(e => normalizeBiometricIdKey(e.bioId) === normNewKey)
+    if (selfMatch) {
+      if (selfMatch.status === 'active') {
+        throw new Error(`Biometric ID "${cleanNewId}" is already actively linked to ${existing.fullName}.`)
+      }
+      throw new Error(`Biometric ID "${cleanNewId}" is already linked to ${existing.fullName} as Inactive. Use Reactivate to restore it.`)
+    }
+
+    const conflict = await this.findBioIdConflict(cleanNewId, existing.bioId)
+    if (conflict) {
+      const conflictPrimary = getEmployeePrimaryBioId(conflict.conflictEmployee)
+      throw new Error(
+        `Biometric ID "${cleanNewId}" is already assigned to ${conflict.conflictEmployee.full_name} (Primary ID: ${conflictPrimary}, Status: ${conflict.entryStatus === 'active' ? 'Active' : 'Inactive'}). Unlink or verify that employee first.`
+      )
+    }
+
+    const now = new Date().toISOString()
+    const nextEntries: BiometricIdEntry[] = [
+      ...currentEntries,
+      {
+        bioId: cleanNewId,
+        role: 'secondary',
+        status: 'active',
+        addedAt: now,
+        notes: options.notes?.trim() || undefined
+      }
+    ]
+
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      biometricIds: nextEntries,
+      primaryBioId: existing.primaryBioId || existing.bioId,
+      updatedAt: now
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
+  },
+
+  /**
+   * Promotes an existing linked Biometric ID to Primary for this employee.
+   * Keeps canonical employee profile, photos, and historical records intact.
+   */
+  async setPrimaryBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(canonicalBioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${canonicalBioId}" was not found.`)
+    }
+    const existing = found.record
+    const normTarget = normalizeBiometricIdKey(targetBioId)
+    if (!normTarget) {
+      throw new Error('Target Biometric ID is required.')
+    }
+
+    const now = new Date().toISOString()
+    const entries = ensureBiometricIdsList(existing.bioId, existing.biometricIds, existing.primaryBioId, existing.createdAt)
+    const targetEntry = entries.find(e => normalizeBiometricIdKey(e.bioId) === normTarget)
+    if (!targetEntry) {
+      throw new Error(`Biometric ID "${targetBioId}" is not linked to ${existing.fullName}.`)
+    }
+
+    const updatedEntries: BiometricIdEntry[] = entries.map(entry => {
+      if (normalizeBiometricIdKey(entry.bioId) === normTarget) {
+        return {
+          ...entry,
+          role: 'primary',
+          status: 'active',
+          reactivatedAt: entry.status === 'inactive' ? now : entry.reactivatedAt
+        }
+      }
+      return {
+        ...entry,
+        role: 'secondary'
+      }
+    })
+
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      primaryBioId: targetEntry.bioId,
+      biometricIds: updatedEntries,
+      updatedAt: now
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
+  },
+
+  /**
+   * Deactivates a linked secondary Biometric ID while preserving historical punch mapping and audit history.
+   */
+  async deactivateLinkedBioId(canonicalBioId: string, targetBioId: string, notes?: string): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(canonicalBioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${canonicalBioId}" was not found.`)
+    }
+    const existing = found.record
+    const normTarget = normalizeBiometricIdKey(targetBioId)
+    const entries = ensureBiometricIdsList(existing.bioId, existing.biometricIds, existing.primaryBioId, existing.createdAt)
+    const targetEntry = entries.find(e => normalizeBiometricIdKey(e.bioId) === normTarget)
+    if (!targetEntry) {
+      throw new Error(`Biometric ID "${targetBioId}" is not linked to ${existing.fullName}.`)
+    }
+
+    const activeCount = entries.filter(e => e.status === 'active').length
+    if (activeCount <= 1 && targetEntry.status === 'active') {
+      throw new Error('Cannot deactivate the only active Biometric ID for an employee.')
+    }
+    if (targetEntry.role === 'primary') {
+      throw new Error('Set another active Biometric ID as Primary before deactivating the current Primary ID.')
+    }
+
+    const now = new Date().toISOString()
+    const updatedEntries: BiometricIdEntry[] = entries.map(entry => {
+      if (normalizeBiometricIdKey(entry.bioId) === normTarget) {
+        return {
+          ...entry,
+          role: 'secondary',
+          status: 'inactive',
+          deactivatedAt: now,
+          notes: notes?.trim() || entry.notes
+        }
+      }
+      return entry
+    })
+
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      biometricIds: updatedEntries,
+      updatedAt: now
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
+  },
+
+  /**
+   * Reactivates an inactive linked Biometric ID on this employee.
+   */
+  async reactivateLinkedBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(canonicalBioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${canonicalBioId}" was not found.`)
+    }
+    const existing = found.record
+    const normTarget = normalizeBiometricIdKey(targetBioId)
+    const entries = ensureBiometricIdsList(existing.bioId, existing.biometricIds, existing.primaryBioId, existing.createdAt)
+    const targetEntry = entries.find(e => normalizeBiometricIdKey(e.bioId) === normTarget)
+    if (!targetEntry) {
+      throw new Error(`Biometric ID "${targetBioId}" is not linked to ${existing.fullName}.`)
+    }
+
+    const conflict = await this.findBioIdConflict(targetEntry.bioId, existing.bioId)
+    if (conflict) {
+      throw new Error(
+        `Cannot reactivate Biometric ID "${targetEntry.bioId}" because it is assigned to ${conflict.conflictEmployee.full_name}.`
+      )
+    }
+
+    const now = new Date().toISOString()
+    const updatedEntries: BiometricIdEntry[] = entries.map(entry => {
+      if (normalizeBiometricIdKey(entry.bioId) === normTarget) {
+        return {
+          ...entry,
+          status: 'active',
+          reactivatedAt: now
+        }
+      }
+      return entry
+    })
+
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      biometricIds: updatedEntries,
+      updatedAt: now
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
+  },
+
+  /**
+   * Removes an unused or erroneously linked secondary/inactive Biometric ID from this employee profile.
+   * Note: Raw biometric punch logs in IndexedDB are never deleted.
+   */
+  async removeLinkedBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(canonicalBioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${canonicalBioId}" was not found.`)
+    }
+    const existing = found.record
+    const normTarget = normalizeBiometricIdKey(targetBioId)
+    const entries = ensureBiometricIdsList(existing.bioId, existing.biometricIds, existing.primaryBioId, existing.createdAt)
+    const targetEntry = entries.find(e => normalizeBiometricIdKey(e.bioId) === normTarget)
+    if (!targetEntry) {
+      throw new Error(`Biometric ID "${targetBioId}" is not linked to ${existing.fullName}.`)
+    }
+    if (targetEntry.role === 'primary') {
+      throw new Error('Cannot remove the current Primary Biometric ID. Set another Bio ID as Primary first.')
+    }
+    if (normalizeBiometricIdKey(existing.bioId) === normTarget) {
+      throw new Error('The canonical profile base Bio ID cannot be deleted; use Deactivate instead to preserve audit history.')
+    }
+
+    const remainingEntries = entries.filter(e => normalizeBiometricIdKey(e.bioId) !== normTarget)
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      biometricIds: remainingEntries,
+      updatedAt: new Date().toISOString()
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
+  },
+
+  /**
+   * Registers or updates an employee discovered during biometric import/scan.
+   * Resolves any linked secondary/historical Bio ID to the canonical employee so duplicate records are never created.
    */
   async registerFromPunch(
     bioId: string,
@@ -1409,8 +1795,8 @@ export const employeeRepository = {
     workGroupId: string = 'wg-group-c'
   ): Promise<EmployeeRecord> {
     await ensureInitialized()
-    const cleanBioId = String(bioId).trim()
-    const existing = employeeCache!.get(cleanBioId)
+    const cleanBioId = normalizeBiometricIdToken(bioId) || String(bioId).trim()
+    const existing = findCachedEmployee(cleanBioId)?.record || findCachedEmployee(bioId)?.record
 
     if (!existing) {
       const record = toPersistableEmployeeRecord({
@@ -1426,7 +1812,7 @@ export const employeeRepository = {
         updatedAt: new Date().toISOString()
       })
       await db.employees.put(record)
-      employeeCache!.set(cleanBioId, record)
+      indexEmployeeRecord(record)
       this.notifyChange()
       return record
     } else if (name && name.trim() && existing.fullName.startsWith('User ')) {
@@ -1436,7 +1822,7 @@ export const employeeRepository = {
         updatedAt: new Date().toISOString()
       })
       await db.employees.put(record)
-      employeeCache!.set(cleanBioId, record)
+      indexEmployeeRecord(record)
       this.notifyChange()
       return record
     }
@@ -1445,7 +1831,8 @@ export const employeeRepository = {
   },
 
   /**
-   * Bulk register or update employees discovered during punch imports
+   * Bulk register or update employees discovered during punch imports.
+   * Resolves linked Bio IDs before creating any new record.
    */
   async bulkRegisterEmployees(
     employees: { bioId: string; name: string; location?: EmployeeLocation; workGroupId?: string }[]
@@ -1454,8 +1841,9 @@ export const employeeRepository = {
     const recordsToPut: EmployeeRecord[] = []
 
     for (const emp of employees) {
-      const cleanBioId = String(emp.bioId).trim()
-      const existing = employeeCache!.get(cleanBioId)
+      const cleanBioId = normalizeBiometricIdToken(emp.bioId) || String(emp.bioId).trim()
+      if (!cleanBioId) continue
+      const existing = findCachedEmployee(cleanBioId)?.record || findCachedEmployee(emp.bioId)?.record
 
       if (!existing) {
         const newRec = toPersistableEmployeeRecord({
@@ -1471,7 +1859,7 @@ export const employeeRepository = {
           updatedAt: new Date().toISOString()
         })
         recordsToPut.push(newRec)
-        employeeCache!.set(cleanBioId, newRec)
+        indexEmployeeRecord(newRec)
       } else if (emp.name && emp.name.trim() && existing.fullName.startsWith('User ')) {
         const updatedRec = toPersistableEmployeeRecord({
           ...existing,
@@ -1479,7 +1867,7 @@ export const employeeRepository = {
           updatedAt: new Date().toISOString()
         })
         recordsToPut.push(updatedRec)
-        employeeCache!.set(cleanBioId, updatedRec)
+        indexEmployeeRecord(updatedRec)
       }
     }
 
@@ -1522,8 +1910,11 @@ export const employeeRepository = {
     const recordsToApplyMap = new Map<string, EmployeeRecord>()
 
     const seenBioIdsInImport = new Set<string>()
+    const claimedLinkedIdsInImport = new Map<string, string>()
 
-    const ID_ALIASES = ['ID', 'Bio ID', 'BioId', 'User ID', 'UserId', 'user_id', 'ID/Bio ID', 'id', 'Employee ID', 'Emp ID', 'EMP ID']
+    const ID_ALIASES = ['ID', 'Bio ID', 'BioId', 'User ID', 'UserId', 'user_id', 'ID/Bio ID', 'id', 'Employee ID', 'Emp ID', 'EMP ID', 'Primary Bio ID', 'PRIMARY BIO ID', 'PRIMARY_BIO_ID', 'primary_bio_id']
+    const SECONDARY_BIO_IDS_ALIASES = ['SECONDARY BIO IDS', 'SECONDARY_BIO_IDS', 'Secondary Bio IDs', 'Secondary Bio ID', 'secondary_bio_ids', 'secondaryBioIds', 'LINKED BIO IDS', 'Linked Bio IDs', 'linked_bio_ids', 'linkedBioIds', 'Other Bio IDs', 'Additional Bio IDs']
+    const INACTIVE_BIO_IDS_ALIASES = ['INACTIVE BIO IDS', 'INACTIVE_BIO_IDS', 'Inactive Bio IDs', 'inactive_bio_ids', 'inactiveBioIds', 'Deactivated Bio IDs']
     const NAME_ALIASES = ['NAME', 'Name', 'Employee Name', 'Full Name', 'fullName', 'employee_name', 'name']
     const GROUP_ALIASES = ['GROUP', 'Group', 'Work Group', 'WorkGroup', 'Group Name', 'Group Code', 'workGroupId', 'work_group', 'group']
     const DEPT_ALIASES = ['DEPARTMENT', 'Department', 'Dept', 'DEPT', 'department', 'dept']
@@ -1541,6 +1932,39 @@ export const employeeRepository = {
       const cleanHeader = String(header || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
       if (!cleanHeader) return false
       return aliases.some(alias => alias.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanHeader)
+    }
+
+    const hasRowFieldColumn = (row: any, aliases: string[]): boolean => {
+      if (!row || typeof row !== 'object') return false
+      for (const alias of aliases) {
+        if (alias in row) return true
+      }
+      const rowKeys = Object.keys(row)
+      for (const alias of aliases) {
+        const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, '')
+        for (const key of rowKeys) {
+          if (key.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanAlias) return true
+        }
+      }
+      return false
+    }
+
+    const parseBioIdListCell = (val: unknown): string[] => {
+      if (val === undefined || val === null) return []
+      const tokens = String(val)
+        .split(/[,;|\s]+/)
+        .map(t => normalizeBiometricIdToken(t))
+        .filter(Boolean)
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const tok of tokens) {
+        const k = tok.toLowerCase()
+        if (!seen.has(k)) {
+          seen.add(k)
+          out.push(tok)
+        }
+      }
+      return out
     }
 
     const getRowField = (row: any, aliases: string[]): any => {
@@ -1570,6 +1994,8 @@ export const employeeRepository = {
     if (rows.length > 0 && Array.isArray(rows[0])) {
       const headers = (rows[0] as any[]).map(h => String(h ?? '').trim())
       const idCol = headers.findIndex(h => matchesAlias(h, ID_ALIASES))
+      const secondaryBioIdsCol = headers.findIndex(h => matchesAlias(h, SECONDARY_BIO_IDS_ALIASES))
+      const inactiveBioIdsCol = headers.findIndex(h => matchesAlias(h, INACTIVE_BIO_IDS_ALIASES))
       const nameCol = headers.findIndex(h => matchesAlias(h, NAME_ALIASES))
       const groupCol = headers.findIndex(h => matchesAlias(h, GROUP_ALIASES))
       const deptCol = headers.findIndex(h => matchesAlias(h, DEPT_ALIASES))
@@ -1587,7 +2013,7 @@ export const employeeRepository = {
       for (let r = 1; r < rows.length; r++) {
         const rowArr = rows[r]
         if (!Array.isArray(rowArr) || rowArr.length === 0) continue
-        parsedRows.push({
+        const objRow: Record<string, any> = {
           ID: idCol >= 0 ? rowArr[idCol] : undefined,
           NAME: nameCol >= 0 ? rowArr[nameCol] : undefined,
           GROUP: groupCol >= 0 ? rowArr[groupCol] : undefined,
@@ -1601,7 +2027,10 @@ export const employeeRepository = {
           'HDMF NO.': hdmfCol >= 0 ? rowArr[hdmfCol] : undefined,
           'PHIC NO.': phicCol >= 0 ? rowArr[phicCol] : undefined,
           'TIN NO.': tinCol >= 0 ? rowArr[tinCol] : undefined
-        })
+        }
+        if (secondaryBioIdsCol >= 0) objRow['SECONDARY BIO IDS'] = rowArr[secondaryBioIdsCol]
+        if (inactiveBioIdsCol >= 0) objRow['INACTIVE BIO IDS'] = rowArr[inactiveBioIdsCol]
+        parsedRows.push(objRow)
       }
     }
 
@@ -1714,10 +2143,16 @@ export const employeeRepository = {
         continue
       }
 
-      const bioId = String(rawId).trim()
+      const bioId = normalizeBiometricIdToken(rawId) || String(rawId).trim()
       const existingLookup = findCachedEmployee(bioId)
       const existingRecord = existingLookup?.record
       const canonicalBioId = existingRecord ? existingRecord.bioId : bioId
+
+      // Extract optional Multi-Bio-ID columns (only if explicitly present in the imported file)
+      const hasSecondaryBioCol = hasRowFieldColumn(row, SECONDARY_BIO_IDS_ALIASES)
+      const hasInactiveBioCol = hasRowFieldColumn(row, INACTIVE_BIO_IDS_ALIASES)
+      const rawSecondaryList = hasSecondaryBioCol ? parseBioIdListCell(getRowField(row, SECONDARY_BIO_IDS_ALIASES)) : []
+      const rawInactiveList = hasInactiveBioCol ? parseBioIdListCell(getRowField(row, INACTIVE_BIO_IDS_ALIASES)) : []
 
       // Guard against duplicate Bio IDs in the same import file
       if (seenBioIdsInImport.has(canonicalBioId)) {
@@ -1747,6 +2182,114 @@ export const employeeRepository = {
         continue
       }
       seenBioIdsInImport.add(canonicalBioId)
+
+      // Validate and merge multi-Bio-ID mappings without erasing existing ones if columns are omitted
+      const nowIso = new Date().toISOString()
+      const resolveImportedBiometricIds = (
+        baseCanonicalId: string,
+        currentEntries?: BiometricIdEntry[],
+        currentPrimary?: string
+      ): { primaryBioId: string; biometricIds: BiometricIdEntry[]; bioIdsChanged: boolean } => {
+        if (!hasSecondaryBioCol && !hasInactiveBioCol) {
+          const preserved = ensureBiometricIdsList(baseCanonicalId, currentEntries, currentPrimary || bioId, nowIso)
+          const resolvedPrimary = preserved.find(e => e.role === 'primary' && e.status === 'active')?.bioId || currentPrimary || baseCanonicalId
+          return { primaryBioId: resolvedPrimary, biometricIds: preserved, bioIdsChanged: false }
+        }
+
+        const existingMap = new Map<string, BiometricIdEntry>()
+        for (const e of ensureBiometricIdsList(baseCanonicalId, currentEntries, currentPrimary, nowIso)) {
+          existingMap.set(e.bioId.toLowerCase(), e)
+        }
+
+        const safeCheckAndRecordClaim = (candidateId: string): boolean => {
+          const key = candidateId.toLowerCase()
+          const inFileOwner = claimedLinkedIdsInImport.get(key)
+          if (inFileOwner && inFileOwner !== baseCanonicalId) {
+            warningsCount++
+            rowWarnings.push(`Skipped Bio ID "${candidateId}" (already claimed in import by Bio ID ${inFileOwner})`)
+            return false
+          }
+          const dbMatch = findCachedEmployee(candidateId)
+          if (dbMatch && dbMatch.record.bioId !== baseCanonicalId) {
+            warningsCount++
+            rowWarnings.push(`Skipped Bio ID "${candidateId}" (already assigned to ${dbMatch.record.fullName})`)
+            return false
+          }
+          claimedLinkedIdsInImport.set(key, baseCanonicalId)
+          return true
+        }
+
+        safeCheckAndRecordClaim(bioId)
+        safeCheckAndRecordClaim(baseCanonicalId)
+
+        const nextEntriesMap = new Map<string, BiometricIdEntry>()
+        nextEntriesMap.set(bioId.toLowerCase(), {
+          bioId,
+          role: 'primary',
+          status: 'active',
+          addedAt: existingMap.get(bioId.toLowerCase())?.addedAt || nowIso,
+          notes: existingMap.get(bioId.toLowerCase())?.notes
+        })
+
+        for (const secId of rawSecondaryList) {
+          if (secId.toLowerCase() === bioId.toLowerCase()) continue
+          if (!safeCheckAndRecordClaim(secId)) continue
+          const prev = existingMap.get(secId.toLowerCase())
+          nextEntriesMap.set(secId.toLowerCase(), {
+            bioId: secId,
+            role: 'secondary',
+            status: 'active',
+            addedAt: prev?.addedAt || nowIso,
+            reactivatedAt: prev?.status === 'inactive' ? nowIso : prev?.reactivatedAt,
+            notes: prev?.notes
+          })
+        }
+
+        for (const inactId of rawInactiveList) {
+          if (inactId.toLowerCase() === bioId.toLowerCase()) continue
+          if (nextEntriesMap.has(inactId.toLowerCase())) continue
+          if (!safeCheckAndRecordClaim(inactId)) continue
+          const prev = existingMap.get(inactId.toLowerCase())
+          nextEntriesMap.set(inactId.toLowerCase(), {
+            bioId: inactId,
+            role: 'secondary',
+            status: 'inactive',
+            addedAt: prev?.addedAt || nowIso,
+            deactivatedAt: prev?.deactivatedAt || nowIso,
+            notes: prev?.notes
+          })
+        }
+
+        // Always keep baseCanonicalId linked even if primary changed to a secondary ID
+        if (!nextEntriesMap.has(baseCanonicalId.toLowerCase())) {
+          const prevBase = existingMap.get(baseCanonicalId.toLowerCase())
+          nextEntriesMap.set(baseCanonicalId.toLowerCase(), {
+            bioId: baseCanonicalId,
+            role: 'secondary',
+            status: prevBase?.status || 'active',
+            addedAt: prevBase?.addedAt || nowIso,
+            deactivatedAt: prevBase?.deactivatedAt,
+            notes: prevBase?.notes
+          })
+        }
+
+        // Preserve any existing active/inactive IDs not overwritten unless the explicit columns were supplied cleanly
+        const normalizedNext = ensureBiometricIdsList(baseCanonicalId, Array.from(nextEntriesMap.values()), bioId, nowIso)
+        const prevSignature = Array.from(existingMap.values())
+          .map(e => `${e.bioId}:${e.role}:${e.status}`)
+          .sort()
+          .join('|')
+        const nextSignature = normalizedNext
+          .map(e => `${e.bioId}:${e.role}:${e.status}`)
+          .sort()
+          .join('|')
+
+        return {
+          primaryBioId: bioId,
+          biometricIds: normalizedNext,
+          bioIdsChanged: prevSignature !== nextSignature
+        }
+      }
 
       // Resolve Work Group if provided
       let matchedWg: WorkGroup | undefined = undefined
@@ -1816,6 +2359,12 @@ export const employeeRepository = {
           ? cleanTin
           : existingRecord.tin
 
+        const bioResolution = resolveImportedBiometricIds(
+          existingRecord.bioId,
+          existingRecord.biometricIds,
+          existingRecord.primaryBioId
+        )
+
         const isNameUpdated = cleanName !== '' && cleanName !== existingRecord.fullName
         const isDeptUpdated = cleanDept !== '' && cleanDept !== (existingRecord.department || '')
         const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
@@ -1858,7 +2407,7 @@ export const employeeRepository = {
           parsedResignationDate.formatted !== (existingRecord.resignationDate || '')
         )
 
-        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isEffectiveStatusChanged || isResignationDateUpdated || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated
+        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isEffectiveStatusChanged || isResignationDateUpdated || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated || bioResolution.bioIdsChanged
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -1878,6 +2427,8 @@ export const employeeRepository = {
           ...existingRecord,
           bioId: existingRecord.bioId,
           employeeNumber: existingRecord.bioId,
+          primaryBioId: bioResolution.primaryBioId,
+          biometricIds: bioResolution.biometricIds,
           fullName: targetName,
           location: existingRecord.location,
           workGroupId: targetWgId,
@@ -1920,6 +2471,7 @@ export const employeeRepository = {
           if (isHdmfUpdated) changeNotes.push(`HDMF: ${targetHdmf}`)
           if (isPhicUpdated) changeNotes.push(`PHIC: ${targetPhic}`)
           if (isTinUpdated) changeNotes.push(`TIN: ${targetTin}`)
+          if (bioResolution.bioIdsChanged) changeNotes.push(`Bio IDs Updated`)
 
           let statusText = changeNotes.join(' • ')
           if (rowWarnings.length > 0) {
@@ -2050,9 +2602,13 @@ export const employeeRepository = {
             ? parsedResignationDate.formatted
             : undefined
 
+        const bioResolution = resolveImportedBiometricIds(bioId, undefined, bioId)
+
         const targetRecord = toPersistableEmployeeRecord({
           bioId,
           employeeNumber: bioId,
+          primaryBioId: bioResolution.primaryBioId,
+          biometricIds: bioResolution.biometricIds,
           fullName: targetName,
           location: 'DBB CEBU',
           workGroupId: targetWgId,
@@ -2219,7 +2775,7 @@ export const employeeRepository = {
       } else {
         createdCount++
       }
-      employeeCache!.set(rec.bioId, rec)
+      indexEmployeeRecord(rec)
     }
 
     this.notifyChange()
@@ -2245,21 +2801,34 @@ export const employeeRepository = {
    */
   async getAllForExport(): Promise<any[]> {
     const employees = await this.getEmployees()
-    return employees.map(emp => ({
-      'ID': emp.biometric_user_id,
-      'NAME': emp.full_name,
-      'GROUP': emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C'),
-      'DEPARTMENT': emp.department || 'Operations',
-      'LOCATION': emp.location,
-      'POSITION': emp.position || 'Staff',
-      'STATUS': getStatusDisplayName(emp.status, emp.exclude_from_biometric),
-      'CONTRACT DATE': emp.contract_date || '',
-      'MOBILE': emp.mobile_number || '',
-      'EMAIL': emp.email || '',
-      'BIRTHDAY': emp.date_of_birth || '',
-      'DATE_HIRED': emp.hire_date || '',
-      'DATE_RESIGNED': emp.resignation_date || ''
-    }))
+    return employees.map(emp => {
+      const primaryId = getEmployeePrimaryBioId(emp)
+      const entries = emp.biometric_ids || []
+      const secondaryActive = entries
+        .filter(b => b.bioId !== primaryId && b.status === 'active')
+        .map(b => b.bioId)
+      const inactiveIds = entries
+        .filter(b => b.bioId !== primaryId && b.status === 'inactive')
+        .map(b => b.bioId)
+
+      return {
+        'ID': primaryId,
+        'SECONDARY BIO IDS': secondaryActive.join(', '),
+        'INACTIVE BIO IDS': inactiveIds.join(', '),
+        'NAME': emp.full_name,
+        'GROUP': emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C'),
+        'DEPARTMENT': emp.department || 'Operations',
+        'LOCATION': emp.location,
+        'POSITION': emp.position || 'Staff',
+        'STATUS': getStatusDisplayName(emp.status, emp.exclude_from_biometric),
+        'CONTRACT DATE': emp.contract_date || '',
+        'MOBILE': emp.mobile_number || '',
+        'EMAIL': emp.email || '',
+        'BIRTHDAY': emp.date_of_birth || '',
+        'DATE_HIRED': emp.hire_date || '',
+        'DATE_RESIGNED': emp.resignation_date || ''
+      }
+    })
   },
 
   onChange(cb: () => void): () => void {
@@ -2295,5 +2864,14 @@ export const employeeRepository = {
       if (emp.status !== 'resigned') count++
     }
     return count
+  },
+
+  async reloadFromDb(): Promise<void> {
+    const all = await db.employees.toArray()
+    employeeCache = new Map<string, EmployeeRecord>()
+    linkedBioIdIndex = new Map<string, string>()
+    for (const emp of all) {
+      indexEmployeeRecord(emp)
+    }
   }
 }

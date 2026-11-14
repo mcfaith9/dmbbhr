@@ -382,10 +382,6 @@ function isPlaceholderName(name?: string | null): boolean {
   return !n || /^user\s+\d+$/i.test(n) || n === 'unknown'
 }
 
-function normalizeIdentityToken(val?: string | null): string {
-  return String(val ?? '').trim().toLowerCase().replace(/[\s\-_]+/g, '')
-}
-
 function scoreEmployeeRecordRichness(emp: Employee): number {
   let score = 0
   if (isActiveStatus(emp.status)) score += 100
@@ -398,50 +394,14 @@ function scoreEmployeeRecordRichness(emp: Employee): number {
   return score
 }
 
-function areSamePhysicalEmployee(a: Employee, b: Employee): boolean {
-  const nameA = normalizePersonName(a.full_name)
-  const nameB = normalizePersonName(b.full_name)
-  if (!nameA || nameA !== nameB || isPlaceholderName(nameA) || nameA.length < 5) {
-    return false
-  }
-
-  // Conflicting identity tokens mean two distinct employees with the same name
-  const dobA = normalizeEmployeeDate(a.date_of_birth)
-  const dobB = normalizeEmployeeDate(b.date_of_birth)
-  if (dobA && dobB && dobA !== dobB) return false
-
-  const sssA = normalizeIdentityToken(a.sss_number)
-  const sssB = normalizeIdentityToken(b.sss_number)
-  if (sssA && sssB && sssA !== sssB) return false
-
-  const tinA = normalizeIdentityToken(a.tin)
-  const tinB = normalizeIdentityToken(b.tin)
-  if (tinA && tinB && tinA !== tinB) return false
-
-  // Require at least one positive corroborating attribute
-  if (dobA && dobB && dobA === dobB) return true
-  if (sssA && sssB && sssA === sssB) return true
-  if (tinA && tinB && tinA === tinB) return true
-
-  const startA = getEffectiveStartDate(a)
-  const startB = getEffectiveStartDate(b)
-  if (startA && startB && startA === startB) return true
-
-  const deptA = normalizePersonName(a.department)
-  const deptB = normalizePersonName(b.department)
-  if (deptA && deptB && deptA === deptB) return true
-
-  return false
-}
-
 /**
- * Deduplicates employee records by:
- * 1. Canonical Bio ID (handling 05007 / 5007 / EMP-5007)
- * 2. Same-person dual-Bio-ID duplicates (identical full name + corroborating department/contract/DOB/SSS without conflicts)
+ * Deduplicates employee records strictly by explicit canonical ID and administrator-confirmed
+ * linked Biometric IDs (`biometric_ids` / `linked_bio_ids` / `primary_bio_id`).
+ * Never automatically merges two distinct employee records solely because they have similar names.
  */
 export function deduplicateEmployees(
   employees: Employee[],
-  options: { singleBioFilter?: string } = {}
+  _options: { singleBioFilter?: string } = {}
 ): {
   canonicalEmployees: CanonicalEmployee[]
   lookupByAnyKey: Map<string, CanonicalEmployee>
@@ -451,7 +411,7 @@ export function deduplicateEmployees(
   const lookupByAnyKey = new Map<string, CanonicalEmployee>()
   const groups: CanonicalEmployee[] = []
 
-  // Sort deterministically by canonical Bio ID then raw Bio ID so richness ties
+  // Sort deterministically by canonical Bio ID then raw Bio ID so ties
   // always resolve identically regardless of IndexedDB insertion order across PCs.
   const sortedEmployees = [...employees].sort((a, b) => {
     const ka = normalizeBioIdKey(a.biometric_user_id) || String(a.biometric_user_id || '')
@@ -461,8 +421,21 @@ export function deduplicateEmployees(
     return String(a.biometric_user_id || '').localeCompare(String(b.biometric_user_id || ''))
   })
 
+  const collectExplicitBioKeys = (emp: Employee): string[] => {
+    const rawKeys = [
+      emp.biometric_user_id,
+      emp.canonical_bio_id,
+      emp.primary_bio_id,
+      emp.employee_number,
+      emp.id,
+      ...(Array.isArray(emp.linked_bio_ids) ? emp.linked_bio_ids : []),
+      ...(Array.isArray(emp.biometric_ids) ? emp.biometric_ids.map(b => b.bioId) : [])
+    ].filter(Boolean) as string[]
+    return Array.from(new Set(rawKeys))
+  }
+
   const registerKeys = (group: CanonicalEmployee, emp: Employee) => {
-    const rawKeys = [emp.biometric_user_id, emp.employee_number, emp.id].filter(Boolean) as string[]
+    const rawKeys = collectExplicitBioKeys(emp)
     for (const raw of rawKeys) {
       group.aliasBioIds.add(raw)
       lookupByAnyKey.set(raw, group)
@@ -478,15 +451,18 @@ export function deduplicateEmployees(
     const bioNorm = normalizeBioIdKey(emp.biometric_user_id)
     const numNorm = normalizeBioIdKey(emp.employee_number)
 
-    // Tier 1: Match by canonical Bio ID
+    // Match strictly by canonical ID or explicit linked Biometric IDs (never auto-merge by name)
     let targetGroup =
       lookupByAnyKey.get(emp.biometric_user_id) ||
       (bioNorm ? lookupByAnyKey.get(bioNorm) : undefined) ||
       (numNorm ? lookupByAnyKey.get(numNorm) : undefined)
 
-    // Tier 2: Match by physical person identity (dual Bio IDs for the exact same person)
-    if (!targetGroup && !options.singleBioFilter) {
-      targetGroup = groups.find(g => areSamePhysicalEmployee(g.primary, emp))
+    if (!targetGroup) {
+      for (const k of collectExplicitBioKeys(emp)) {
+        const nk = normalizeBioIdKey(k)
+        targetGroup = lookupByAnyKey.get(k) || (nk ? lookupByAnyKey.get(nk) : undefined)
+        if (targetGroup) break
+      }
     }
 
     if (targetGroup) {

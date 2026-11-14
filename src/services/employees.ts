@@ -249,6 +249,34 @@ export const employeeService = {
     return employeeRepository.registerFromPunch(bioId, name, location, workGroupId)
   },
 
+  async findBioIdConflict(targetBioId: string, excludeCanonicalBioId?: string) {
+    return employeeRepository.findBioIdConflict(targetBioId, excludeCanonicalBioId)
+  },
+
+  async linkSecondaryBioId(
+    canonicalBioId: string,
+    newBioId: string,
+    options: { confirmedByAdmin: boolean; notes?: string }
+  ): Promise<Employee> {
+    return employeeRepository.linkSecondaryBioId(canonicalBioId, newBioId, options)
+  },
+
+  async setPrimaryBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
+    return employeeRepository.setPrimaryBioId(canonicalBioId, targetBioId)
+  },
+
+  async deactivateLinkedBioId(canonicalBioId: string, targetBioId: string, notes?: string): Promise<Employee> {
+    return employeeRepository.deactivateLinkedBioId(canonicalBioId, targetBioId, notes)
+  },
+
+  async reactivateLinkedBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
+    return employeeRepository.reactivateLinkedBioId(canonicalBioId, targetBioId)
+  },
+
+  async removeLinkedBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
+    return employeeRepository.removeLinkedBioId(canonicalBioId, targetBioId)
+  },
+
   onEmployeesChanged(callback: () => void) {
     return employeeRepository.onChange(callback)
   },

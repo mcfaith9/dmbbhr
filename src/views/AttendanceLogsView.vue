@@ -939,10 +939,19 @@ onUnmounted(() => {
               :key="log.id"
               :class="log.is_duplicate ? 'bg-amber-500/5' : ''"
             >
-              <TableCell class="font-mono font-medium text-foreground">                
-                <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
-                  {{ log.user_id }}
-                </span>
+              <TableCell class="font-mono font-medium text-foreground">
+                <div class="flex items-center gap-1 flex-wrap">
+                  <span class="px-1.5 py-0.5 rounded bg-muted text-[11px] font-medium">
+                    {{ log.user_id }}
+                  </span>
+                  <span
+                    v-if="log.linked_employee_bio_id && log.linked_employee_bio_id !== log.user_id"
+                    class="px-1 py-0.2 rounded bg-primary/10 text-primary text-[9px] font-semibold"
+                    :title="`Secondary Bio ID ${log.user_id} resolved to canonical employee Bio ID ${log.linked_employee_bio_id}`"
+                  >
+                    → {{ log.linked_employee_bio_id }}
+                  </span>
+                </div>
               </TableCell>
 
               <TableCell>

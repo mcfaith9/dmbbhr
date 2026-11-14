@@ -36,6 +36,7 @@ import type { WorkGroup } from '@/types'
 import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
 import { getManilaDateString } from '@/services/attendanceEngine'
 import { liveAttendanceService } from '@/services/liveAttendance'
+import { collectEmployeeIdKeys, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
 
 const router = useRouter()
 
@@ -365,9 +366,19 @@ async function openDayDetails(cell: CalendarDay) {
     )
     selectedDayLeaves.value = leavesOnDate
 
-    // Absent employees
-    const presentBioIds = new Set(records.map(r => r.biometric_user_id))
-    const onLeaveBioIds = new Set(leavesOnDate.map(l => l.bioId))
+    // Absent employees (resolve across all linked Biometric IDs)
+    const presentBioKeys = new Set<string>()
+    for (const r of records) {
+      for (const k of collectEmployeeIdKeys(r.biometric_user_id, r.primary_bio_id, r.source_bio_ids)) {
+        presentBioKeys.add(k)
+      }
+    }
+    const onLeaveBioKeys = new Set<string>()
+    for (const l of leavesOnDate) {
+      for (const k of collectEmployeeIdKeys(l.bioId)) {
+        onLeaveBioKeys.add(k)
+      }
+    }
 
     const wgMap = new Map<string, WorkGroup>()
     for (const wg of workGroupsList) {
@@ -379,15 +390,15 @@ async function openDayDetails(cell: CalendarDay) {
     // Only flag absences on regular workdays (not weekend, not holiday)
     if (!cell.isWeekend && !cell.holiday) {
       for (const emp of employees) {
-        if (
-          emp.status === 'active' &&
-          !presentBioIds.has(emp.biometric_user_id) &&
-          !onLeaveBioIds.has(emp.biometric_user_id)
-        ) {
+        if (emp.status !== 'active' || emp.exclude_from_biometric) continue
+        const empKeys = collectEmployeeIdKeys(emp)
+        const isPresent = Array.from(empKeys).some(k => presentBioKeys.has(k))
+        const isOnLeave = Array.from(empKeys).some(k => onLeaveBioKeys.has(k))
+        if (!isPresent && !isOnLeave) {
           const wg = wgMap.get(emp.work_group_id || 'wg-group-c')
           const sched = wg ? `${wg.standard_in} – ${wg.expected_out}` : '08:00 – 17:00'
           absents.push({
-            bioId: emp.biometric_user_id,
+            bioId: getEmployeePrimaryBioId(emp) || emp.biometric_user_id,
             name: emp.full_name,
             workGroupId: emp.work_group_id || 'wg-group-c',
             workGroupName: wg?.name || 'Group C',

@@ -24,6 +24,7 @@ import { attendanceRepository, overtimeRepository } from '@/repositories'
 import { scheduleRepository } from '@/repositories/scheduleRepository'
 import { holidayService } from '@/services/holidays/holidayService'
 import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateMultipleOvertimeRecordsForDay } from '@/services/overtimePolicy'
+import { collectEmployeeIdKeys, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
 
 /**
  * Resolves holidays for the cutoff period from holidayService or scheduleRepository if not provided
@@ -297,28 +298,30 @@ export const payrollCalculationService = {
     overtimeAuthorizations: OvertimeAuthorizationRecord[] = [],
     options: { attendancePrefetched?: boolean; existingSnapshot?: PayrollSnapshotRecord | null } = {}
   ): Promise<EmployeePayrollRecord> {
-    const rawBioId = String(employee.biometric_user_id || (employee as any).bioId || employee.employee_number || employee.id || '').trim()
-    const targetIds = new Set<string>()
-    const addTargetId = (val?: string | number | null) => {
-      if (!val) return
-      const s = String(val).trim().toLowerCase()
-      targetIds.add(s)
-      const unprefixed = s.replace(/^emp[-_]/i, '')
-      targetIds.add(unprefixed)
-      if (!s.startsWith('emp-')) targetIds.add(`emp-${s}`)
+    const rawBioId = String(employee.canonical_bio_id || employee.biometric_user_id || (employee as any).bioId || employee.employee_number || employee.id || '').trim()
+    const targetIds = collectEmployeeIdKeys(employee, rawBioId)
+    const bioId = employee.canonical_bio_id || employee.biometric_user_id || (employee as any).bioId || employee.employee_number || rawBioId
+    const displayBioId = getEmployeePrimaryBioId(employee) || bioId
+
+    // 1. Check if a saved snapshot exists in IndexedDB for this period and employee (across any linked ID)
+    let existingSnap = options.existingSnapshot
+    if (existingSnap === undefined) {
+      existingSnap = await db.payrollSnapshots.get(`${period.id}_${bioId}`)
+      if (!existingSnap && displayBioId !== bioId) {
+        existingSnap = await db.payrollSnapshots.get(`${period.id}_${displayBioId}`)
+      }
+      if (!existingSnap) {
+        try {
+          existingSnap = await db.payrollSnapshots
+            .where('periodId')
+            .equals(period.id)
+            .filter(s => targetIds.has(String(s.bioId || '').trim().toLowerCase()))
+            .first()
+        } catch {
+          existingSnap = undefined
+        }
+      }
     }
-    addTargetId(employee.biometric_user_id)
-    addTargetId((employee as any).bioId)
-    addTargetId(employee.employee_number)
-    addTargetId(employee.id)
-    addTargetId(rawBioId)
-
-    const bioId = employee.biometric_user_id || (employee as any).bioId || employee.employee_number || rawBioId
-
-    // 1. Check if a saved snapshot exists in IndexedDB for this period and employee
-    const existingSnap = options.existingSnapshot !== undefined
-      ? options.existingSnapshot
-      : await db.payrollSnapshots.get(`${period.id}_${bioId}`)
 
     // If an existing finalized snapshot exists, preserve it completely as an immutable historical record
     if (existingSnap && (existingSnap.batchStatus === 'finalized' || existingSnap.reviewStatus === 'finalized')) {
@@ -435,12 +438,13 @@ export const payrollCalculationService = {
       }
     }
 
-    // Also check db.dailyAttendance table for any pre-processed daily records
+    // Also check db.dailyAttendance table for any pre-processed daily records across linked Bio IDs
     if (empAttendanceMap.size === 0) {
       try {
+        const queryTargetIds = Array.from(targetIds).filter(Boolean)
         const cached = await db.dailyAttendance
           .where('bioId')
-          .equals(bioId)
+          .anyOf(queryTargetIds)
           .filter(r => period.dates.includes(r.date))
           .toArray()
         for (const c of cached) {
@@ -775,6 +779,12 @@ export const payrollCalculationService = {
         lateMinutes += att.late_minutes
       }
 
+      if (att?.requires_admin_review && Array.isArray(att.review_reasons)) {
+        for (const rReason of att.review_reasons) {
+          attendanceReviewNotes.push(`${normDStr}: ${rReason}`)
+        }
+      }
+
       // --- D. AUTHORIZED OVERTIME (Requires Approved Physical Form) ---
       // Rule 1: Attendance after 5:00 PM is attendance data only; does NOT automatically authorize overtime.
       // Rule 2: Overtime is payable ONLY when a corresponding physical overtime form has been submitted and approved.
@@ -920,10 +930,10 @@ export const payrollCalculationService = {
     }
 
     return {
-      id: `${period.id}_${bioId}`,
+      id: existingSnap?.id || `${period.id}_${bioId}`,
       periodId: period.id,
-      bioId,
-      employeeNumber: employee.employee_number || bioId,
+      bioId: displayBioId,
+      employeeNumber: displayBioId,
       employeeName: employee.full_name,
       department: employee.department || 'Operations',
       position: employee.position || 'Staff',
@@ -1068,25 +1078,25 @@ export const payrollCalculationService = {
     }
 
     for (const emp of targetEmployees) {
-      const bioId = String(emp.biometric_user_id || (emp as any).bioId || emp.employee_number || emp.id || '').trim().toLowerCase()
-      const cleanBio = bioId.replace(/^emp[-_]/i, '')
+      const empKeys = collectEmployeeIdKeys(emp)
+      const empAttendanceSet = new Set<DailyAttendanceRecord>()
+      const empOtSet = new Set<OvertimeAuthorizationRecord>()
+      let snap: PayrollSnapshotRecord | null = null
 
-      const empAttendance = [
-        ...(attendanceByBioId.get(bioId) || []),
-        ...(cleanBio !== bioId ? (attendanceByBioId.get(cleanBio) || []) : [])
-      ]
-      const empOt = [
-        ...(otByBioId.get(bioId) || []),
-        ...(cleanBio !== bioId ? (otByBioId.get(cleanBio) || []) : [])
-      ]
-      const snap = snapshotMap.get(bioId) || snapshotMap.get(cleanBio) || null
+      for (const k of empKeys) {
+        for (const rec of (attendanceByBioId.get(k) || [])) empAttendanceSet.add(rec)
+        for (const ot of (otByBioId.get(k) || [])) empOtSet.add(ot)
+        if (!snap && snapshotMap.has(k)) {
+          snap = snapshotMap.get(k) || null
+        }
+      }
 
       const record = await this.computeSingleEmployeePayroll(
         period,
         emp,
         holidays,
-        empAttendance,
-        empOt,
+        Array.from(empAttendanceSet),
+        Array.from(empOtSet),
         { attendancePrefetched, existingSnapshot: snap }
       )
       payrollRecords.push(record)

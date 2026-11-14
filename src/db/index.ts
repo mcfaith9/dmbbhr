@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie'
-import type { EmployeeLocation, EmploymentStatus } from '@/types'
-export type { EmploymentStatus }
+import type { BiometricIdEntry, EmployeeLocation, EmploymentStatus } from '@/types'
+export type { BiometricIdEntry, EmploymentStatus }
 
 export interface WorkGroupRecord {
   id: string // "wg-group-a", "wg-group-b", "wg-group-c"
@@ -38,8 +38,11 @@ export interface BiometricPunchRecord {
 }
 
 export interface EmployeeRecord {
-  bioId: string // Primary key (permanent, immutable) — also Employee ID
-  employeeNumber: string // Identical to bioId (Employee ID = Bio ID)
+  bioId: string // Primary key (canonical employee record ID)
+  employeeNumber: string // Identical to canonical/primary bioId
+  primaryBioId?: string // Active primary biometric ID (defaults to bioId)
+  biometricIds?: BiometricIdEntry[] // Structured linked Bio IDs (primary, secondary, inactive)
+  linkedBioIds?: string[] // Indexed multi-entry list of all linked Bio IDs for fast lookups
   fullName: string
   preferredName?: string
   photo?: string | null // Photo path e.g. /employee-photos/25065.jpg or data URL
@@ -359,6 +362,34 @@ export class DMBBHRDatabase extends Dexie {
 
     this.version(9).stores({
       overtimeAuthorizations: 'id, bioId, date, status, formNumber, [bioId+date], [status+date]'
+    })
+
+    // v10: Add multi-entry *linkedBioIds index on employees for Multi-Biometric ID resolution
+    this.version(10).stores({
+      employees: 'bioId, fullName, location, workGroupId, status, *linkedBioIds'
+    }).upgrade(tx => {
+      return tx.table('employees').toCollection().modify((emp: EmployeeRecord) => {
+        const canonicalId = String(emp.bioId || '').trim()
+        if (!canonicalId) return
+        const now = emp.createdAt || new Date().toISOString()
+        if (!Array.isArray(emp.biometricIds) || emp.biometricIds.length === 0) {
+          emp.biometricIds = [{
+            bioId: emp.primaryBioId || canonicalId,
+            role: 'primary',
+            status: 'active',
+            addedAt: now
+          }]
+        }
+        if (!emp.primaryBioId) {
+          const activePrimary = emp.biometricIds.find(b => b.role === 'primary' && b.status === 'active')
+          emp.primaryBioId = activePrimary?.bioId || canonicalId
+        }
+        const linkedSet = new Set<string>([canonicalId, emp.primaryBioId])
+        for (const entry of emp.biometricIds) {
+          if (entry?.bioId) linkedSet.add(String(entry.bioId).trim())
+        }
+        emp.linkedBioIds = Array.from(linkedSet).filter(Boolean)
+      })
     })
   }
 }
