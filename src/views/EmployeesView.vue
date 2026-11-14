@@ -43,6 +43,7 @@ import * as XLSX from 'xlsx'
 import {
   employeeService,
   VALID_LOCATIONS,
+  type BioIdImportConflictResolution,
   type PeopleImportPreviewResult,
   type PeopleImportRowItem,
   type PeopleImportApplyResult,
@@ -728,9 +729,12 @@ const profileErrorMsg = ref('')
 // Bulk Import State
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const showImportModal = ref(false)
+const showTransferScopeInfo = ref(false)
 const importFileName = ref('')
 const isParsingExcel = ref(false)
 const isApplyingImport = ref(false)
+const lastParsedImportRows = ref<any[]>([])
+const importConflictResolutions = ref<Record<string, BioIdImportConflictResolution>>({})
 const importPreview = ref<PeopleImportPreviewResult | null>(null)
 const activePreviewTab = ref<'all' | 'update' | 'status' | 'create' | 'unchanged' | 'unknown' | 'invalid'>('all')
 const previewSearch = ref('')
@@ -1124,6 +1128,9 @@ async function handleFileSelect(event: Event) {
         return
       }
 
+      lastParsedImportRows.value = jsonData
+      importConflictResolutions.value = {}
+
       // Generate full preview and validation
       const preview = await employeeService.previewImportFromExcel(jsonData)
       importPreview.value = preview
@@ -1146,8 +1153,39 @@ async function handleFileSelect(event: Event) {
   reader.readAsArrayBuffer(file)
 }
 
+async function setImportConflictResolution(
+  conflictId: string,
+  resolution: BioIdImportConflictResolution
+) {
+  if (!lastParsedImportRows.value || lastParsedImportRows.value.length === 0) return
+  importConflictResolutions.value = {
+    ...importConflictResolutions.value,
+    [conflictId]: resolution
+  }
+  importError.value = ''
+  importPreview.value = await employeeService.previewImportFromExcel(
+    toRaw(lastParsedImportRows.value),
+    toRaw(importConflictResolutions.value)
+  )
+}
+
+const canApplyImportChanges = computed(() => {
+  if (!importPreview.value) return false
+  if (importPreview.value.unresolvedConflictCount > 0) return false
+  return (
+    importPreview.value.recordsToApply.length > 0 ||
+    (importPreview.value.consolidationTasks?.length || 0) > 0 ||
+    (importPreview.value.mergedTombstonesToApply?.length || 0) > 0
+  )
+})
+
 async function executeImportChanges() {
-  if (!importPreview.value || importPreview.value.recordsToApply.length === 0) return
+  if (!importPreview.value) return
+  if (importPreview.value.unresolvedConflictCount > 0) {
+    importError.value = `Resolve all ${importPreview.value.unresolvedConflictCount} Bio ID ownership conflict(s) before applying changes.`
+    return
+  }
+  if (!canApplyImportChanges.value) return
 
   isApplyingImport.value = true
   importError.value = ''
@@ -1157,7 +1195,11 @@ async function executeImportChanges() {
     const rawRecords = toRaw(rawPreview.recordsToApply).map(r => toRaw(r))
     const result = await employeeService.applyImport({
       ...rawPreview,
-      recordsToApply: rawRecords
+      recordsToApply: rawRecords,
+      bioIdConflicts: toRaw(rawPreview.bioIdConflicts).map(c => toRaw(c)),
+      mergedTombstonesToApply: (rawPreview.mergedTombstonesToApply || []).map(r => toRaw(r)),
+      importedAuditsToApply: (rawPreview.importedAuditsToApply || []).map(a => toRaw(a)),
+      consolidationTasks: (rawPreview.consolidationTasks || []).map(t => toRaw(t))
     })
     importResultSuccess.value = result
 
@@ -1166,6 +1208,8 @@ async function executeImportChanges() {
     setTimeout(() => {
       showImportModal.value = false
       importPreview.value = null
+      lastParsedImportRows.value = []
+      importConflictResolutions.value = {}
     }, 2500)
   } catch (err: any) {
     importError.value = 'Error saving changes: ' + err.message
@@ -1312,10 +1356,51 @@ onUnmounted(() => {
             variant="ghost"
             size="sm"
             class="h-8 px-2.5 text-xs"
+            title="Export People Directory (.xlsx)"
             @click="exportPeople('xlsx')"
           >
             <Download class="size-3.5" />
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-8 px-2 text-xs border-l text-muted-foreground"
+            :class="showTransferScopeInfo ? 'bg-muted text-foreground' : ''"
+            @click="showTransferScopeInfo = !showTransferScopeInfo"
+          >
+            Transfer Scope
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cross-PC Export/Import Scope Documentation -->
+    <div
+      v-if="showTransferScopeInfo"
+      class="rounded-lg border bg-card p-3 text-xs space-y-2 shadow-xs"
+    >
+      <div class="flex items-center justify-between">
+        <span class="font-semibold text-foreground">Cross-PC People Directory Export / Import Scope</span>
+        <button
+          type="button"
+          class="text-muted-foreground hover:text-foreground rounded p-0.5"
+          @click="showTransferScopeInfo = false"
+        >
+          <X class="size-3.5" />
+        </button>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
+        <div class="rounded-md bg-emerald-500/5 border border-emerald-500/20 p-2.5">
+          <div class="font-semibold text-emerald-700 dark:text-emerald-400 mb-1">Included in People Directory Excel</div>
+          <p class="text-muted-foreground">
+            Canonical Bio ID, Primary Bio ID, Secondary &amp; Inactive Bio IDs, Merged-From Bio IDs, Consolidation Metadata &amp; Audit History, Full Name, Work Group, Department, Location, Position, Employment Status, Contract/Hire/Resignation Dates, Birthday, Mobile, Email, and Government ID numbers.
+          </p>
+        </div>
+        <div class="rounded-md bg-muted/40 border p-2.5">
+          <div class="font-semibold text-foreground mb-1">Requires Separate Export / Import Workflow</div>
+          <p class="text-muted-foreground">
+            Raw Biometric Punches (Device Sync / Attendance Logs import), Salary Rates &amp; Finalized Payroll Snapshots, Leave Requests, Overtime Authorizations, Manual Attendance Adjustments, HR Punch Notices, Holidays, and Work Group schedules.
+          </p>
         </div>
       </div>
     </div>
@@ -3670,13 +3755,89 @@ onUnmounted(() => {
 
         <!-- Warning notice if unknown groups or warnings -->
         <div
-          v-if="importPreview.warningsCount > 0"
+          v-if="importPreview.warningsCount > 0 && importPreview.bioIdConflicts.length === 0"
           class="px-3 sm:px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2 shrink-0"
         >
           <AlertTriangle class="size-4 shrink-0 text-amber-600" />
           <span>
             <strong>{{ importPreview.warningsCount }} warning(s)</strong> detected (e.g. unregistered groups, misaligned dates, or unsupported statuses). Existing fields were safely preserved.
           </span>
+        </div>
+
+        <!-- Bio ID Ownership Conflict Resolution Panel (Requirement 5) -->
+        <div
+          v-if="importPreview.bioIdConflicts.length > 0"
+          class="px-3 sm:px-4 py-3 bg-destructive/5 border-b border-destructive/30 space-y-2.5 shrink-0 max-h-56 overflow-y-auto"
+          data-testid="import-bioid-conflicts"
+        >
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="flex items-center gap-2 text-xs font-semibold text-destructive">
+              <ShieldAlert class="size-4 shrink-0" />
+              <span>
+                Bio ID Ownership Conflict(s) Detected ({{ importPreview.unresolvedConflictCount }} unresolved of {{ importPreview.bioIdConflicts.length }})
+              </span>
+            </div>
+            <span class="text-[11px] text-muted-foreground">
+              Choose how to resolve each disputed Bio ID before importing.
+            </span>
+          </div>
+
+          <div
+            v-for="conflict in importPreview.bioIdConflicts"
+            :key="conflict.conflictId"
+            class="rounded-lg border bg-card p-2.5 text-xs flex flex-col gap-2"
+            :class="conflict.resolution ? 'border-emerald-500/40' : 'border-destructive/40'"
+          >
+            <div class="flex items-start justify-between gap-2 flex-wrap">
+              <div class="space-y-0.5">
+                <div class="font-medium text-foreground">
+                  Row #{{ conflict.rowNumber }} (<span class="font-semibold">{{ conflict.incomingName }}</span>, Canonical ID <span class="font-mono">{{ conflict.incomingCanonicalBioId }}</span>) claims Bio ID
+                  <Badge variant="outline" class="font-mono text-[11px] mx-0.5">{{ conflict.conflictBioId }}</Badge>
+                  as <span class="font-mono">{{ conflict.conflictRole }}</span>
+                </div>
+                <div class="text-[11px] text-muted-foreground">
+                  Currently owned in {{ conflict.source === 'database' ? 'local IndexedDB' : 'this import file' }} by:
+                  <strong class="text-foreground">{{ conflict.existingOwnerName }}</strong> (Bio ID <span class="font-mono">{{ conflict.existingOwnerBioId }}</span>)
+                </div>
+              </div>
+              <Badge
+                :variant="conflict.resolution ? 'success' : 'destructive'"
+                class="text-[10px]"
+              >
+                {{ conflict.resolution ? 'Resolved' : 'Resolution Required' }}
+              </Badge>
+            </div>
+
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <Button
+                type="button"
+                size="sm"
+                class="h-7 text-[11px]"
+                :variant="conflict.resolution === 'keep_existing_owner' ? 'default' : 'outline'"
+                @click="setImportConflictResolution(conflict.conflictId, 'keep_existing_owner')"
+              >
+                Keep Existing Owner (Drop Link)
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                class="h-7 text-[11px]"
+                :variant="conflict.resolution === 'consolidate_into_incoming' ? 'default' : 'outline'"
+                @click="setImportConflictResolution(conflict.conflictId, 'consolidate_into_incoming')"
+              >
+                Consolidate &amp; Archive {{ conflict.existingOwnerBioId }} into {{ conflict.incomingCanonicalBioId }}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                class="h-7 text-[11px]"
+                :variant="conflict.resolution === 'skip_incoming_row' ? 'default' : 'outline'"
+                @click="setImportConflictResolution(conflict.conflictId, 'skip_incoming_row')"
+              >
+                Skip Incoming Row
+              </Button>
+            </div>
+          </div>
         </div>
 
         <!-- Filter & Search Toolbar -->
@@ -3873,31 +4034,47 @@ onUnmounted(() => {
         </div>
 
         <!-- Dialog Footer Actions -->
-        <div class="p-3 sm:p-4 border-t bg-muted/30 flex items-center justify-between gap-2 flex-wrap shrink-0">
-          <div class="text-xs text-muted-foreground">
-            Ready to apply <strong>{{ importPreview.recordsToApply.length }}</strong> employee profile changes to the local database.
+        <div class="p-3 sm:p-4 border-t bg-muted/30 flex flex-col gap-2 shrink-0">
+          <div class="text-[11px] text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+            <span>
+              <strong>Scope:</strong> Imports Directory profiles, linked Bio IDs &amp; consolidation metadata. Punches, payroll rates/snapshots, leaves, OT &amp; adjustments use separate workflows and are preserved untouched.
+            </span>
           </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 text-xs"
-              :disabled="isApplyingImport"
-              @click="showImportModal = false"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              class="h-8 text-xs gap-1.5 font-medium shadow-xs"
-              :disabled="isApplyingImport || importPreview.recordsToApply.length === 0 || importResultSuccess !== null"
-              @click="executeImportChanges"
-            >
-              <RefreshCw v-if="isApplyingImport" class="size-3.5 animate-spin" />
-              <CheckCircle2 v-else class="size-3.5" />
-              <span>{{ isApplyingImport ? 'Applying Changes...' : 'Import Changes' }}</span>
-            </Button>
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="text-xs text-muted-foreground">
+              <span v-if="importPreview.unresolvedConflictCount > 0" class="text-destructive font-medium">
+                Resolve {{ importPreview.unresolvedConflictCount }} Bio ID conflict(s) above to enable import.
+              </span>
+              <span v-else>
+                Ready to apply <strong>{{ importPreview.recordsToApply.length }}</strong> employee profile changes
+                <template v-if="importPreview.consolidationTasks && importPreview.consolidationTasks.length > 0">
+                  and <strong>{{ importPreview.consolidationTasks.length }}</strong> consolidation(s)
+                </template>
+                to the local database.
+              </span>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 text-xs"
+                :disabled="isApplyingImport"
+                @click="showImportModal = false"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                class="h-8 text-xs gap-1.5 font-medium shadow-xs"
+                :disabled="isApplyingImport || !canApplyImportChanges || importResultSuccess !== null"
+                @click="executeImportChanges"
+              >
+                <RefreshCw v-if="isApplyingImport" class="size-3.5 animate-spin" />
+                <CheckCircle2 v-else class="size-3.5" />
+                <span>{{ isApplyingImport ? 'Applying Changes...' : 'Import Changes' }}</span>
+              </Button>
+            </div>
           </div>
         </div>
       </div>

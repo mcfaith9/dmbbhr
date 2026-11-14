@@ -1269,15 +1269,51 @@ export function cleanStringField(val: any): string | undefined {
   return str
 }
 
+export type BioIdImportConflictResolution =
+  | 'keep_existing_owner'
+  | 'consolidate_into_incoming'
+  | 'skip_incoming_row'
+
+export interface PeopleImportBioIdConflict {
+  conflictId: string
+  rowNumber: number
+  conflictBioId: string
+  conflictRole: 'primary' | 'secondary' | 'inactive' | 'merged_from' | 'canonical'
+  incomingCanonicalBioId: string
+  incomingPrimaryBioId: string
+  incomingName: string
+  existingOwnerBioId: string
+  existingOwnerPrimaryBioId: string
+  existingOwnerName: string
+  source: 'database' | 'import_file'
+  resolution?: BioIdImportConflictResolution
+}
+
+export interface PeopleImportConsolidationTask {
+  canonicalBioId: string
+  sourceBioId: string
+  performedBy?: string
+  notes?: string
+}
+
 export interface PeopleImportRowItem {
   rowNumber: number
   id: string // Bio ID
+  canonicalBioId?: string
+  primaryBioId?: string
+  secondaryBioIds?: string[]
+  inactiveBioIds?: string[]
+  mergedFromBioIds?: string[]
   name: string
   group: string
   department: string
+  location?: EmployeeLocation
   contractDate?: string
+  hireDate?: string
   dateOfBirth?: string
   position?: string
+  mobileNumber?: string
+  email?: string
   sssNumber?: string
   pagibigNumber?: string
   philhealthNumber?: string
@@ -1293,6 +1329,7 @@ export interface PeopleImportRowItem {
   status: string
   isWarning: boolean
   isError: boolean
+  hasConflict?: boolean
   warningReason?: string
   errorReason?: string
   targetRecord?: EmployeeRecord
@@ -1357,8 +1394,13 @@ export interface PeopleImportPreviewResult {
   skippedCount: number
   warningsCount: number
   errorsCount: number
+  bioIdConflicts: PeopleImportBioIdConflict[]
+  unresolvedConflictCount: number
   allRows: PeopleImportRowItem[]
   recordsToApply: EmployeeRecord[]
+  mergedTombstonesToApply?: EmployeeRecord[]
+  importedAuditsToApply?: EmployeeConsolidationAudit[]
+  consolidationTasks?: PeopleImportConsolidationTask[]
   // Compatibility fields
   matchedUpdatedCount: number
   newPeopleCount: number
@@ -1371,6 +1413,7 @@ export interface PeopleImportPreviewResult {
 export interface PeopleImportApplyResult {
   updatedCount: number
   createdCount: number
+  consolidatedCount?: number
   statusUpdatedCount: number
   statusActiveCount: number
   statusResignedCount: number
@@ -3082,7 +3125,10 @@ export const employeeRepository = {
    * - Misaligned/invalid Contract Date (e.g. 'R' in Contract Date column) flagged as warning, preserved existing.
    * - Bio ID remains immutable.
    */
-  async previewImportEmployeesFromExcel(rows: any[]): Promise<PeopleImportPreviewResult> {
+  async previewImportEmployeesFromExcel(
+    rows: any[],
+    conflictResolutions: Record<string, BioIdImportConflictResolution> = {}
+  ): Promise<PeopleImportPreviewResult> {
     await ensureInitialized()
     const workGroups = await workGroupRepository.getAll()
     const defaultGroup = await workGroupRepository.getDefault()
@@ -3092,20 +3138,32 @@ export const employeeRepository = {
     const newPeople: PeopleImportNewRow[] = []
     const unknownGroups: PeopleImportUnknownGroupRow[] = []
     const invalidRows: PeopleImportInvalidRow[] = []
+    const bioIdConflicts: PeopleImportBioIdConflict[] = []
     const recordsToApplyMap = new Map<string, EmployeeRecord>()
+    const mergedTombstonesMap = new Map<string, EmployeeRecord>()
+    const importedAuditsMap = new Map<string, EmployeeConsolidationAudit>()
+    const consolidationTasksMap = new Map<string, PeopleImportConsolidationTask>()
 
     const seenBioIdsInImport = new Set<string>()
-    const claimedLinkedIdsInImport = new Map<string, string>()
+    const claimedLinkedIdsInImport = new Map<string, { canonicalId: string; primaryId: string; name: string; rowNumber: number }>()
+    const absorbedRowNumbersByFileConflict = new Set<number>()
 
     const ID_ALIASES = ['ID', 'Bio ID', 'BioId', 'User ID', 'UserId', 'user_id', 'ID/Bio ID', 'id', 'Employee ID', 'Emp ID', 'EMP ID', 'Primary Bio ID', 'PRIMARY BIO ID', 'PRIMARY_BIO_ID', 'primary_bio_id']
+    const CANONICAL_BIO_ID_ALIASES = ['CANONICAL BIO ID', 'CANONICAL_BIO_ID', 'Canonical Bio ID', 'canonical_bio_id', 'canonicalBioId']
+    const PRIMARY_BIO_ID_ALIASES = ['PRIMARY BIO ID', 'PRIMARY_BIO_ID', 'Primary Bio ID', 'primary_bio_id', 'primaryBioId']
     const SECONDARY_BIO_IDS_ALIASES = ['SECONDARY BIO IDS', 'SECONDARY_BIO_IDS', 'Secondary Bio IDs', 'Secondary Bio ID', 'secondary_bio_ids', 'secondaryBioIds', 'LINKED BIO IDS', 'Linked Bio IDs', 'linked_bio_ids', 'linkedBioIds', 'Other Bio IDs', 'Additional Bio IDs']
     const INACTIVE_BIO_IDS_ALIASES = ['INACTIVE BIO IDS', 'INACTIVE_BIO_IDS', 'Inactive Bio IDs', 'inactive_bio_ids', 'inactiveBioIds', 'Deactivated Bio IDs']
     const MERGED_FROM_BIO_IDS_ALIASES = ['MERGED FROM BIO IDS', 'MERGED_FROM_BIO_IDS', 'Merged From Bio IDs', 'merged_from_bio_ids', 'mergedFromBioIds', 'Consolidated Bio IDs']
+    const CONSOLIDATION_METADATA_ALIASES = ['CONSOLIDATION METADATA', 'CONSOLIDATION_METADATA', 'Consolidation Metadata', 'consolidation_metadata', 'consolidationMetadata']
     const IS_MERGED_ALIASES = ['IS MERGED', 'IS_MERGED', 'Is Merged', 'is_merged', 'isMerged']
     const MERGED_INTO_ALIASES = ['MERGED INTO BIO ID', 'MERGED_INTO_BIO_ID', 'Merged Into Bio ID', 'merged_into_bio_id', 'mergedIntoBioId']
     const NAME_ALIASES = ['NAME', 'Name', 'Employee Name', 'Full Name', 'fullName', 'employee_name', 'name']
     const GROUP_ALIASES = ['GROUP', 'Group', 'Work Group', 'WorkGroup', 'Group Name', 'Group Code', 'workGroupId', 'work_group', 'group']
     const DEPT_ALIASES = ['DEPARTMENT', 'Department', 'Dept', 'DEPT', 'department', 'dept']
+    const LOCATION_ALIASES = ['LOCATION', 'Location', 'location', 'Branch', 'Site']
+    const MOBILE_ALIASES = ['MOBILE', 'Mobile', 'Mobile Number', 'mobile_number', 'mobileNumber', 'Contact Number', 'Phone']
+    const EMAIL_ALIASES = ['EMAIL', 'Email', 'email', 'Email Address']
+    const HIRE_DATE_ALIASES = ['DATE_HIRED', 'DATE HIRED', 'Date Hired', 'Hire Date', 'hire_date', 'hireDate']
     const CONTRACT_DATE_ALIASES = ['CONTRACT DATE', 'Contract Date', 'ContractDate', 'CONTRACT_DATE', 'contract_date', 'contractDate', 'Contract', 'Date Hired', 'Hire Date']
     const RESIGNATION_DATE_ALIASES = ['DATE_RESIGNED', 'Date Resigned', 'Resignation Date', 'Resigned Date', 'resignation_date', 'resignationDate', 'date_resigned', 'dateResigned']
     const STATUS_ALIASES = ['STATUS', 'Status', 'Employment Status', 'EMPLOYMENT STATUS', 'employment_status', 'employmentStatus', 'status']
@@ -3177,19 +3235,55 @@ export const employeeRepository = {
       return undefined
     }
 
+    interface ParsedConsolidationMeta {
+      canonicalBioId?: string
+      primaryBioId?: string
+      biometricIds?: BiometricIdEntry[]
+      mergedFromBioIds?: string[]
+      audits?: EmployeeConsolidationAudit[]
+    }
+
+    const parseConsolidationMetadataCell = (val: unknown): ParsedConsolidationMeta | null => {
+      if (val === undefined || val === null) return null
+      const str = String(val).trim()
+      if (!str || str === '-' || str === '—') return null
+      try {
+        const parsed = JSON.parse(str)
+        if (!parsed || typeof parsed !== 'object') return null
+        return {
+          canonicalBioId: normalizeBiometricIdToken(parsed.canonicalBioId) || undefined,
+          primaryBioId: normalizeBiometricIdToken(parsed.primaryBioId) || undefined,
+          biometricIds: Array.isArray(parsed.biometricIds) ? parsed.biometricIds : undefined,
+          mergedFromBioIds: Array.isArray(parsed.mergedFromBioIds)
+            ? parsed.mergedFromBioIds.map((x: unknown) => normalizeBiometricIdToken(x)).filter(Boolean)
+            : undefined,
+          audits: Array.isArray(parsed.audits) ? parsed.audits : undefined
+        }
+      } catch {
+        return null
+      }
+    }
+
     // Support both array of row objects and 2D array of headers + data rows
     let parsedRows: any[] = rows
     if (rows.length > 0 && Array.isArray(rows[0])) {
       const headers = (rows[0] as any[]).map(h => String(h ?? '').trim())
       const idCol = headers.findIndex(h => matchesAlias(h, ID_ALIASES))
+      const canonicalCol = headers.findIndex(h => matchesAlias(h, CANONICAL_BIO_ID_ALIASES))
+      const primaryCol = headers.findIndex(h => matchesAlias(h, PRIMARY_BIO_ID_ALIASES))
       const secondaryBioIdsCol = headers.findIndex(h => matchesAlias(h, SECONDARY_BIO_IDS_ALIASES))
       const inactiveBioIdsCol = headers.findIndex(h => matchesAlias(h, INACTIVE_BIO_IDS_ALIASES))
       const mergedFromBioIdsCol = headers.findIndex(h => matchesAlias(h, MERGED_FROM_BIO_IDS_ALIASES))
+      const consolidationMetaCol = headers.findIndex(h => matchesAlias(h, CONSOLIDATION_METADATA_ALIASES))
       const isMergedCol = headers.findIndex(h => matchesAlias(h, IS_MERGED_ALIASES))
       const mergedIntoCol = headers.findIndex(h => matchesAlias(h, MERGED_INTO_ALIASES))
       const nameCol = headers.findIndex(h => matchesAlias(h, NAME_ALIASES))
       const groupCol = headers.findIndex(h => matchesAlias(h, GROUP_ALIASES))
       const deptCol = headers.findIndex(h => matchesAlias(h, DEPT_ALIASES))
+      const locCol = headers.findIndex(h => matchesAlias(h, LOCATION_ALIASES))
+      const mobileCol = headers.findIndex(h => matchesAlias(h, MOBILE_ALIASES))
+      const emailCol = headers.findIndex(h => matchesAlias(h, EMAIL_ALIASES))
+      const hireDateCol = headers.findIndex(h => matchesAlias(h, HIRE_DATE_ALIASES))
       const contractDateCol = headers.findIndex(h => matchesAlias(h, CONTRACT_DATE_ALIASES))
       const resignationDateCol = headers.findIndex(h => matchesAlias(h, RESIGNATION_DATE_ALIASES))
       const statusCol = headers.findIndex(h => matchesAlias(h, STATUS_ALIASES))
@@ -3219,12 +3313,53 @@ export const employeeRepository = {
           'PHIC NO.': phicCol >= 0 ? rowArr[phicCol] : undefined,
           'TIN NO.': tinCol >= 0 ? rowArr[tinCol] : undefined
         }
+        if (canonicalCol >= 0) objRow['CANONICAL BIO ID'] = rowArr[canonicalCol]
+        if (primaryCol >= 0) objRow['PRIMARY BIO ID'] = rowArr[primaryCol]
         if (secondaryBioIdsCol >= 0) objRow['SECONDARY BIO IDS'] = rowArr[secondaryBioIdsCol]
         if (inactiveBioIdsCol >= 0) objRow['INACTIVE BIO IDS'] = rowArr[inactiveBioIdsCol]
         if (mergedFromBioIdsCol >= 0) objRow['MERGED FROM BIO IDS'] = rowArr[mergedFromBioIdsCol]
+        if (consolidationMetaCol >= 0) objRow['CONSOLIDATION METADATA'] = rowArr[consolidationMetaCol]
+        if (locCol >= 0) objRow['LOCATION'] = rowArr[locCol]
+        if (mobileCol >= 0) objRow['MOBILE'] = rowArr[mobileCol]
+        if (emailCol >= 0) objRow['EMAIL'] = rowArr[emailCol]
+        if (hireDateCol >= 0) objRow['DATE_HIRED'] = rowArr[hireDateCol]
         if (isMergedCol >= 0) objRow['IS MERGED'] = rowArr[isMergedCol]
         if (mergedIntoCol >= 0) objRow['MERGED INTO BIO ID'] = rowArr[mergedIntoCol]
         parsedRows.push(objRow)
+      }
+    }
+
+    // Pre-scan all non-archived primary row owners in the file to catch cross-row Bio ID collisions upfront
+    const primaryRowOwnersInFile = new Map<string, { rowNumber: number; id: string; canonicalId: string; name: string }>()
+    for (let i = 0; i < parsedRows.length; i++) {
+      const row = parsedRows[i]
+      const rawId = getRowField(row, ID_ALIASES)
+      const bioId = normalizeBiometricIdToken(rawId)
+      if (!bioId) continue
+      const rawIsMergedFlag = getRowField(row, IS_MERGED_ALIASES)
+      const rawMergedInto = normalizeBiometricIdToken(getRowField(row, MERGED_INTO_ALIASES))
+      const isRowArchivedMerged =
+        Boolean(rawMergedInto) &&
+        (rawIsMergedFlag === true ||
+          ['true', 'yes', '1', 'merged'].includes(String(rawIsMergedFlag ?? '').trim().toLowerCase()))
+      if (isRowArchivedMerged) continue
+
+      const rawCanonicalCol = normalizeBiometricIdToken(getRowField(row, CANONICAL_BIO_ID_ALIASES))
+      const rawPrimaryCol = normalizeBiometricIdToken(getRowField(row, PRIMARY_BIO_ID_ALIASES))
+      const rawName = getRowField(row, NAME_ALIASES)
+      const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : `User ${bioId}`
+      const canonicalCandidate = rawCanonicalCol || bioId
+
+      for (const tok of [bioId, rawCanonicalCol, rawPrimaryCol].filter(Boolean)) {
+        const key = tok.toLowerCase()
+        if (!primaryRowOwnersInFile.has(key)) {
+          primaryRowOwnersInFile.set(key, {
+            rowNumber: i + 1,
+            id: bioId,
+            canonicalId: canonicalCandidate,
+            name: cleanName || `User ${bioId}`
+          })
+        }
       }
     }
 
@@ -3261,8 +3396,22 @@ export const employeeRepository = {
       const rawDept = getRowField(row, DEPT_ALIASES)
       const cleanDept = rawDept !== undefined && rawDept !== null ? String(rawDept).trim() : ''
 
+      // 4b. Extract Location, Mobile, Email, Hire Date
+      const rawLocation = cleanStringField(getRowField(row, LOCATION_ALIASES))
+      const parsedLocation: EmployeeLocation | undefined = rawLocation
+        ? VALID_LOCATIONS.find(l => l.toLowerCase() === rawLocation.toLowerCase())
+        : undefined
+      const cleanMobile = cleanStringField(getRowField(row, MOBILE_ALIASES))
+      const cleanEmail = cleanStringField(getRowField(row, EMAIL_ALIASES))
+
+      const hasDedicatedContractCol = hasRowFieldColumn(row, ['CONTRACT DATE', 'Contract Date', 'ContractDate', 'CONTRACT_DATE', 'contract_date', 'contractDate', 'Contract'])
+      const rawHireDate = getRowField(row, HIRE_DATE_ALIASES)
+      const parsedHireDate = parseDateValue(rawHireDate, 1950, 2100)
+
       // 5. Extract Contract Date & Resignation Date
-      const rawContractDate = getRowField(row, CONTRACT_DATE_ALIASES)
+      const rawContractDate = hasDedicatedContractCol
+        ? getRowField(row, ['CONTRACT DATE', 'Contract Date', 'ContractDate', 'CONTRACT_DATE', 'contract_date', 'contractDate', 'Contract'])
+        : getRowField(row, CONTRACT_DATE_ALIASES)
       const parsedContractDate = parseContractDate(rawContractDate)
       const rawResignationDate = getRowField(row, RESIGNATION_DATE_ALIASES)
       const parsedResignationDate = parseDateValue(rawResignationDate, 1950, 2100)
@@ -3279,26 +3428,20 @@ export const employeeRepository = {
       const rawPosition = getRowField(row, POSITION_ALIASES)
       const cleanPosition = cleanStringField(rawPosition)
 
-      // 9. Extract SSS NO.
-      const rawSss = getRowField(row, SSS_ALIASES)
-      const cleanSss = cleanGovNumber(rawSss)
-
-      // 10. Extract HDMF NO.
-      const rawHdmf = getRowField(row, HDMF_ALIASES)
-      const cleanHdmf = cleanGovNumber(rawHdmf)
-
-      // 11. Extract PHIC NO.
-      const rawPhic = getRowField(row, PHIC_ALIASES)
-      const cleanPhic = cleanGovNumber(rawPhic)
-
-      // 12. Extract TIN NO.
-      const rawTin = getRowField(row, TIN_ALIASES)
-      const cleanTin = cleanGovNumber(rawTin)
+      // 9-12. Gov numbers
+      const cleanSss = cleanGovNumber(getRowField(row, SSS_ALIASES))
+      const cleanHdmf = cleanGovNumber(getRowField(row, HDMF_ALIASES))
+      const cleanPhic = cleanGovNumber(getRowField(row, PHIC_ALIASES))
+      const cleanTin = cleanGovNumber(getRowField(row, TIN_ALIASES))
 
       const rowWarnings: string[] = []
       if (parsedContractDate && parsedContractDate.isInvalid) {
         warningsCount++
         rowWarnings.push(`Invalid/misaligned Contract Date "${parsedContractDate.raw}" - kept existing contract date`)
+      }
+      if (parsedHireDate && parsedHireDate.isInvalid) {
+        warningsCount++
+        rowWarnings.push(`Invalid Date Hired "${parsedHireDate.raw}" - kept existing hire date`)
       }
       if (parsedBirthday && parsedBirthday.isInvalid) {
         warningsCount++
@@ -3338,6 +3481,12 @@ export const employeeRepository = {
       }
 
       const bioId = normalizeBiometricIdToken(rawId) || String(rawId).trim()
+      const hasCanonicalCol = hasRowFieldColumn(row, CANONICAL_BIO_ID_ALIASES)
+      const hasPrimaryCol = hasRowFieldColumn(row, PRIMARY_BIO_ID_ALIASES)
+      const rawCanonicalCol = normalizeBiometricIdToken(getRowField(row, CANONICAL_BIO_ID_ALIASES))
+      const rawPrimaryCol = normalizeBiometricIdToken(getRowField(row, PRIMARY_BIO_ID_ALIASES))
+      const consolidationMeta = parseConsolidationMetadataCell(getRowField(row, CONSOLIDATION_METADATA_ALIASES))
+
       const rawIsMergedFlag = getRowField(row, IS_MERGED_ALIASES)
       const rawMergedInto = normalizeBiometricIdToken(getRowField(row, MERGED_INTO_ALIASES))
       const isRowArchivedMerged =
@@ -3363,20 +3512,246 @@ export const employeeRepository = {
         continue
       }
 
-      const existingLookup = findCachedEmployee(bioId)
+      if (absorbedRowNumbersByFileConflict.has(rowNum)) {
+        skippedCount++
+        allRows.push({
+          rowNumber: rowNum,
+          id: bioId,
+          name: cleanName || `User ${bioId}`,
+          group: cleanGroupStr || '-',
+          department: cleanDept || '-',
+          displayStatus: 'Consolidated',
+          isStatusChanged: false,
+          action: 'SKIP',
+          status: `Resolved via same-file consolidation into another canonical employee`,
+          isWarning: false,
+          isError: false
+        })
+        continue
+      }
+
+      // Lookup existing canonical employee in DB via canonicalBioId, primary Bio ID, or ID
+      const lookupByCanonical = rawCanonicalCol ? findCachedEmployee(rawCanonicalCol) : null
+      const lookupByRowId = findCachedEmployee(bioId)
+      const lookupByPrimary = rawPrimaryCol ? findCachedEmployee(rawPrimaryCol) : null
+      const existingLookup = lookupByCanonical || lookupByRowId || lookupByPrimary
       const existingRecord = existingLookup?.record
-      const canonicalBioId = existingRecord ? existingRecord.bioId : bioId
+      const targetNewCanonicalId = rawCanonicalCol || consolidationMeta?.canonicalBioId || bioId
+      const canonicalBioId = existingRecord ? existingRecord.bioId : targetNewCanonicalId
+
+      // Check if an explicit database mismatch exists between CANONICAL BIO ID and row ID
+      let skipEntireRowDueToConflict = false
+      let rowHasConflict = false
+      const rowConflictReasons: string[] = []
+      const pendingConsolidationSourcesForRow = new Set<string>()
+      const rejectedBioIdsForRow = new Set<string>()
+
+      const evaluateCandidateConflict = (
+        candidateId: string,
+        conflictRole: PeopleImportBioIdConflict['conflictRole']
+      ): 'allow' | 'skip_link' | 'skip_row' => {
+        const cleanCand = normalizeBiometricIdToken(candidateId)
+        if (!cleanCand) return 'skip_link'
+        const key = cleanCand.toLowerCase()
+        const conflictId = `${rowNum}:${key}`
+        const chosenResolution = conflictResolutions[conflictId]
+
+        // 1. Check DB ownership by a DIFFERENT canonical employee
+        const dbMatch = findCachedEmployee(cleanCand)
+        if (dbMatch && dbMatch.record.bioId.toLowerCase() !== canonicalBioId.toLowerCase()) {
+          rowHasConflict = true
+          const ownerRec = dbMatch.record
+          const ownerPrimary = ownerRec.primaryBioId || ownerRec.bioId
+          const conflictEntry: PeopleImportBioIdConflict = {
+            conflictId,
+            rowNumber: rowNum,
+            conflictBioId: cleanCand,
+            conflictRole,
+            incomingCanonicalBioId: canonicalBioId,
+            incomingPrimaryBioId: rawPrimaryCol || bioId,
+            incomingName: cleanName || existingRecord?.fullName || `User ${bioId}`,
+            existingOwnerBioId: ownerRec.bioId,
+            existingOwnerPrimaryBioId: ownerPrimary,
+            existingOwnerName: ownerRec.fullName,
+            source: 'database',
+            resolution: chosenResolution
+          }
+          bioIdConflicts.push(conflictEntry)
+
+          if (!chosenResolution) {
+            warningsCount++
+            rowConflictReasons.push(
+              `Unresolved Bio ID conflict on "${cleanCand}" (currently belongs to ${ownerRec.fullName} [${ownerRec.bioId}])`
+            )
+            return 'skip_link'
+          }
+          if (chosenResolution === 'skip_incoming_row') {
+            skipEntireRowDueToConflict = true
+            return 'skip_row'
+          }
+          if (chosenResolution === 'keep_existing_owner') {
+            rejectedBioIdsForRow.add(key)
+            warningsCount++
+            rowWarnings.push(`Kept existing owner ${ownerRec.fullName} for Bio ID ${cleanCand}`)
+            return 'skip_link'
+          }
+          if (chosenResolution === 'consolidate_into_incoming') {
+            pendingConsolidationSourcesForRow.add(ownerRec.bioId)
+            consolidationTasksMap.set(`${canonicalBioId}=>${ownerRec.bioId}`, {
+              canonicalBioId,
+              sourceBioId: ownerRec.bioId,
+              notes: `Consolidated Bio ID ${ownerRec.bioId} (${ownerRec.fullName}) into ${canonicalBioId} during Excel import`
+            })
+            return 'allow'
+          }
+        }
+
+        // 2. Check same-file ownership by another row (either already processed OR a primary row later in file)
+        const alreadyClaimed = claimedLinkedIdsInImport.get(key)
+        if (alreadyClaimed && alreadyClaimed.canonicalId.toLowerCase() !== canonicalBioId.toLowerCase()) {
+          rowHasConflict = true
+          const conflictEntry: PeopleImportBioIdConflict = {
+            conflictId,
+            rowNumber: rowNum,
+            conflictBioId: cleanCand,
+            conflictRole,
+            incomingCanonicalBioId: canonicalBioId,
+            incomingPrimaryBioId: rawPrimaryCol || bioId,
+            incomingName: cleanName || existingRecord?.fullName || `User ${bioId}`,
+            existingOwnerBioId: alreadyClaimed.canonicalId,
+            existingOwnerPrimaryBioId: alreadyClaimed.primaryId,
+            existingOwnerName: `${alreadyClaimed.name} (Row ${alreadyClaimed.rowNumber})`,
+            source: 'import_file',
+            resolution: chosenResolution
+          }
+          bioIdConflicts.push(conflictEntry)
+
+          if (!chosenResolution) {
+            warningsCount++
+            rowConflictReasons.push(
+              `Unresolved Bio ID conflict on "${cleanCand}" (already claimed in Row ${alreadyClaimed.rowNumber} by ${alreadyClaimed.name})`
+            )
+            return 'skip_link'
+          }
+          if (chosenResolution === 'skip_incoming_row') {
+            skipEntireRowDueToConflict = true
+            return 'skip_row'
+          }
+          if (chosenResolution === 'keep_existing_owner') {
+            rejectedBioIdsForRow.add(key)
+            warningsCount++
+            rowWarnings.push(`Kept Row ${alreadyClaimed.rowNumber} owner (${alreadyClaimed.name}) for Bio ID ${cleanCand}`)
+            return 'skip_link'
+          }
+          if (chosenResolution === 'consolidate_into_incoming') {
+            // Consolidate earlier claimed row into this row or warn that same-file consolidation merged them
+            consolidationTasksMap.set(`${canonicalBioId}=>${alreadyClaimed.canonicalId}`, {
+              canonicalBioId,
+              sourceBioId: alreadyClaimed.canonicalId,
+              notes: `Same-file consolidation from Row ${alreadyClaimed.rowNumber} during Excel import`
+            })
+            return 'allow'
+          }
+        }
+
+        const laterPrimaryOwner = primaryRowOwnersInFile.get(key)
+        if (
+          laterPrimaryOwner &&
+          laterPrimaryOwner.rowNumber !== rowNum &&
+          laterPrimaryOwner.canonicalId.toLowerCase() !== canonicalBioId.toLowerCase()
+        ) {
+          rowHasConflict = true
+          const conflictEntry: PeopleImportBioIdConflict = {
+            conflictId,
+            rowNumber: rowNum,
+            conflictBioId: cleanCand,
+            conflictRole,
+            incomingCanonicalBioId: canonicalBioId,
+            incomingPrimaryBioId: rawPrimaryCol || bioId,
+            incomingName: cleanName || existingRecord?.fullName || `User ${bioId}`,
+            existingOwnerBioId: laterPrimaryOwner.canonicalId,
+            existingOwnerPrimaryBioId: laterPrimaryOwner.id,
+            existingOwnerName: `${laterPrimaryOwner.name} (Row ${laterPrimaryOwner.rowNumber})`,
+            source: 'import_file',
+            resolution: chosenResolution
+          }
+          bioIdConflicts.push(conflictEntry)
+
+          if (!chosenResolution) {
+            warningsCount++
+            rowConflictReasons.push(
+              `Unresolved Bio ID conflict on "${cleanCand}" (Row ${laterPrimaryOwner.rowNumber} also lists ID ${laterPrimaryOwner.id} for ${laterPrimaryOwner.name})`
+            )
+            return 'skip_link'
+          }
+          if (chosenResolution === 'skip_incoming_row') {
+            skipEntireRowDueToConflict = true
+            return 'skip_row'
+          }
+          if (chosenResolution === 'keep_existing_owner') {
+            rejectedBioIdsForRow.add(key)
+            warningsCount++
+            rowWarnings.push(`Kept Row ${laterPrimaryOwner.rowNumber} owner (${laterPrimaryOwner.name}) for Bio ID ${cleanCand}`)
+            return 'skip_link'
+          }
+          if (chosenResolution === 'consolidate_into_incoming') {
+            absorbedRowNumbersByFileConflict.add(laterPrimaryOwner.rowNumber)
+            pendingConsolidationSourcesForRow.add(laterPrimaryOwner.canonicalId)
+            claimedLinkedIdsInImport.set(key, {
+              canonicalId: canonicalBioId,
+              primaryId: rawPrimaryCol || bioId,
+              name: cleanName || existingRecord?.fullName || `User ${bioId}`,
+              rowNumber: rowNum
+            })
+            return 'allow'
+          }
+        }
+
+        claimedLinkedIdsInImport.set(key, {
+          canonicalId: canonicalBioId,
+          primaryId: rawPrimaryCol || bioId,
+          name: cleanName || existingRecord?.fullName || `User ${bioId}`,
+          rowNumber: rowNum
+        })
+        return 'allow'
+      }
 
       // Extract optional Multi-Bio-ID and Consolidation columns
       const hasSecondaryBioCol = hasRowFieldColumn(row, SECONDARY_BIO_IDS_ALIASES)
       const hasInactiveBioCol = hasRowFieldColumn(row, INACTIVE_BIO_IDS_ALIASES)
       const hasMergedFromCol = hasRowFieldColumn(row, MERGED_FROM_BIO_IDS_ALIASES)
-      const rawSecondaryList = hasSecondaryBioCol ? parseBioIdListCell(getRowField(row, SECONDARY_BIO_IDS_ALIASES)) : []
-      const rawInactiveList = hasInactiveBioCol ? parseBioIdListCell(getRowField(row, INACTIVE_BIO_IDS_ALIASES)) : []
-      const rawMergedFromList = hasMergedFromCol ? parseBioIdListCell(getRowField(row, MERGED_FROM_BIO_IDS_ALIASES)) : []
+      const rawSecondaryList = hasSecondaryBioCol ? parseBioIdListCell(getRowField(row, SECONDARY_BIO_IDS_ALIASES)) : (consolidationMeta?.biometricIds?.filter(e => e.status === 'active' && e.role !== 'primary').map(e => e.bioId) || [])
+      const rawInactiveList = hasInactiveBioCol ? parseBioIdListCell(getRowField(row, INACTIVE_BIO_IDS_ALIASES)) : (consolidationMeta?.biometricIds?.filter(e => e.status === 'inactive').map(e => e.bioId) || [])
+      const rawMergedFromList = hasMergedFromCol
+        ? parseBioIdListCell(getRowField(row, MERGED_FROM_BIO_IDS_ALIASES))
+        : (consolidationMeta?.mergedFromBioIds || [])
 
-      // Guard against duplicate Bio IDs in the same import file
-      if (seenBioIdsInImport.has(canonicalBioId)) {
+      // Guard against duplicate Bio IDs or stale secondary alias rows in the same import file
+      if (seenBioIdsInImport.has(canonicalBioId.toLowerCase())) {
+        const isStaleSecondaryAlias =
+          existingRecord &&
+          bioId.toLowerCase() !== existingRecord.bioId.toLowerCase() &&
+          bioId.toLowerCase() !== (existingRecord.primaryBioId || '').toLowerCase()
+
+        if (isStaleSecondaryAlias) {
+          skippedCount++
+          allRows.push({
+            rowNumber: rowNum,
+            id: bioId,
+            canonicalBioId,
+            name: cleanName || existingRecord.fullName,
+            group: cleanGroupStr || '-',
+            department: cleanDept || '-',
+            displayStatus: `Linked → ${existingRecord.bioId}`,
+            isStatusChanged: false,
+            action: 'SKIP',
+            status: `Secondary/merged Bio ID already consolidated under canonical ID ${existingRecord.bioId}`,
+            isWarning: false,
+            isError: false
+          })
+          continue
+        }
+
         const item: PeopleImportRowItem = {
           rowNumber: rowNum,
           id: bioId,
@@ -3402,100 +3777,188 @@ export const employeeRepository = {
         errorsCount++
         continue
       }
-      seenBioIdsInImport.add(canonicalBioId)
+
+      // Check incoming row primary & canonical IDs first for DB/file conflicts
+      const primaryCheck = evaluateCandidateConflict(bioId, 'primary')
+      if (skipEntireRowDueToConflict || primaryCheck === 'skip_row') {
+        skippedCount++
+        allRows.push({
+          rowNumber: rowNum,
+          id: bioId,
+          canonicalBioId,
+          name: cleanName || `User ${bioId}`,
+          group: cleanGroupStr || '-',
+          department: cleanDept || '-',
+          displayStatus: 'Skipped',
+          isStatusChanged: false,
+          action: 'SKIP',
+          status: 'Skipped row per conflict resolution (kept existing owner)',
+          isWarning: false,
+          isError: false,
+          hasConflict: true
+        })
+        continue
+      }
+
+      if (primaryCheck === 'skip_link' && !existingRecord && findCachedEmployee(bioId)) {
+        // Row was blocked or chose keep_existing_owner when DB already owns this primary bioId under another employee
+        seenBioIdsInImport.add(canonicalBioId.toLowerCase())
+        skippedCount++
+        allRows.push({
+          rowNumber: rowNum,
+          id: bioId,
+          canonicalBioId,
+          name: cleanName || `User ${bioId}`,
+          group: cleanGroupStr || '-',
+          department: cleanDept || '-',
+          displayStatus: 'Conflict',
+          isStatusChanged: false,
+          action: 'SKIP',
+          status: rowConflictReasons.join('; ') || rowWarnings.join('; ') || `Skipped due to Bio ID conflict on ${bioId}`,
+          isWarning: true,
+          isError: rowConflictReasons.length > 0,
+          hasConflict: true,
+          errorReason: rowConflictReasons[0]
+        })
+        continue
+      }
+
+      if (canonicalBioId.toLowerCase() !== bioId.toLowerCase()) {
+        evaluateCandidateConflict(canonicalBioId, 'canonical')
+      }
+      if (rawPrimaryCol && rawPrimaryCol.toLowerCase() !== bioId.toLowerCase() && rawPrimaryCol.toLowerCase() !== canonicalBioId.toLowerCase()) {
+        evaluateCandidateConflict(rawPrimaryCol, 'primary')
+      }
+
+      seenBioIdsInImport.add(canonicalBioId.toLowerCase())
+
+      const nowIso = new Date().toISOString()
 
       // Validate and merge multi-Bio-ID mappings without erasing existing ones if columns are omitted
-      const nowIso = new Date().toISOString()
+      // AND never letting a stale secondary-ID row hijack an existing primaryBioId
       const resolveImportedBiometricIds = (
         baseCanonicalId: string,
         currentEntries?: BiometricIdEntry[],
         currentPrimary?: string
       ): { primaryBioId: string; biometricIds: BiometricIdEntry[]; bioIdsChanged: boolean } => {
-        if (!hasSecondaryBioCol && !hasInactiveBioCol) {
-          const preserved = ensureBiometricIdsList(baseCanonicalId, currentEntries, currentPrimary || bioId, nowIso)
-          const resolvedPrimary = preserved.find(e => e.role === 'primary' && e.status === 'active')?.bioId || currentPrimary || baseCanonicalId
-          return { primaryBioId: resolvedPrimary, biometricIds: preserved, bioIdsChanged: false }
-        }
+        const hasExplicitMultiBioData =
+          hasSecondaryBioCol ||
+          hasInactiveBioCol ||
+          hasPrimaryCol ||
+          Boolean(consolidationMeta?.biometricIds && consolidationMeta.biometricIds.length > 0)
 
+        const existingList = ensureBiometricIdsList(baseCanonicalId, currentEntries, currentPrimary || bioId, nowIso)
         const existingMap = new Map<string, BiometricIdEntry>()
-        for (const e of ensureBiometricIdsList(baseCanonicalId, currentEntries, currentPrimary, nowIso)) {
+        for (const e of existingList) {
           existingMap.set(e.bioId.toLowerCase(), e)
         }
 
-        const safeCheckAndRecordClaim = (candidateId: string): boolean => {
-          const key = candidateId.toLowerCase()
-          const inFileOwner = claimedLinkedIdsInImport.get(key)
-          if (inFileOwner && inFileOwner !== baseCanonicalId) {
-            warningsCount++
-            rowWarnings.push(`Skipped Bio ID "${candidateId}" (already claimed in import by Bio ID ${inFileOwner})`)
-            return false
-          }
-          const dbMatch = findCachedEmployee(candidateId)
-          if (dbMatch && dbMatch.record.bioId !== baseCanonicalId) {
-            warningsCount++
-            rowWarnings.push(`Skipped Bio ID "${candidateId}" (already assigned to ${dbMatch.record.fullName})`)
-            return false
-          }
-          claimedLinkedIdsInImport.set(key, baseCanonicalId)
-          return true
+        if (!hasExplicitMultiBioData) {
+          const resolvedPrimary = existingList.find(e => e.role === 'primary' && e.status === 'active')?.bioId || currentPrimary || baseCanonicalId
+          return { primaryBioId: resolvedPrimary, biometricIds: existingList, bioIdsChanged: false }
         }
 
-        safeCheckAndRecordClaim(bioId)
-        safeCheckAndRecordClaim(baseCanonicalId)
+        // Prevent primary hijack when matched via secondary/merged ID on an old spreadsheet that lacks PRIMARY BIO ID / CANONICAL BIO ID
+        const matchedViaSecondaryWithoutExplicitPrimary =
+          Boolean(currentPrimary) &&
+          !hasPrimaryCol &&
+          !hasCanonicalCol &&
+          bioId.toLowerCase() !== baseCanonicalId.toLowerCase() &&
+          bioId.toLowerCase() !== String(currentPrimary).toLowerCase()
+
+        const effectivePrimaryId = matchedViaSecondaryWithoutExplicitPrimary
+          ? String(currentPrimary)
+          : (rawPrimaryCol || consolidationMeta?.primaryBioId || bioId)
+
+        const metaEntryMap = new Map<string, BiometricIdEntry>()
+        for (const me of consolidationMeta?.biometricIds || []) {
+          if (me?.bioId) {
+            metaEntryMap.set(me.bioId.toLowerCase(), me)
+          }
+        }
 
         const nextEntriesMap = new Map<string, BiometricIdEntry>()
-        nextEntriesMap.set(bioId.toLowerCase(), {
-          bioId,
+        const prevPrimaryMeta = existingMap.get(effectivePrimaryId.toLowerCase()) || metaEntryMap.get(effectivePrimaryId.toLowerCase())
+        nextEntriesMap.set(effectivePrimaryId.toLowerCase(), {
+          bioId: effectivePrimaryId,
           role: 'primary',
           status: 'active',
-          addedAt: existingMap.get(bioId.toLowerCase())?.addedAt || nowIso,
-          notes: existingMap.get(bioId.toLowerCase())?.notes
+          addedAt: prevPrimaryMeta?.addedAt || nowIso,
+          notes: prevPrimaryMeta?.notes,
+          transferredFromBioId: prevPrimaryMeta?.transferredFromBioId,
+          transferredAt: prevPrimaryMeta?.transferredAt,
+          transferredBy: prevPrimaryMeta?.transferredBy
         })
 
+        // If row ID differs from effectivePrimaryId (for example secondary-ID match), preserve row ID as secondary active unless in inactive list
+        if (bioId.toLowerCase() !== effectivePrimaryId.toLowerCase() && !rejectedBioIdsForRow.has(bioId.toLowerCase())) {
+          const prevRowMeta = existingMap.get(bioId.toLowerCase()) || metaEntryMap.get(bioId.toLowerCase())
+          nextEntriesMap.set(bioId.toLowerCase(), {
+            bioId,
+            role: 'secondary',
+            status: 'active',
+            addedAt: prevRowMeta?.addedAt || nowIso,
+            notes: prevRowMeta?.notes,
+            transferredFromBioId: prevRowMeta?.transferredFromBioId,
+            transferredAt: prevRowMeta?.transferredAt,
+            transferredBy: prevRowMeta?.transferredBy
+          })
+        }
+
         for (const secId of rawSecondaryList) {
-          if (secId.toLowerCase() === bioId.toLowerCase()) continue
-          if (!safeCheckAndRecordClaim(secId)) continue
-          const prev = existingMap.get(secId.toLowerCase())
+          if (secId.toLowerCase() === effectivePrimaryId.toLowerCase()) continue
+          const verdict = evaluateCandidateConflict(secId, 'secondary')
+          if (verdict !== 'allow') continue
+          const prev = existingMap.get(secId.toLowerCase()) || metaEntryMap.get(secId.toLowerCase())
           nextEntriesMap.set(secId.toLowerCase(), {
             bioId: secId,
             role: 'secondary',
             status: 'active',
             addedAt: prev?.addedAt || nowIso,
             reactivatedAt: prev?.status === 'inactive' ? nowIso : prev?.reactivatedAt,
-            notes: prev?.notes
+            notes: prev?.notes,
+            transferredFromBioId: prev?.transferredFromBioId,
+            transferredAt: prev?.transferredAt,
+            transferredBy: prev?.transferredBy
           })
         }
 
         for (const inactId of rawInactiveList) {
-          if (inactId.toLowerCase() === bioId.toLowerCase()) continue
+          if (inactId.toLowerCase() === effectivePrimaryId.toLowerCase()) continue
           if (nextEntriesMap.has(inactId.toLowerCase())) continue
-          if (!safeCheckAndRecordClaim(inactId)) continue
-          const prev = existingMap.get(inactId.toLowerCase())
+          const verdict = evaluateCandidateConflict(inactId, 'inactive')
+          if (verdict !== 'allow') continue
+          const prev = existingMap.get(inactId.toLowerCase()) || metaEntryMap.get(inactId.toLowerCase())
           nextEntriesMap.set(inactId.toLowerCase(), {
             bioId: inactId,
             role: 'secondary',
             status: 'inactive',
             addedAt: prev?.addedAt || nowIso,
             deactivatedAt: prev?.deactivatedAt || nowIso,
-            notes: prev?.notes
+            notes: prev?.notes,
+            transferredFromBioId: prev?.transferredFromBioId,
+            transferredAt: prev?.transferredAt,
+            transferredBy: prev?.transferredBy
           })
         }
 
         // Always keep baseCanonicalId linked even if primary changed to a secondary ID
         if (!nextEntriesMap.has(baseCanonicalId.toLowerCase())) {
-          const prevBase = existingMap.get(baseCanonicalId.toLowerCase())
+          const prevBase = existingMap.get(baseCanonicalId.toLowerCase()) || metaEntryMap.get(baseCanonicalId.toLowerCase())
           nextEntriesMap.set(baseCanonicalId.toLowerCase(), {
             bioId: baseCanonicalId,
             role: 'secondary',
             status: prevBase?.status || 'active',
             addedAt: prevBase?.addedAt || nowIso,
             deactivatedAt: prevBase?.deactivatedAt,
-            notes: prevBase?.notes
+            notes: prevBase?.notes,
+            transferredFromBioId: prevBase?.transferredFromBioId,
+            transferredAt: prevBase?.transferredAt,
+            transferredBy: prevBase?.transferredBy
           })
         }
 
-        // Preserve any existing active/inactive IDs not overwritten unless the explicit columns were supplied cleanly
-        const normalizedNext = ensureBiometricIdsList(baseCanonicalId, Array.from(nextEntriesMap.values()), bioId, nowIso)
+        const normalizedNext = ensureBiometricIdsList(baseCanonicalId, Array.from(nextEntriesMap.values()), effectivePrimaryId, nowIso)
         const prevSignature = Array.from(existingMap.values())
           .map(e => `${e.bioId}:${e.role}:${e.status}`)
           .sort()
@@ -3506,10 +3969,45 @@ export const employeeRepository = {
           .join('|')
 
         return {
-          primaryBioId: bioId,
+          primaryBioId: effectivePrimaryId,
           biometricIds: normalizedNext,
           bioIdsChanged: prevSignature !== nextSignature
         }
+      }
+
+      // Evaluate any MERGED FROM BIO IDS conflicts that weren't already listed in secondary/inactive
+      const safeMergedFromSet = new Set<string>()
+      for (const mId of rawMergedFromList) {
+        if (!mId || mId.toLowerCase() === canonicalBioId.toLowerCase()) continue
+        const verdict = evaluateCandidateConflict(mId, 'merged_from')
+        if (verdict === 'allow') {
+          safeMergedFromSet.add(mId)
+        }
+      }
+      for (const srcId of pendingConsolidationSourcesForRow) {
+        if (srcId.toLowerCase() !== canonicalBioId.toLowerCase()) {
+          safeMergedFromSet.add(srcId)
+        }
+      }
+
+      if (skipEntireRowDueToConflict) {
+        skippedCount++
+        allRows.push({
+          rowNumber: rowNum,
+          id: bioId,
+          canonicalBioId,
+          name: cleanName || existingRecord?.fullName || `User ${bioId}`,
+          group: cleanGroupStr || '-',
+          department: cleanDept || '-',
+          displayStatus: 'Skipped',
+          isStatusChanged: false,
+          action: 'SKIP',
+          status: 'Skipped row per Bio ID conflict resolution (kept existing owner)',
+          isWarning: false,
+          isError: false,
+          hasConflict: true
+        })
+        continue
       }
 
       // Resolve Work Group if provided
@@ -3532,19 +4030,65 @@ export const employeeRepository = {
         }
       }
 
+      // Merge consolidation audits from CONSOLIDATION METADATA
+      const importedAuditsForRow: EmployeeConsolidationAudit[] = []
+      if (consolidationMeta?.audits && consolidationMeta.audits.length > 0) {
+        for (const a of consolidationMeta.audits) {
+          if (a && typeof a === 'object' && a.id && a.canonicalBioId && a.sourceBioId) {
+            if (!rejectedBioIdsForRow.has(a.sourceBioId.toLowerCase())) {
+              importedAuditsForRow.push(a)
+              importedAuditsMap.set(a.id, a)
+            }
+          }
+        }
+      } else if (safeMergedFromSet.size > 0 && !existingRecord) {
+        // Synthesize lightweight audit record on PC 2 when raw MERGED FROM BIO IDS came from a CSV/Excel without JSON metadata
+        for (const mId of safeMergedFromSet) {
+          if (pendingConsolidationSourcesForRow.has(mId)) continue
+          const auditId = `import_cons_${canonicalBioId}_${mId}`
+          const synthAudit: EmployeeConsolidationAudit = {
+            id: auditId,
+            canonicalBioId,
+            canonicalName: cleanName || `User ${canonicalBioId}`,
+            sourceBioId: mId,
+            sourceName: `${cleanName || `User ${canonicalBioId}`} (Merged ID ${mId})`,
+            transferredBioIds: [mId],
+            fieldResolutions: [],
+            transferredRecordsCount: {
+              punchesPreserved: 0,
+              leaveRecords: 0,
+              overtimeAuthorizations: 0,
+              manualAdjustments: 0,
+              hrNotices: 0,
+              payrollSnapshotsTransferred: 0,
+              finalizedSnapshotsPreserved: 0
+            },
+            performedBy: 'Cross-PC People Directory Import',
+            performedAt: nowIso,
+            notes: `Restored consolidation metadata from Excel export (source Bio ID ${mId} → canonical ${canonicalBioId})`
+          }
+          importedAuditsForRow.push(synthAudit)
+          importedAuditsMap.set(auditId, synthAudit)
+        }
+      }
+
       if (existingRecord) {
         // CASE A: Existing Employee Match
         const existingWg = workGroups.find(w => w.id === (existingRecord.workGroupId || 'wg-group-c'))
-        
+
         // Rules: If blank, do NOT erase existing values (Rule 4)
         const targetName = cleanName !== '' ? cleanName : existingRecord.fullName
         const targetDept = cleanDept !== '' ? cleanDept : (existingRecord.department || 'Operations')
+        const targetLocation = parsedLocation || existingRecord.location || 'DBB CEBU'
         const targetWgId = matchedWg ? matchedWg.id : (existingRecord.workGroupId || 'wg-group-c')
         const targetWg = workGroups.find(w => w.id === targetWgId) || existingWg || defaultGroup
 
         const targetContractDate = (parsedContractDate && parsedContractDate.isValid)
           ? parsedContractDate.formatted
           : existingRecord.contractDate
+        const targetHireDate = (parsedHireDate && parsedHireDate.isValid)
+          ? parsedHireDate.formatted
+          : existingRecord.hireDate
 
         const targetStatus: EmploymentStatus = (parsedStatus && parsedStatus.isValid)
           ? parsedStatus.status!
@@ -3564,21 +4108,12 @@ export const employeeRepository = {
           ? cleanPosition
           : (existingRecord.position || 'Staff')
 
-        const targetSss = cleanSss !== undefined
-          ? cleanSss
-          : existingRecord.sssNumber
-
-        const targetHdmf = cleanHdmf !== undefined
-          ? cleanHdmf
-          : existingRecord.pagibigNumber
-
-        const targetPhic = cleanPhic !== undefined
-          ? cleanPhic
-          : existingRecord.philhealthNumber
-
-        const targetTin = cleanTin !== undefined
-          ? cleanTin
-          : existingRecord.tin
+        const targetMobile = cleanMobile !== undefined ? cleanMobile : existingRecord.mobileNumber
+        const targetEmail = cleanEmail !== undefined ? cleanEmail : existingRecord.email
+        const targetSss = cleanSss !== undefined ? cleanSss : existingRecord.sssNumber
+        const targetHdmf = cleanHdmf !== undefined ? cleanHdmf : existingRecord.pagibigNumber
+        const targetPhic = cleanPhic !== undefined ? cleanPhic : existingRecord.philhealthNumber
+        const targetTin = cleanTin !== undefined ? cleanTin : existingRecord.tin
 
         const bioResolution = resolveImportedBiometricIds(
           existingRecord.bioId,
@@ -3586,11 +4121,37 @@ export const employeeRepository = {
           existingRecord.primaryBioId
         )
 
+        const prevMergedFromSet = new Set((existingRecord.mergedFromBioIds || []).map(x => x.toLowerCase()))
+        const mergedFromUnion = Array.from(
+          new Set([
+            ...(existingRecord.mergedFromBioIds || []),
+            ...Array.from(safeMergedFromSet)
+          ])
+        ).filter(id => id && id.toLowerCase() !== existingRecord.bioId.toLowerCase())
+        const isMergedFromUpdated = mergedFromUnion.some(id => !prevMergedFromSet.has(id.toLowerCase()))
+
+        // Preserve any existing audits plus newly imported audits
+        const mergedAuditsById = new Map<string, EmployeeConsolidationAudit>()
+        for (const a of existingRecord.consolidationAudits || []) {
+          if (a?.id) mergedAuditsById.set(a.id, a)
+        }
+        let auditsAdded = false
+        for (const a of importedAuditsForRow) {
+          if (a?.id && !mergedAuditsById.has(a.id)) {
+            mergedAuditsById.set(a.id, a)
+            auditsAdded = true
+          }
+        }
+
         const isNameUpdated = cleanName !== '' && cleanName !== existingRecord.fullName
         const isDeptUpdated = cleanDept !== '' && cleanDept !== (existingRecord.department || '')
+        const isLocationUpdated = Boolean(parsedLocation && parsedLocation !== existingRecord.location)
         const isGroupUpdated = Boolean(matchedWg && matchedWg.id !== existingRecord.workGroupId)
         const isContractDateUpdated = Boolean(
           parsedContractDate && parsedContractDate.isValid && parsedContractDate.formatted !== (existingRecord.contractDate || '')
+        )
+        const isHireDateUpdated = Boolean(
+          parsedHireDate && parsedHireDate.isValid && parsedHireDate.formatted !== (existingRecord.hireDate || '')
         )
         const isStatusUpdated = Boolean(
           parsedStatus && parsedStatus.isValid && parsedStatus.status !== existingRecord.status
@@ -3608,18 +4169,12 @@ export const employeeRepository = {
         const isPositionUpdated = Boolean(
           cleanPosition !== undefined && cleanPosition !== (existingRecord.position || '')
         )
-        const isSssUpdated = Boolean(
-          cleanSss !== undefined && cleanSss !== (existingRecord.sssNumber || '')
-        )
-        const isHdmfUpdated = Boolean(
-          cleanHdmf !== undefined && cleanHdmf !== (existingRecord.pagibigNumber || '')
-        )
-        const isPhicUpdated = Boolean(
-          cleanPhic !== undefined && cleanPhic !== (existingRecord.philhealthNumber || '')
-        )
-        const isTinUpdated = Boolean(
-          cleanTin !== undefined && cleanTin !== (existingRecord.tin || '')
-        )
+        const isMobileUpdated = Boolean(cleanMobile !== undefined && cleanMobile !== (existingRecord.mobileNumber || ''))
+        const isEmailUpdated = Boolean(cleanEmail !== undefined && cleanEmail !== (existingRecord.email || ''))
+        const isSssUpdated = Boolean(cleanSss !== undefined && cleanSss !== (existingRecord.sssNumber || ''))
+        const isHdmfUpdated = Boolean(cleanHdmf !== undefined && cleanHdmf !== (existingRecord.pagibigNumber || ''))
+        const isPhicUpdated = Boolean(cleanPhic !== undefined && cleanPhic !== (existingRecord.philhealthNumber || ''))
+        const isTinUpdated = Boolean(cleanTin !== undefined && cleanTin !== (existingRecord.tin || ''))
 
         const isResignationDateUpdated = Boolean(
           targetStatus === 'resigned' &&
@@ -3628,7 +4183,26 @@ export const employeeRepository = {
           parsedResignationDate.formatted !== (existingRecord.resignationDate || '')
         )
 
-        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isEffectiveStatusChanged || isResignationDateUpdated || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated || bioResolution.bioIdsChanged
+        const hasChanges =
+          isNameUpdated ||
+          isDeptUpdated ||
+          isLocationUpdated ||
+          isGroupUpdated ||
+          isContractDateUpdated ||
+          isHireDateUpdated ||
+          isEffectiveStatusChanged ||
+          isResignationDateUpdated ||
+          isBirthdayUpdated ||
+          isPositionUpdated ||
+          isMobileUpdated ||
+          isEmailUpdated ||
+          isSssUpdated ||
+          isHdmfUpdated ||
+          isPhicUpdated ||
+          isTinUpdated ||
+          bioResolution.bioIdsChanged ||
+          isMergedFromUpdated ||
+          auditsAdded
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -3644,12 +4218,31 @@ export const employeeRepository = {
           resignationDate = undefined
         }
 
-        const mergedFromUnion = Array.from(
-          new Set([
-            ...(existingRecord.mergedFromBioIds || []),
-            ...rawMergedFromList
-          ])
-        ).filter(id => id && id !== existingRecord.bioId)
+        // Queue archived tombstones for any newly merged source IDs that have no DB record yet
+        for (const mId of safeMergedFromSet) {
+          if (pendingConsolidationSourcesForRow.has(mId)) continue
+          if (!findCachedEmployee(mId) && !findDirectMergedRecord(mId)) {
+            mergedTombstonesMap.set(
+              mId,
+              toPersistableEmployeeRecord({
+                bioId: mId,
+                employeeNumber: mId,
+                fullName: `${targetName} (Consolidated ID ${mId})`,
+                location: targetLocation,
+                workGroupId: targetWgId,
+                department: targetDept,
+                position: targetPosition,
+                status: targetStatus,
+                isMerged: true,
+                mergedIntoBioId: existingRecord.bioId,
+                mergedAt: nowIso,
+                mergedBy: 'Cross-PC People Directory Import',
+                createdAt: nowIso,
+                updatedAt: nowIso
+              })
+            )
+          }
+        }
 
         const targetRecord = toPersistableEmployeeRecord({
           ...existingRecord,
@@ -3658,13 +4251,17 @@ export const employeeRepository = {
           primaryBioId: bioResolution.primaryBioId,
           biometricIds: bioResolution.biometricIds,
           mergedFromBioIds: mergedFromUnion,
+          consolidationAudits: Array.from(mergedAuditsById.values()),
           fullName: targetName,
-          location: existingRecord.location,
+          location: targetLocation,
           workGroupId: targetWgId,
           department: targetDept,
           position: targetPosition,
+          hireDate: targetHireDate,
           contractDate: targetContractDate,
           dateOfBirth: targetDateOfBirth,
+          mobileNumber: targetMobile,
+          email: targetEmail,
           status: targetStatus,
           excludeFromBiometric: targetExcludeFromBiometric,
           resignationDate,
@@ -3673,11 +4270,13 @@ export const employeeRepository = {
           philhealthNumber: targetPhic,
           tin: targetTin,
           createdAt: existingRecord.createdAt,
-          updatedAt: new Date().toISOString()
+          updatedAt: nowIso
         })
 
         const prevStatusDisplay = getStatusDisplayName(existingRecord.status, existingExcludeBio)
         const nextStatusDisplay = getStatusDisplayName(targetStatus, Boolean(targetExcludeFromBiometric))
+        const secondaryOut = bioResolution.biometricIds.filter(e => e.bioId !== bioResolution.primaryBioId && e.status === 'active').map(e => e.bioId)
+        const inactiveOut = bioResolution.biometricIds.filter(e => e.bioId !== bioResolution.primaryBioId && e.status === 'inactive').map(e => e.bioId)
 
         if (hasChanges) {
           updatedCount++
@@ -3692,15 +4291,20 @@ export const employeeRepository = {
           }
           if (isNameUpdated) changeNotes.push(`Name: ${cleanName}`)
           if (isDeptUpdated) changeNotes.push(`Dept: ${cleanDept}`)
+          if (isLocationUpdated) changeNotes.push(`Location: ${targetLocation}`)
           if (isGroupUpdated) changeNotes.push(`Group: ${targetWg.name}`)
           if (isContractDateUpdated) changeNotes.push(`Contract Date: ${targetContractDate}`)
+          if (isHireDateUpdated) changeNotes.push(`Hire Date: ${targetHireDate}`)
           if (isBirthdayUpdated) changeNotes.push(`B-Day: ${targetDateOfBirth}`)
           if (isPositionUpdated) changeNotes.push(`Position: ${targetPosition}`)
+          if (isMobileUpdated) changeNotes.push(`Mobile: ${targetMobile}`)
+          if (isEmailUpdated) changeNotes.push(`Email: ${targetEmail}`)
           if (isSssUpdated) changeNotes.push(`SSS: ${targetSss}`)
           if (isHdmfUpdated) changeNotes.push(`HDMF: ${targetHdmf}`)
           if (isPhicUpdated) changeNotes.push(`PHIC: ${targetPhic}`)
           if (isTinUpdated) changeNotes.push(`TIN: ${targetTin}`)
-          if (bioResolution.bioIdsChanged) changeNotes.push(`Bio IDs Updated`)
+          if (bioResolution.bioIdsChanged || isMergedFromUpdated) changeNotes.push(`Bio IDs / Consolidation Updated`)
+          if (rowConflictReasons.length > 0) changeNotes.push(...rowConflictReasons)
 
           let statusText = changeNotes.join(' • ')
           if (rowWarnings.length > 0) {
@@ -3714,12 +4318,21 @@ export const employeeRepository = {
           const rowItem: PeopleImportRowItem = {
             rowNumber: rowNum,
             id: canonicalBioId,
+            canonicalBioId,
+            primaryBioId: bioResolution.primaryBioId,
+            secondaryBioIds: secondaryOut,
+            inactiveBioIds: inactiveOut,
+            mergedFromBioIds: mergedFromUnion,
             name: targetName,
             group: cleanGroupStr || '',
             department: targetDept,
+            location: targetLocation,
             contractDate: targetContractDate,
+            hireDate: targetHireDate,
             dateOfBirth: targetDateOfBirth,
             position: targetPosition,
+            mobileNumber: targetMobile,
+            email: targetEmail,
             sssNumber: targetSss,
             pagibigNumber: targetHdmf,
             philhealthNumber: targetPhic,
@@ -3733,9 +4346,11 @@ export const employeeRepository = {
             isStatusChanged: isEffectiveStatusChanged,
             action: 'UPDATE',
             status: statusText,
-            isWarning: hasUnknownGroup || rowWarnings.length > 0,
-            isError: false,
+            isWarning: hasUnknownGroup || rowWarnings.length > 0 || rowConflictReasons.length > 0,
+            isError: rowConflictReasons.length > 0,
+            hasConflict: rowHasConflict,
             warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - kept current group` : undefined),
+            errorReason: rowConflictReasons.length > 0 ? rowConflictReasons.join('; ') : undefined,
             targetRecord
           }
           allRows.push(rowItem)
@@ -3766,7 +4381,9 @@ export const employeeRepository = {
             ? `${rawStatusStr.toUpperCase()} → ${prevStatusDisplay}`
             : prevStatusDisplay
           let statusText = 'No changes'
-          if (rowWarnings.length > 0) {
+          if (rowConflictReasons.length > 0) {
+            statusText = rowConflictReasons.join('; ')
+          } else if (rowWarnings.length > 0) {
             statusText = `No changes (Warning: ${rowWarnings.join('; ')})`
           } else if (hasUnknownGroup) {
             statusText = `No changes (Warning: Unknown group "${cleanGroupStr}")`
@@ -3775,12 +4392,21 @@ export const employeeRepository = {
           const rowItem: PeopleImportRowItem = {
             rowNumber: rowNum,
             id: canonicalBioId,
+            canonicalBioId,
+            primaryBioId: bioResolution.primaryBioId,
+            secondaryBioIds: secondaryOut,
+            inactiveBioIds: inactiveOut,
+            mergedFromBioIds: mergedFromUnion,
             name: existingRecord.fullName,
             group: cleanGroupStr || '',
             department: existingRecord.department || 'Operations',
+            location: targetLocation,
             contractDate: existingRecord.contractDate,
+            hireDate: existingRecord.hireDate,
             dateOfBirth: existingRecord.dateOfBirth,
             position: existingRecord.position,
+            mobileNumber: existingRecord.mobileNumber,
+            email: existingRecord.email,
             sssNumber: existingRecord.sssNumber,
             pagibigNumber: existingRecord.pagibigNumber,
             philhealthNumber: existingRecord.philhealthNumber,
@@ -3794,21 +4420,27 @@ export const employeeRepository = {
             isStatusChanged: false,
             action: 'UNCHANGED',
             status: statusText,
-            isWarning: hasUnknownGroup || rowWarnings.length > 0,
-            isError: false,
-            warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}"` : undefined)
+            isWarning: hasUnknownGroup || rowWarnings.length > 0 || rowConflictReasons.length > 0,
+            isError: rowConflictReasons.length > 0,
+            hasConflict: rowHasConflict,
+            warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}"` : undefined),
+            errorReason: rowConflictReasons.length > 0 ? rowConflictReasons.join('; ') : undefined
           }
           allRows.push(rowItem)
         }
       } else {
         // CASE B: New Employee Record
         newCount++
-        const targetName = cleanName !== '' ? cleanName : `User ${bioId}`
+        const targetName = cleanName !== '' ? cleanName : `User ${canonicalBioId}`
         const targetDept = cleanDept !== '' ? cleanDept : 'Operations'
+        const targetLocation: EmployeeLocation = parsedLocation || 'DBB CEBU'
         const targetWg = matchedWg || defaultGroup
         const targetWgId = targetWg.id
         const targetContractDate = (parsedContractDate && parsedContractDate.isValid)
           ? parsedContractDate.formatted
+          : undefined
+        const targetHireDate = (parsedHireDate && parsedHireDate.isValid)
+          ? parsedHireDate.formatted
           : undefined
         const targetDateOfBirth = (parsedBirthday && parsedBirthday.isValid)
           ? parsedBirthday.formatted
@@ -3831,21 +4463,52 @@ export const employeeRepository = {
             ? parsedResignationDate.formatted
             : undefined
 
-        const bioResolution = resolveImportedBiometricIds(bioId, undefined, bioId)
+        const bioResolution = resolveImportedBiometricIds(canonicalBioId, undefined, rawPrimaryCol || consolidationMeta?.primaryBioId || bioId)
+        const cleanMergedFromList = Array.from(safeMergedFromSet).filter(id => id && id.toLowerCase() !== canonicalBioId.toLowerCase())
+
+        // Create archived tombstone entries on target PC so merged source IDs are never resurrected as active rows
+        for (const mId of cleanMergedFromList) {
+          if (pendingConsolidationSourcesForRow.has(mId)) continue
+          if (!findCachedEmployee(mId) && !findDirectMergedRecord(mId)) {
+            mergedTombstonesMap.set(
+              mId,
+              toPersistableEmployeeRecord({
+                bioId: mId,
+                employeeNumber: mId,
+                fullName: `${targetName} (Consolidated ID ${mId})`,
+                location: targetLocation,
+                workGroupId: targetWgId,
+                department: targetDept,
+                position: targetPosition,
+                status: targetStatus,
+                isMerged: true,
+                mergedIntoBioId: canonicalBioId,
+                mergedAt: nowIso,
+                mergedBy: 'Cross-PC People Directory Import',
+                createdAt: nowIso,
+                updatedAt: nowIso
+              })
+            )
+          }
+        }
 
         const targetRecord = toPersistableEmployeeRecord({
-          bioId,
-          employeeNumber: bioId,
+          bioId: canonicalBioId,
+          employeeNumber: canonicalBioId,
           primaryBioId: bioResolution.primaryBioId,
           biometricIds: bioResolution.biometricIds,
-          mergedFromBioIds: rawMergedFromList.filter(id => id && id !== bioId),
+          mergedFromBioIds: cleanMergedFromList,
+          consolidationAudits: importedAuditsForRow,
           fullName: targetName,
-          location: 'DBB CEBU',
+          location: targetLocation,
           workGroupId: targetWgId,
           department: targetDept,
           position: targetPosition,
+          hireDate: targetHireDate,
           contractDate: targetContractDate,
           dateOfBirth: targetDateOfBirth,
+          mobileNumber: cleanMobile,
+          email: cleanEmail,
           status: targetStatus,
           excludeFromBiometric: targetExcludeFromBiometric,
           resignationDate,
@@ -3853,15 +4516,23 @@ export const employeeRepository = {
           pagibigNumber: cleanHdmf,
           philhealthNumber: cleanPhic,
           tin: cleanTin,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          createdAt: nowIso,
+          updatedAt: nowIso
         })
 
         recordsToApplyMap.set(canonicalBioId, targetRecord)
 
-        let statusText = 'New employee'
+        const secondaryOut = bioResolution.biometricIds.filter(e => e.bioId !== bioResolution.primaryBioId && e.status === 'active').map(e => e.bioId)
+        const inactiveOut = bioResolution.biometricIds.filter(e => e.bioId !== bioResolution.primaryBioId && e.status === 'inactive').map(e => e.bioId)
+
+        let statusText = cleanMergedFromList.length > 0 || secondaryOut.length > 0
+          ? `New consolidated employee (${secondaryOut.length} linked ID${secondaryOut.length === 1 ? '' : 's'})`
+          : 'New employee'
         if (hasUnknownGroup) {
           statusText += ` (Warning: Unknown group "${cleanGroupStr}" - assigned ${defaultGroup.name})`
+        }
+        if (rowConflictReasons.length > 0) {
+          statusText += ` • ${rowConflictReasons.join('; ')}`
         }
         if (rowWarnings.length > 0) {
           statusText += ` (Warning: ${rowWarnings.join('; ')})`
@@ -3874,13 +4545,22 @@ export const employeeRepository = {
 
         const rowItem: PeopleImportRowItem = {
           rowNumber: rowNum,
-          id: bioId,
+          id: canonicalBioId,
+          canonicalBioId,
+          primaryBioId: bioResolution.primaryBioId,
+          secondaryBioIds: secondaryOut,
+          inactiveBioIds: inactiveOut,
+          mergedFromBioIds: cleanMergedFromList,
           name: targetName,
           group: cleanGroupStr || '',
           department: targetDept,
+          location: targetLocation,
           contractDate: targetContractDate,
+          hireDate: targetHireDate,
           dateOfBirth: targetDateOfBirth,
           position: targetPosition,
+          mobileNumber: cleanMobile,
+          email: cleanEmail,
           sssNumber: cleanSss,
           pagibigNumber: cleanHdmf,
           philhealthNumber: cleanPhic,
@@ -3893,25 +4573,29 @@ export const employeeRepository = {
           isStatusChanged: false,
           action: 'CREATE',
           status: statusText,
-          isWarning: hasUnknownGroup || rowWarnings.length > 0,
-          isError: false,
+          isWarning: hasUnknownGroup || rowWarnings.length > 0 || rowConflictReasons.length > 0,
+          isError: rowConflictReasons.length > 0,
+          hasConflict: rowHasConflict,
           warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - assigned ${defaultGroup.name}` : undefined),
+          errorReason: rowConflictReasons.length > 0 ? rowConflictReasons.join('; ') : undefined,
           targetRecord
         }
         allRows.push(rowItem)
 
         newPeople.push({
-          bioId,
+          bioId: canonicalBioId,
           name: targetName,
           group: targetWg.name,
           department: targetDept,
           contractDate: targetContractDate,
           status: targetStatus,
-          location: 'DBB CEBU',
+          location: targetLocation,
           targetRecord
         })
       }
     }
+
+    const unresolvedConflictCount = bioIdConflicts.filter(c => !c.resolution).length
 
     return {
       totalRows: parsedRows.length,
@@ -3928,8 +4612,13 @@ export const employeeRepository = {
       skippedCount,
       warningsCount,
       errorsCount,
+      bioIdConflicts,
+      unresolvedConflictCount,
       allRows,
       recordsToApply: Array.from(recordsToApplyMap.values()),
+      mergedTombstonesToApply: Array.from(mergedTombstonesMap.values()),
+      importedAuditsToApply: Array.from(importedAuditsMap.values()),
+      consolidationTasks: Array.from(consolidationTasksMap.values()),
       matchedUpdatedCount: updatedCount,
       newPeopleCount: newCount,
       matchedUpdated,
@@ -3947,10 +4636,22 @@ export const employeeRepository = {
     preview?: PeopleImportPreviewResult
   ): Promise<PeopleImportApplyResult> {
     await ensureInitialized()
-    if (!records || records.length === 0) {
+
+    const unresolvedConflicts = (preview?.bioIdConflicts || []).filter(c => !c.resolution)
+    if (unresolvedConflicts.length > 0) {
+      throw new Error(
+        `Cannot apply import with ${unresolvedConflicts.length} unresolved Bio ID ownership conflict(s). Resolve all conflicts first.`
+      )
+    }
+
+    const hasConsolidationTasks = Boolean(preview?.consolidationTasks && preview.consolidationTasks.length > 0)
+    const hasTombstones = Boolean(preview?.mergedTombstonesToApply && preview.mergedTombstonesToApply.length > 0)
+
+    if ((!records || records.length === 0) && !hasConsolidationTasks && !hasTombstones) {
       return {
         updatedCount: 0,
         createdCount: 0,
+        consolidatedCount: 0,
         statusUpdatedCount: 0,
         statusActiveCount: preview?.statusActiveCount || 0,
         statusResignedCount: preview?.statusResignedCount || 0,
@@ -3967,7 +4668,7 @@ export const employeeRepository = {
     // Step 1: Explicit Serialization Boundary
     // Guarantee that every record is converted to a plain, structured-clone-safe object
     const sanitizedRecords: EmployeeRecord[] = []
-    for (let i = 0; i < records.length; i++) {
+    for (let i = 0; i < (records || []).length; i++) {
       const rec = records[i]
       try {
         const plainRec = toPersistableEmployeeRecord(rec)
@@ -3980,19 +4681,21 @@ export const employeeRepository = {
     }
 
     // Step 2: Persist into IndexedDB with diagnostic itemized verification if put fails
-    try {
-      await db.employees.bulkPut(sanitizedRecords)
-    } catch (bulkError: any) {
-      for (const rec of sanitizedRecords) {
-        try {
-          await db.employees.put(rec)
-        } catch (singleErr: any) {
-          throw new Error(
-            `Failed to save employee:\nBio ID: ${rec.bioId}\nName: ${rec.fullName}\nField details: Dept=${rec.department}, Group=${rec.workGroupId}\nUnderlying error: ${singleErr.message || singleErr}`
-          )
+    if (sanitizedRecords.length > 0) {
+      try {
+        await db.employees.bulkPut(sanitizedRecords)
+      } catch (bulkError: any) {
+        for (const rec of sanitizedRecords) {
+          try {
+            await db.employees.put(rec)
+          } catch (singleErr: any) {
+            throw new Error(
+              `Failed to save employee:\nBio ID: ${rec.bioId}\nName: ${rec.fullName}\nField details: Dept=${rec.department}, Group=${rec.workGroupId}\nUnderlying error: ${singleErr.message || singleErr}`
+            )
+          }
         }
+        throw bulkError
       }
-      throw bulkError
     }
 
     // Step 3: Update local memory cache with the sanitized plain records
@@ -4008,11 +4711,65 @@ export const employeeRepository = {
       indexEmployeeRecord(rec)
     }
 
+    // Step 4: Execute any conflict-resolved consolidations (archiving source & preserving punches/finalized snapshots)
+    let consolidatedCount = 0
+    for (const task of preview?.consolidationTasks || []) {
+      const targetRec = employeeCache!.get(task.canonicalBioId) || findCachedEmployee(task.canonicalBioId)?.record
+      const sourceRec = employeeCache!.get(task.sourceBioId)
+      if (targetRec && sourceRec && targetRec.bioId !== sourceRec.bioId && !isRecordMerged(sourceRec)) {
+        const consPreview = await this.previewConsolidateEmployees(targetRec.bioId, sourceRec.bioId)
+        const autoResolutions: Record<string, 'canonical' | 'source'> = {}
+        for (const cf of consPreview.conflictFields) {
+          if (cf.hadBothValues) {
+            autoResolutions[cf.field] = cf.field === 'salaryConfig' ? cf.recommendedChoice : 'canonical'
+          }
+        }
+        await this.consolidateEmployees({
+          canonicalBioId: targetRec.bioId,
+          sourceBioId: sourceRec.bioId,
+          confirmedByAdmin: true,
+          resolutions: autoResolutions,
+          performedBy: task.performedBy || 'Excel Import Conflict Resolution',
+          notes: task.notes
+        })
+        consolidatedCount++
+      }
+    }
+
+    // Step 5: Persist archived tombstones for consolidated Bio IDs not yet present on target PC (never active!)
+    const tombstonesToPut: EmployeeRecord[] = []
+    for (const tomb of preview?.mergedTombstonesToApply || []) {
+      if (!employeeCache!.has(tomb.bioId) && !mergedEmployeeCache?.has(tomb.bioId)) {
+        const plainTomb = toPersistableEmployeeRecord({
+          ...tomb,
+          isMerged: true
+        })
+        tombstonesToPut.push(plainTomb)
+      }
+    }
+    if (tombstonesToPut.length > 0) {
+      await db.employees.bulkPut(tombstonesToPut)
+      for (const tomb of tombstonesToPut) {
+        indexEmployeeRecord(tomb)
+      }
+    }
+
+    // Step 6: Persist imported consolidation audit metadata without duplicating existing audits
+    if (preview?.importedAuditsToApply && preview.importedAuditsToApply.length > 0) {
+      const existingAudits = await db.consolidationAudits.toArray()
+      const existingAuditIds = new Set(existingAudits.map(a => a.id))
+      const auditsToAdd = preview.importedAuditsToApply.filter(a => a?.id && !existingAuditIds.has(a.id))
+      if (auditsToAdd.length > 0) {
+        await db.consolidationAudits.bulkPut(JSON.parse(JSON.stringify(auditsToAdd)))
+      }
+    }
+
     this.notifyChange()
 
     return {
       updatedCount: preview ? preview.updatedCount : updatedCount,
       createdCount: preview ? preview.newCount : createdCount,
+      consolidatedCount,
       statusUpdatedCount: preview ? preview.statusUpdatedCount : 0,
       statusActiveCount: preview ? preview.statusActiveCount : 0,
       statusResignedCount: preview ? preview.statusResignedCount : 0,
@@ -4027,11 +4784,14 @@ export const employeeRepository = {
   },
 
   /**
-   * Generates formatted data for Excel/CSV export of People Directory
+   * Generates formatted data for Excel/CSV export of People Directory.
+   * Preserves canonical Bio ID, primary Bio ID, secondary/inactive Bio IDs,
+   * merged source Bio IDs, and consolidation audit metadata.
    */
   async getAllForExport(): Promise<any[]> {
     const employees = await this.getEmployees()
     return employees.map(emp => {
+      const canonicalId = emp.canonical_bio_id || emp.biometric_user_id
       const primaryId = getEmployeePrimaryBioId(emp)
       const entries = emp.biometric_ids || []
       const secondaryActive = entries
@@ -4040,12 +4800,53 @@ export const employeeRepository = {
       const inactiveIds = entries
         .filter(b => b.bioId !== primaryId && b.status === 'inactive')
         .map(b => b.bioId)
+      const mergedFrom = emp.merged_from_bio_ids || []
+      const hasConsolidationOrMultiBio =
+        entries.length > 1 ||
+        mergedFrom.length > 0 ||
+        Boolean(emp.consolidation_audits && emp.consolidation_audits.length > 0) ||
+        primaryId !== canonicalId
+
+      let consolidationMetaStr = ''
+      if (hasConsolidationOrMultiBio) {
+        const metaPayload = {
+          canonicalBioId: canonicalId,
+          primaryBioId: primaryId,
+          biometricIds: entries,
+          mergedFromBioIds: mergedFrom,
+          audits: (emp.consolidation_audits || []).map(a => ({
+            id: a.id,
+            canonicalBioId: a.canonicalBioId,
+            canonicalName: a.canonicalName,
+            sourceBioId: a.sourceBioId,
+            sourceName: a.sourceName,
+            transferredBioIds: a.transferredBioIds,
+            fieldResolutions: (a.fieldResolutions || []).slice(0, 20),
+            transferredRecordsCount: a.transferredRecordsCount,
+            performedBy: a.performedBy,
+            performedAt: a.performedAt,
+            notes: a.notes
+          }))
+        }
+        const serialized = JSON.stringify(metaPayload)
+        consolidationMetaStr = serialized.length <= 30000
+          ? serialized
+          : JSON.stringify({
+              canonicalBioId: canonicalId,
+              primaryBioId: primaryId,
+              biometricIds: entries,
+              mergedFromBioIds: mergedFrom
+            })
+      }
 
       return {
         'ID': primaryId,
+        'CANONICAL BIO ID': canonicalId,
+        'PRIMARY BIO ID': primaryId,
         'SECONDARY BIO IDS': secondaryActive.join(', '),
         'INACTIVE BIO IDS': inactiveIds.join(', '),
-        'MERGED FROM BIO IDS': (emp.merged_from_bio_ids || []).join(', '),
+        'MERGED FROM BIO IDS': mergedFrom.join(', '),
+        'CONSOLIDATION METADATA': consolidationMetaStr,
         'NAME': emp.full_name,
         'GROUP': emp.work_group_code || (emp.work_group_name?.replace(/^Group\s*/i, '') || 'C'),
         'DEPARTMENT': emp.department || 'Operations',
@@ -4057,7 +4858,11 @@ export const employeeRepository = {
         'EMAIL': emp.email || '',
         'BIRTHDAY': emp.date_of_birth || '',
         'DATE_HIRED': emp.hire_date || '',
-        'DATE_RESIGNED': emp.resignation_date || ''
+        'DATE_RESIGNED': emp.resignation_date || '',
+        'SSS NO.': emp.sss_number || '',
+        'HDMF NO.': emp.pagibig_number || '',
+        'PHIC NO.': emp.philhealth_number || '',
+        'TIN NO.': emp.tin || ''
       }
     })
   },

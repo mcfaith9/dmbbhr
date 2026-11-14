@@ -13,6 +13,9 @@ import type { Employee, EmployeeConsolidationAudit, EmployeeLocation, WorkGroup 
 import {
   employeeRepository,
   VALID_LOCATIONS,
+  type BioIdImportConflictResolution,
+  type PeopleImportBioIdConflict,
+  type PeopleImportConsolidationTask,
   type PeopleImportPreviewResult,
   type PeopleImportRowItem,
   type PeopleImportApplyResult,
@@ -28,6 +31,9 @@ import { workGroupRepository } from '@/repositories/workGroupRepository'
 
 export { VALID_LOCATIONS, parseEmploymentStatus, getStatusDisplayName, parseContractDate }
 export type {
+  BioIdImportConflictResolution,
+  PeopleImportBioIdConflict,
+  PeopleImportConsolidationTask,
   PeopleImportPreviewResult,
   PeopleImportRowItem,
   PeopleImportApplyResult,
@@ -237,8 +243,11 @@ export const employeeService = {
   /**
    * Generates preview and validation for bulk Excel employee import
    */
-  async previewImportFromExcel(rows: any[]): Promise<PeopleImportPreviewResult> {
-    return employeeRepository.previewImportEmployeesFromExcel(rows)
+  async previewImportFromExcel(
+    rows: any[],
+    conflictResolutions: Record<string, BioIdImportConflictResolution> = {}
+  ): Promise<PeopleImportPreviewResult> {
+    return employeeRepository.previewImportEmployeesFromExcel(rows, conflictResolutions)
   },
 
   /**
