@@ -451,6 +451,16 @@ export function deduplicateEmployees(
   const lookupByAnyKey = new Map<string, CanonicalEmployee>()
   const groups: CanonicalEmployee[] = []
 
+  // Sort deterministically by canonical Bio ID then raw Bio ID so richness ties
+  // always resolve identically regardless of IndexedDB insertion order across PCs.
+  const sortedEmployees = [...employees].sort((a, b) => {
+    const ka = normalizeBioIdKey(a.biometric_user_id) || String(a.biometric_user_id || '')
+    const kb = normalizeBioIdKey(b.biometric_user_id) || String(b.biometric_user_id || '')
+    const cmp = ka.localeCompare(kb)
+    if (cmp !== 0) return cmp
+    return String(a.biometric_user_id || '').localeCompare(String(b.biometric_user_id || ''))
+  })
+
   const registerKeys = (group: CanonicalEmployee, emp: Employee) => {
     const rawKeys = [emp.biometric_user_id, emp.employee_number, emp.id].filter(Boolean) as string[]
     for (const raw of rawKeys) {
@@ -464,7 +474,7 @@ export function deduplicateEmployees(
     }
   }
 
-  for (const emp of employees) {
+  for (const emp of sortedEmployees) {
     const bioNorm = normalizeBioIdKey(emp.biometric_user_id)
     const numNorm = normalizeBioIdKey(emp.employee_number)
 
@@ -519,8 +529,9 @@ export function deduplicateEmployees(
 
 /**
  * Checks whether an employee is resigned as of a specific date dStr.
- * - On dStr >= todayStr: resigned status is always treated as resigned.
- * - On historical dStr < todayStr: only resigned if resignation_date is missing or resignation_date <= dStr.
+ * - Any employee whose current status is Resigned is always treated as resigned across all dates
+ *   so historical reports never re-classify resigned employees as Absent/Present based on PC clock or import date.
+ * - Non-resigned records with an explicit resignation_date <= dStr are also treated as resigned from that date onward.
  */
 export function isEmployeeResignedOnDate(
   status?: string | null,
@@ -528,20 +539,12 @@ export function isEmployeeResignedOnDate(
   dStr?: string,
   todayStr?: string
 ): boolean {
-  const resDate = normalizeEmployeeDate(resignationDate)
-  const targetDate = dStr || todayStr || ''
-  const refToday = todayStr || targetDate
-
   if (isResignedStatus(status)) {
-    if (!targetDate || targetDate >= refToday) {
-      return true
-    }
-    if (!resDate) {
-      return true
-    }
-    return resDate <= targetDate
+    return true
   }
 
+  const resDate = normalizeEmployeeDate(resignationDate)
+  const targetDate = dStr || todayStr || ''
   if (resDate && targetDate && resDate <= targetDate) {
     return true
   }
@@ -568,13 +571,16 @@ export function evaluateEmployeeEligibilityOnDate(
     return { eligible: false, reason: 'resigned' }
   }
 
-  // Must be Active on dStr (non-resigned non-active statuses like inactive, suspended, on_leave, csr are excluded)
-  if (!isResignedStatus(emp.status) && !isActiveStatus(emp.status)) {
+  // Must be Active on dStr (non-active statuses like resigned, inactive, suspended, on_leave, csr are excluded)
+  if (!isActiveStatus(emp.status)) {
     return { eligible: false, reason: 'inactive_status' }
   }
 
   // Employees marked No Bio are excluded from biometric attendance monitoring and absence calculations
-  if (emp.exclude_from_biometric) {
+  const isExcludedNoBio =
+    Boolean(emp.exclude_from_biometric) ||
+    canonicalEmp.mergedRecords.some(r => isActiveStatus(r.status) && Boolean(r.exclude_from_biometric))
+  if (isExcludedNoBio) {
     return { eligible: false, reason: 'excluded_no_bio' }
   }
 
@@ -814,10 +820,7 @@ export const reportsService = {
         }
 
         const canonicalStatus = normalizeEmploymentStatus(empStatus)
-        if (canonicalStatus === 'inactive' || canonicalStatus === 'suspended' || canonicalStatus === 'csr') {
-          continue
-        }
-        if (isToday && !isActiveStatus(canonicalStatus)) {
+        if (!isActiveStatus(canonicalStatus)) {
           continue
         }
 

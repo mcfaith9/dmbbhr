@@ -1528,6 +1528,7 @@ export const employeeRepository = {
     const GROUP_ALIASES = ['GROUP', 'Group', 'Work Group', 'WorkGroup', 'Group Name', 'Group Code', 'workGroupId', 'work_group', 'group']
     const DEPT_ALIASES = ['DEPARTMENT', 'Department', 'Dept', 'DEPT', 'department', 'dept']
     const CONTRACT_DATE_ALIASES = ['CONTRACT DATE', 'Contract Date', 'ContractDate', 'CONTRACT_DATE', 'contract_date', 'contractDate', 'Contract', 'Date Hired', 'Hire Date']
+    const RESIGNATION_DATE_ALIASES = ['DATE_RESIGNED', 'Date Resigned', 'Resignation Date', 'Resigned Date', 'resignation_date', 'resignationDate', 'date_resigned', 'dateResigned']
     const STATUS_ALIASES = ['STATUS', 'Status', 'Employment Status', 'EMPLOYMENT STATUS', 'employment_status', 'employmentStatus', 'status']
     const BDAY_ALIASES = ['B-DAY', 'B - DAY', 'B_DAY', 'BDAY', 'B-day', 'Bday', 'BIRTHDAY', 'Birthday', 'DOB', 'Date of Birth', 'DATE OF BIRTH', 'Birth Date', 'date_of_birth', 'dateOfBirth']
     const POSITION_ALIASES = ['POSITION', 'Position', 'Position / Role', 'Role', 'Title', 'Job Title', 'Job', 'position', 'role']
@@ -1573,6 +1574,7 @@ export const employeeRepository = {
       const groupCol = headers.findIndex(h => matchesAlias(h, GROUP_ALIASES))
       const deptCol = headers.findIndex(h => matchesAlias(h, DEPT_ALIASES))
       const contractDateCol = headers.findIndex(h => matchesAlias(h, CONTRACT_DATE_ALIASES))
+      const resignationDateCol = headers.findIndex(h => matchesAlias(h, RESIGNATION_DATE_ALIASES))
       const statusCol = headers.findIndex(h => matchesAlias(h, STATUS_ALIASES))
       const bdayCol = headers.findIndex(h => matchesAlias(h, BDAY_ALIASES))
       const positionCol = headers.findIndex(h => matchesAlias(h, POSITION_ALIASES))
@@ -1591,6 +1593,7 @@ export const employeeRepository = {
           GROUP: groupCol >= 0 ? rowArr[groupCol] : undefined,
           DEPARTMENT: deptCol >= 0 ? rowArr[deptCol] : undefined,
           'CONTRACT DATE': contractDateCol >= 0 ? rowArr[contractDateCol] : undefined,
+          DATE_RESIGNED: resignationDateCol >= 0 ? rowArr[resignationDateCol] : undefined,
           STATUS: statusCol >= 0 ? rowArr[statusCol] : undefined,
           'B-DAY': bdayCol >= 0 ? rowArr[bdayCol] : undefined,
           POSITION: positionCol >= 0 ? rowArr[positionCol] : undefined,
@@ -1635,9 +1638,11 @@ export const employeeRepository = {
       const rawDept = getRowField(row, DEPT_ALIASES)
       const cleanDept = rawDept !== undefined && rawDept !== null ? String(rawDept).trim() : ''
 
-      // 5. Extract Contract Date
+      // 5. Extract Contract Date & Resignation Date
       const rawContractDate = getRowField(row, CONTRACT_DATE_ALIASES)
       const parsedContractDate = parseContractDate(rawContractDate)
+      const rawResignationDate = getRowField(row, RESIGNATION_DATE_ALIASES)
+      const parsedResignationDate = parseDateValue(rawResignationDate, 1950, 2100)
 
       // 6. Extract Status
       const rawStatus = getRowField(row, STATUS_ALIASES)
@@ -1846,7 +1851,14 @@ export const employeeRepository = {
           cleanTin !== undefined && cleanTin !== (existingRecord.tin || '')
         )
 
-        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isEffectiveStatusChanged || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated
+        const isResignationDateUpdated = Boolean(
+          targetStatus === 'resigned' &&
+          parsedResignationDate &&
+          parsedResignationDate.isValid &&
+          parsedResignationDate.formatted !== (existingRecord.resignationDate || '')
+        )
+
+        const hasChanges = isNameUpdated || isDeptUpdated || isGroupUpdated || isContractDateUpdated || isEffectiveStatusChanged || isResignationDateUpdated || isBirthdayUpdated || isPositionUpdated || isSssUpdated || isHdmfUpdated || isPhicUpdated || isTinUpdated
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -1854,9 +1866,11 @@ export const employeeRepository = {
         else if (targetStatus === 'csr') statusCsrCount++
 
         let resignationDate = existingRecord.resignationDate
-        if (targetStatus === 'resigned' && !resignationDate) {
-          resignationDate = new Date().toISOString().split('T')[0]
-        } else if (targetStatus === 'active' && existingRecord.status === 'resigned') {
+        if (targetStatus === 'resigned') {
+          if (parsedResignationDate && parsedResignationDate.isValid) {
+            resignationDate = parsedResignationDate.formatted
+          }
+        } else {
           resignationDate = undefined
         }
 
@@ -2031,10 +2045,10 @@ export const employeeRepository = {
         else if (targetStatus === 'suspended') statusSuspendedCount++
         else if (targetStatus === 'csr') statusCsrCount++
 
-        let resignationDate: string | undefined = undefined
-        if (targetStatus === 'resigned') {
-          resignationDate = new Date().toISOString().split('T')[0]
-        }
+        const resignationDate: string | undefined =
+          targetStatus === 'resigned' && parsedResignationDate && parsedResignationDate.isValid
+            ? parsedResignationDate.formatted
+            : undefined
 
         const targetRecord = toPersistableEmployeeRecord({
           bioId,
