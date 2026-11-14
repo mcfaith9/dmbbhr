@@ -389,15 +389,15 @@ const dutyCells = computed<DutyCellData[]>(() => {
     const appHours = resolveApprovedDutyHours(record)
 
     // Has verified attendance punch (IN)
-    const hasValidIn = Boolean(record?.actual_in && !record.actual_in.startsWith('Missing') && record.actual_in !== '—')
-    const hasValidOut = Boolean(record?.has_valid_out && record.actual_out && record.actual_out !== '—')
+    const hasValidIn = Boolean(record?.actual_in && !record.actual_in.startsWith('Missing') && record.actual_in !== '—' && record.actual_in !== '-')
+    const hasValidOut = Boolean(record?.has_valid_out && record.actual_out && record.actual_out !== '—' && record.actual_out !== '-')
 
     let statusCategory: DutyCellData['statusCategory'] = 'unverified'
     let statusLabel = 'Unverified'
     let statusBadgeVariant: DutyCellData['statusBadgeVariant'] = 'outline'
     let notes = ''
 
-    if (record?.status === 'On Leave') {
+    if (record?.status === 'On Leave' || record?.status === 'Leave') {
       statusCategory = 'leave'
       statusLabel = 'On Leave'
       statusBadgeVariant = 'warning'

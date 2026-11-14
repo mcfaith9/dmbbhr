@@ -29,6 +29,7 @@ import { Pagination } from '@/components/ui/pagination'
 import PayrollCalculationDialog from '@/components/PayrollCalculationDialog.vue'
 import { payrollCalculationService, type EmployeePayrollRecord, type PayrollCutoffPeriod } from '@/services/payrollCalculation'
 import { employeeRepository } from '@/repositories/employeeRepository'
+import { collectEmployeeIdKeys, getEmployeeAllBioIds, recordMatchesEmployee } from '@/lib/employeeIdentity'
 import type { Employee } from '@/types'
 
 const availableCutoffs = ref<PayrollCutoffPeriod[]>([])
@@ -57,6 +58,7 @@ const pageSize = ref(25)
 
 // Memory caches to avoid duplicate IndexedDB reads
 let cachedEmployees: Employee[] | null = null
+const employeesList = ref<Employee[]>([])
 const payrollCache = new Map<string, EmployeePayrollRecord[]>()
 
 // Request tracker to prevent race conditions from stale async responses
@@ -108,7 +110,8 @@ async function openPayrollCalculationForRecord(r: EmployeePayrollRecord) {
   const cleanBio = String(r.bioId).replace(/^emp[-_]/i, '').toLowerCase()
   let emp = cachedEmployees?.find(e =>
     String(e.biometric_user_id).replace(/^emp[-_]/i, '').toLowerCase() === cleanBio ||
-    String(e.employee_number || '').replace(/^emp[-_]/i, '').toLowerCase() === cleanBio
+    String(e.employee_number || '').replace(/^emp[-_]/i, '').toLowerCase() === cleanBio ||
+    recordMatchesEmployee(r.bioId, collectEmployeeIdKeys(e))
   )
   if (!emp) {
     const fetched = await employeeRepository.getByBioId(r.bioId)
@@ -166,6 +169,7 @@ async function loadRecordsForPeriod(periodId: string, forceRefresh = false) {
     // Reuse cached employees or fetch if not available or on forced refresh
     if (!cachedEmployees || forceRefresh) {
       cachedEmployees = await employeeRepository.getAll()
+      employeesList.value = cachedEmployees
     }
 
     // Check if this request is still the active one
@@ -262,12 +266,22 @@ const filteredRecords = computed(() => {
     return records.value
   }
 
+  const bioIdsByKey = new Map<string, string[]>()
+  for (const emp of employeesList.value) {
+    const allIds = getEmployeeAllBioIds(emp)
+    for (const id of allIds) {
+      bioIdsByKey.set(id.toLowerCase(), allIds)
+    }
+  }
+
   return records.value.filter(r => {
     const nameMatch = r.employeeName.toLowerCase().includes(query)
     const bioIdMatch = r.bioId.toLowerCase().includes(query)
     const empNumMatch = r.employeeNumber ? r.employeeNumber.toLowerCase().includes(query) : false
     const deptMatch = r.department ? r.department.toLowerCase().includes(query) : false
-    return nameMatch || bioIdMatch || empNumMatch || deptMatch
+    const linked = bioIdsByKey.get(r.bioId.toLowerCase()) || []
+    const linkedMatch = linked.some(id => id.toLowerCase().includes(query))
+    return nameMatch || bioIdMatch || empNumMatch || deptMatch || linkedMatch
   })
 })
 

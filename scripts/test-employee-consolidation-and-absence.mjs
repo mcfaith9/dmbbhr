@@ -186,12 +186,47 @@ try {
     consolidationAudits: createMemoryTable('id')
   }
 
+  let activeTxAllowedTables = null
+
+  function wrapTableWithScopeGuard(name, tbl) {
+    const checkScope = () => {
+      if (activeTxAllowedTables && !activeTxAllowedTables.has(name)) {
+        const err = new Error(`Failed to execute 'objectStore' on 'IDBTransaction': The specified object store was not found. (Missing "${name}" in db.transaction store list)`)
+        err.name = 'NotFoundError'
+        throw err
+      }
+    }
+    return new Proxy(tbl, {
+      get(target, prop, receiver) {
+        if (prop === '_store' || prop === 'name') {
+          return prop === 'name' ? name : target._store
+        }
+        const val = Reflect.get(target, prop, receiver)
+        if (typeof val === 'function') {
+          return (...fnArgs) => {
+            checkScope()
+            return val.apply(target, fnArgs)
+          }
+        }
+        return val
+      }
+    })
+  }
+
   for (const [name, tbl] of Object.entries(memTables)) {
-    db[name] = tbl
+    db[name] = wrapTableWithScopeGuard(name, tbl)
   }
   db.transaction = async (...args) => {
     const fn = args[args.length - 1]
-    return await fn()
+    const tablesArg = args.length >= 3 ? args[1] : []
+    const tableList = Array.isArray(tablesArg) ? tablesArg : [tablesArg]
+    const prevScope = activeTxAllowedTables
+    activeTxAllowedTables = new Set(tableList.map(t => t?.name).filter(Boolean))
+    try {
+      return await fn()
+    } finally {
+      activeTxAllowedTables = prevScope
+    }
   }
 
   const nowIso = '2026-10-01T00:00:00.000Z'
@@ -750,8 +785,63 @@ try {
   assert.strictEqual(newHirePayroll.scheduledDays, 5, 'Pre-hire dates before Oct 10 must not count as scheduled/absent')
   console.log('✔ Check 9: PayrollCalculationService enforces merged, Active-NB, non-active & pre-hire eligibility')
 
+  // 10. Real-world scenario: 2026-11-12 (Thursday) - 25061 has NO punch, linked 50305 has 08:00 & 17:00
+  await memTables.biometricPunches.bulkPut([
+    makePunch('p-nov12-in', '50305', '2026-11-12', '08:00', 0),
+    makePunch('p-nov12-out', '50305', '2026-11-12', '17:00', 1)
+  ])
+  await memTables.dailyAttendance.clear()
+  await memTables.dailySummaries.clear()
+  reportsService.clearCache()
+
+  const dayNov12 = await attendanceRepository.getDailyAttendance('2026-11-12')
+  const reynaldNov12 = dayNov12.find(r => r.biometric_user_id === '25061')
+  assert.ok(reynaldNov12, 'Canonical 25061 must be Present on 2026-11-12 via linked 50305 punch')
+  assert.strictEqual(reynaldNov12.actual_in, '8:00:00 AM')
+  assert.strictEqual(reynaldNov12.actual_out, '5:00:00 PM')
+  assert.strictEqual(dayNov12.filter(r => r.biometric_user_id === '50305').length, 0, '50305 must not create duplicate daily row')
+
+  const nov12Report = await reportsService.getReportSummary({
+    preset: 'custom',
+    startDate: '2026-11-12',
+    endDate: '2026-11-12',
+    employeeBioId: '25061'
+  }, true)
+  assert.strictEqual(nov12Report.kpis.presentCount, 1, 'Reynald must count as 1 Present on 2026-11-12')
+  assert.strictEqual(nov12Report.kpis.absentCount, 0, 'Reynald must have 0 Absent on 2026-11-12')
+  assert.strictEqual(nov12Report.absentRecords.length, 0)
+  console.log('✔ Check 10: 2026-11-12 punch on secondary 50305 counts 1 Present & 0 Absent for canonical 25061')
+
+  // 11. Non-destructive startup repair for partial consolidation state in IndexedDB
+  const brokenCanonical = await memTables.employees.get('25061')
+  await memTables.employees.put({
+    ...brokenCanonical,
+    biometricIds: [{ bioId: '25061', role: 'primary', status: 'active', addedAt: nowIso }],
+    linkedBioIds: ['25061'],
+    mergedFromBioIds: []
+  })
+  await memTables.leaveRecords.put({
+    id: 'leave-dangling-50305',
+    bioId: '50305',
+    employeeName: 'Abelido, Reynald',
+    leaveType: 'Vacation',
+    startDate: '2026-11-13',
+    endDate: '2026-11-13',
+    status: 'Approved',
+    days: 1
+  })
+  const punchCountBeforeRepair = await memTables.biometricPunches.count()
+  await employeeRepository.reloadFromDb()
+  const repairedCanonical = await employeeService.getEmployeeByBioId('25061')
+  assert.ok(repairedCanonical?.linked_bio_ids?.includes('50305'), 'Startup repair restores linked 50305')
+  assert.ok(repairedCanonical?.merged_from_bio_ids?.includes('50305'), 'Startup repair restores mergedFromBioIds')
+  assert.strictEqual((await memTables.leaveRecords.get('leave-dangling-50305'))?.bioId, '25061', 'Dangling leave repaired to canonical 25061')
+  assert.strictEqual(await memTables.biometricPunches.count(), punchCountBeforeRepair, 'Startup repair never deletes raw punches')
+  assert.strictEqual((await memTables.payrollSnapshots.get('2026-09-16_to_2026-09-30_50305'))?.bioId, '50305', 'Finalized snapshot remains immutable')
+  console.log('✔ Check 11: Non-destructive startup reconciliation repairs partial IndexedDB state safely')
+
   console.log('======================================================================')
-  console.log('ALL 9 CONSOLIDATION & ABSENCE ACCURACY CHECKS PASSED!')
+  console.log('ALL 11 CONSOLIDATION & ABSENCE ACCURACY CHECKS PASSED!')
   console.log('======================================================================')
 } finally {
   await server.close()

@@ -286,6 +286,8 @@ const filteredPresent = computed(() => {
     list = list.filter(r =>
       r.employee_name.toLowerCase().includes(q) ||
       r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q))) ||
       (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
     )
   }
@@ -298,7 +300,9 @@ const filteredLate = computed(() => {
     const q = dialogSearch.value.trim().toLowerCase()
     list = list.filter(r =>
       r.employee_name.toLowerCase().includes(q) ||
-      r.biometric_user_id.toLowerCase().includes(q)
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q)))
     )
   }
   return list
@@ -310,7 +314,9 @@ const filteredPendingOut = computed(() => {
     const q = dialogSearch.value.trim().toLowerCase()
     list = list.filter(r =>
       r.employee_name.toLowerCase().includes(q) ||
-      r.biometric_user_id.toLowerCase().includes(q)
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q)))
     )
   }
   return list
@@ -336,6 +342,7 @@ const filteredAbsents = computed(() => {
     list = list.filter(a =>
       a.name.toLowerCase().includes(q) ||
       a.bioId.toLowerCase().includes(q) ||
+      (Array.isArray((a as any).allBioIds) && (a as any).allBioIds.some((id: string) => id.toLowerCase().includes(q))) ||
       a.workGroupName.toLowerCase().includes(q)
     )
   }
@@ -386,7 +393,7 @@ async function openDayDetails(cell: CalendarDay) {
       wgMap.set(wg.id, wg)
     }
 
-    const absents: { bioId: string; name: string; workGroupId: string; workGroupName: string; schedule: string }[] = []
+    const absents: { bioId: string; allBioIds?: string[]; name: string; workGroupId: string; workGroupName: string; schedule: string }[] = []
     const todayStr = getManilaDateString(new Date())
     const seenAbsentBioIds = new Set<string>()
     
@@ -412,6 +419,7 @@ async function openDayDetails(cell: CalendarDay) {
           const sched = wg ? `${wg.standard_in} – ${wg.expected_out}` : '08:00 – 17:00'
           absents.push({
             bioId: primaryId,
+            allBioIds: Array.from(empKeys),
             name: emp.full_name,
             workGroupId: emp.work_group_id || 'wg-group-c',
             workGroupName: wg?.name || 'Group C',

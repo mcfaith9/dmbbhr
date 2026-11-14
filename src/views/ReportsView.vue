@@ -38,6 +38,7 @@ import { DateFormatter, getLocalTimeZone, parseDate, type DateValue } from '@int
 import type { DateRange } from 'reka-ui'
 import { employeeService } from '@/services/employees'
 import { formatDuration } from '@/lib/timeUtils'
+import { getEmployeeAllBioIds } from '@/lib/employeeIdentity'
 import type { WorkGroup, Employee } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -137,8 +138,9 @@ const filteredEmployees = computed(() => {
     const matchName = (emp.full_name || '').toLowerCase().includes(q)
     const matchBioId = (emp.biometric_user_id || '').toLowerCase().includes(q)
     const matchEmpNum = (emp.employee_number || '').toLowerCase().includes(q)
+    const matchLinked = getEmployeeAllBioIds(emp).some(id => id.toLowerCase().includes(q))
     const matchDept = (emp.department || '').toLowerCase().includes(q)
-    return matchName || matchBioId || matchEmpNum || matchDept
+    return matchName || matchBioId || matchEmpNum || matchLinked || matchDept
   })
 })
 
@@ -335,12 +337,20 @@ const filteredAbsentRecords = computed(() => {
   // Search filter
   const q = absentTableSearch.value.trim().toLowerCase()
   if (q) {
-    list = list.filter(r =>
-      r.employeeName.toLowerCase().includes(q) ||
-      r.bioId.toLowerCase().includes(q) ||
-      r.department.toLowerCase().includes(q) ||
-      r.position.toLowerCase().includes(q)
-    )
+    const bioIdsByCanonical = new Map<string, string[]>()
+    for (const emp of employees.value) {
+      bioIdsByCanonical.set(emp.biometric_user_id, getEmployeeAllBioIds(emp))
+    }
+    list = list.filter(r => {
+      const linked = bioIdsByCanonical.get(r.bioId) || []
+      return (
+        r.employeeName.toLowerCase().includes(q) ||
+        r.bioId.toLowerCase().includes(q) ||
+        linked.some(id => id.toLowerCase().includes(q)) ||
+        r.department.toLowerCase().includes(q) ||
+        r.position.toLowerCase().includes(q)
+      )
+    })
   }
 
   // Department filter

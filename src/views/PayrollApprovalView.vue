@@ -819,6 +819,9 @@ import {
 } from '@lucide/vue'
 import { db, type PayrollSnapshotRecord } from '@/db'
 import { payrollCalculationService, type EmployeePayrollRecord } from '@/services/payrollCalculation'
+import { employeeRepository } from '@/repositories/employeeRepository'
+import { getEmployeeAllBioIds } from '@/lib/employeeIdentity'
+import type { Employee } from '@/types'
 import { authService } from '@/services/auth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -861,6 +864,7 @@ const query = ref('')
 
 // Raw snapshots loaded from IndexedDB
 const snapshots = ref<PayrollSnapshotRecord[]>([])
+const employeesList = ref<Employee[]>([])
 const isLoading = ref(true)
 const loadError = ref<string | null>(null)
 
@@ -955,8 +959,12 @@ async function loadSnapshots() {
   isLoading.value = true
   loadError.value = null
   try {
-    const list = await db.payrollSnapshots.toArray()
+    const [list, emps] = await Promise.all([
+      db.payrollSnapshots.toArray(),
+      employeeRepository.getAll()
+    ])
     snapshots.value = list
+    employeesList.value = emps
   } catch (err: any) {
     console.error('Failed to load payroll snapshots:', err)
     loadError.value = err?.message || 'Failed to load payroll snapshots from database.'
@@ -1013,19 +1021,31 @@ const summaryStats = computed(() => {
 
 // Filtered list according to search query and approval status
 const filtered = computed(() => {
+  const q = query.value.trim().toLowerCase()
+  const bioIdsByKey = new Map<string, string[]>()
+  if (q) {
+    for (const emp of employeesList.value) {
+      const allIds = getEmployeeAllBioIds(emp)
+      for (const id of allIds) {
+        bioIdsByKey.set(id.toLowerCase(), allIds)
+      }
+    }
+  }
+
   return batchSnapshots.value
     .filter(snap => {
       if (statusFilter.value && statusFilter.value !== 'all') {
         const currentStatus = snap.reviewStatus || 'ready'
         if (currentStatus !== statusFilter.value) return false
       }
-      if (query.value.trim()) {
-        const q = query.value.trim().toLowerCase()
+      if (q) {
         const nameMatch = (snap.employeeName || '').toLowerCase().includes(q)
         const empNumMatch = String(snap.employeeNumber || '').toLowerCase().includes(q)
         const bioMatch = String(snap.bioId || '').toLowerCase().includes(q)
         const deptMatch = String(snap.department || '').toLowerCase().includes(q)
-        if (!nameMatch && !empNumMatch && !bioMatch && !deptMatch) return false
+        const linked = bioIdsByKey.get(String(snap.bioId || '').toLowerCase()) || []
+        const linkedMatch = linked.some(id => id.toLowerCase().includes(q))
+        if (!nameMatch && !empNumMatch && !bioMatch && !deptMatch && !linkedMatch) return false
       }
       return true
     })
