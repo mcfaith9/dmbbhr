@@ -368,10 +368,32 @@ async function openDayDetails(cell: CalendarDay) {
 
     selectedDayRecords.value = records
 
-    // Leaves on this date
-    const leavesOnDate = leaves.filter(
+    // Leaves on this date (resolve bioId across canonical/linked Bio IDs)
+    const empByKey = new Map<string, (typeof employees)[number]>()
+    for (const emp of employees) {
+      if (emp.is_merged || emp.merged_into_bio_id) continue
+      for (const k of collectEmployeeIdKeys(emp)) {
+        if (!empByKey.has(k)) empByKey.set(k, emp)
+      }
+    }
+
+    const rawLeavesOnDate = leaves.filter(
       l => l.startDate <= cell.dateStr && l.endDate >= cell.dateStr && l.status === 'Approved'
     )
+    const leavesOnDate: typeof rawLeavesOnDate = []
+    const seenLeaveEmpKeys = new Set<string>()
+    for (const l of rawLeavesOnDate) {
+      const leaveKeys = Array.from(collectEmployeeIdKeys(l.bioId))
+      const matchedEmp = leaveKeys.map(k => empByKey.get(k)).find(Boolean)
+      const dedupeKey = matchedEmp ? (matchedEmp.canonical_bio_id || matchedEmp.biometric_user_id) : (leaveKeys[0] || l.bioId)
+      if (seenLeaveEmpKeys.has(dedupeKey)) continue
+      seenLeaveEmpKeys.add(dedupeKey)
+      leavesOnDate.push(
+        matchedEmp
+          ? { ...l, bioId: getEmployeePrimaryBioId(matchedEmp) || matchedEmp.biometric_user_id, employeeName: matchedEmp.full_name }
+          : l
+      )
+    }
     selectedDayLeaves.value = leavesOnDate
 
     // Absent employees (resolve across all linked Biometric IDs)
@@ -395,7 +417,7 @@ async function openDayDetails(cell: CalendarDay) {
 
     const absents: { bioId: string; allBioIds?: string[]; name: string; workGroupId: string; workGroupName: string; schedule: string }[] = []
     const todayStr = getManilaDateString(new Date())
-    const seenAbsentBioIds = new Set<string>()
+    const seenAbsentKeys = new Set<string>()
     
     // Only flag absences on regular non-future workdays (not weekend, not holiday, not future)
     if (!cell.isWeekend && !cell.holiday && cell.dateStr <= todayStr) {
@@ -407,14 +429,14 @@ async function openDayDetails(cell: CalendarDay) {
         const startDate = getEffectiveStartDate(emp)
         if (startDate && startDate > cell.dateStr) continue
 
-        const primaryId = getEmployeePrimaryBioId(emp) || emp.biometric_user_id
-        if (seenAbsentBioIds.has(emp.biometric_user_id)) continue
-
         const empKeys = collectEmployeeIdKeys(emp)
+        if (Array.from(empKeys).some(k => seenAbsentKeys.has(k))) continue
+        for (const k of empKeys) seenAbsentKeys.add(k)
+
+        const primaryId = getEmployeePrimaryBioId(emp) || emp.biometric_user_id
         const isPresent = Array.from(empKeys).some(k => presentBioKeys.has(k))
         const isOnLeave = Array.from(empKeys).some(k => onLeaveBioKeys.has(k))
         if (!isPresent && !isOnLeave) {
-          seenAbsentBioIds.add(emp.biometric_user_id)
           const wg = wgMap.get(emp.work_group_id || 'wg-group-c')
           const sched = wg ? `${wg.standard_in} – ${wg.expected_out}` : '08:00 – 17:00'
           absents.push({

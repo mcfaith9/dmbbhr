@@ -504,6 +504,7 @@ let employeeCache: Map<string, EmployeeRecord> | null = null
 let mergedEmployeeCache: Map<string, EmployeeRecord> | null = null
 let linkedBioIdIndex: Map<string, string> | null = null
 const changeListeners = new Set<() => void>()
+const immediateChangeListeners = new Set<() => void>()
 
 function isRecordMerged(rec?: Pick<EmployeeRecord, 'isMerged' | 'mergedIntoBioId'> | null): boolean {
   return Boolean(rec && (rec.isMerged || rec.mergedIntoBioId))
@@ -582,7 +583,7 @@ async function reconcileConsolidatedEmployeesOnInit(all: EmployeeRecord[]): Prom
     })
   }
   for (const emp of all) {
-    if (emp.isMerged && emp.mergedIntoBioId && emp.mergedIntoBioId !== emp.bioId) {
+    if (isRecordMerged(emp) && emp.mergedIntoBioId && emp.mergedIntoBioId !== emp.bioId) {
       const key = `${emp.mergedIntoBioId}=>${emp.bioId}`
       if (!auditPairs.has(key)) {
         auditPairs.set(key, {
@@ -1003,11 +1004,13 @@ export function findCachedEmployee(identifier?: string | null): { key: string; r
   const rawLower = raw.toLowerCase()
   const strippedLower = stripped.toLowerCase()
   const normKey = normalizeBiometricIdKey(raw)
+  const unpaddedNormKey = /^\d+$/.test(normKey) ? (normKey.replace(/^0+/, '') || '0') : normKey
   if (linkedBioIdIndex) {
     const mappedCanonical =
       linkedBioIdIndex.get(rawLower) ||
       linkedBioIdIndex.get(strippedLower) ||
-      (normKey ? linkedBioIdIndex.get(normKey) : undefined)
+      (normKey ? linkedBioIdIndex.get(normKey) : undefined) ||
+      (unpaddedNormKey ? linkedBioIdIndex.get(unpaddedNormKey) : undefined)
     if (mappedCanonical && employeeCache.has(mappedCanonical)) {
       return { key: mappedCanonical, record: employeeCache.get(mappedCanonical)! }
     }
@@ -1015,15 +1018,23 @@ export function findCachedEmployee(identifier?: string | null): { key: string; r
 
   // 4. Fallback scan across bioId, primaryBioId, employeeNumber, and linkedBioIds
   for (const [k, rec] of employeeCache.entries()) {
+    const kUnpadded = /^\d+$/.test(k) ? (k.replace(/^0+/, '') || '0') : k.toLowerCase()
+    const bioUnpadded = /^\d+$/.test(rec.bioId) ? (rec.bioId.replace(/^0+/, '') || '0') : rec.bioId.toLowerCase()
     if (
       k.toLowerCase() === rawLower ||
       k.toLowerCase() === strippedLower ||
+      kUnpadded === unpaddedNormKey ||
       rec.bioId.toLowerCase() === rawLower ||
       rec.bioId.toLowerCase() === strippedLower ||
+      bioUnpadded === unpaddedNormKey ||
       (rec.primaryBioId && rec.primaryBioId.toLowerCase() === normKey) ||
       rec.employeeNumber.toLowerCase() === rawLower ||
       rec.employeeNumber.toLowerCase() === strippedLower ||
-      (Array.isArray(rec.linkedBioIds) && rec.linkedBioIds.some(id => id.toLowerCase() === normKey || id.toLowerCase() === rawLower))
+      (Array.isArray(rec.linkedBioIds) && rec.linkedBioIds.some(id => {
+        const l = id.toLowerCase()
+        const u = /^\d+$/.test(l) ? (l.replace(/^0+/, '') || '0') : l
+        return l === normKey || l === rawLower || (unpaddedNormKey !== '' && u === unpaddedNormKey)
+      }))
     ) {
       return { key: k, record: rec }
     }
@@ -4056,7 +4067,19 @@ export const employeeRepository = {
     return () => changeListeners.delete(cb)
   },
 
+  onChangeImmediate(cb: () => void): () => void {
+    immediateChangeListeners.add(cb)
+    return () => immediateChangeListeners.delete(cb)
+  },
+
   notifyChange() {
+    for (const cb of immediateChangeListeners) {
+      try {
+        cb()
+      } catch {
+        // ignore
+      }
+    }
     if (notifyChangeTimer) {
       clearTimeout(notifyChangeTimer)
     }

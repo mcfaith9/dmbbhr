@@ -430,6 +430,7 @@ export function deduplicateEmployees(
       emp.employee_number,
       emp.id,
       ...(Array.isArray(emp.linked_bio_ids) ? emp.linked_bio_ids : []),
+      ...(Array.isArray(emp.merged_from_bio_ids) ? emp.merged_from_bio_ids : []),
       ...(Array.isArray(emp.biometric_ids) ? emp.biometric_ids.map(b => b.bioId) : [])
     ].filter(Boolean) as string[]
     return Array.from(new Set(rawKeys))
@@ -609,7 +610,10 @@ export function isValidAttendancePunchRecord(r: DailyAttendanceRecord): boolean 
   )
 }
 
-// Clear report cache whenever employee records change (e.g. status updated to Resigned/Active)
+// Clear report cache synchronously whenever employee records change (e.g. consolidation or status change)
+employeeService.onEmployeesChangedImmediate(() => {
+  reportCache.clear()
+})
 employeeService.onEmployeesChanged(() => {
   reportCache.clear()
 })
@@ -783,7 +787,18 @@ export const reportsService = {
 
       for (const r of records) {
         const cleanKey = normalizeBioIdKey(r.biometric_user_id) || r.biometric_user_id
-        const matchedCanonical = lookupByAnyKey.get(r.biometric_user_id) || lookupByAnyKey.get(cleanKey)
+        let matchedCanonical = lookupByAnyKey.get(r.biometric_user_id) || lookupByAnyKey.get(cleanKey)
+        if (!matchedCanonical && r.primary_bio_id) {
+          const pNorm = normalizeBioIdKey(r.primary_bio_id)
+          matchedCanonical = lookupByAnyKey.get(r.primary_bio_id) || (pNorm ? lookupByAnyKey.get(pNorm) : undefined)
+        }
+        if (!matchedCanonical && Array.isArray(r.source_bio_ids)) {
+          for (const sid of r.source_bio_ids) {
+            const sNorm = normalizeBioIdKey(sid)
+            matchedCanonical = lookupByAnyKey.get(sid) || (sNorm ? lookupByAnyKey.get(sNorm) : undefined)
+            if (matchedCanonical) break
+          }
+        }
         if (!matchedCanonical && r.biometric_user_id) {
           unmatchedPunchBioIdsSet.add(r.biometric_user_id)
         }
@@ -817,6 +832,18 @@ export const reportsService = {
           attendedKeysOnDay.add(r.biometric_user_id)
           attendedKeysOnDay.add(cleanKey)
           attendedKeysOnDay.add(personKey)
+          if (r.primary_bio_id) {
+            attendedKeysOnDay.add(r.primary_bio_id)
+            const pn = normalizeBioIdKey(r.primary_bio_id)
+            if (pn) attendedKeysOnDay.add(pn)
+          }
+          if (Array.isArray(r.source_bio_ids)) {
+            for (const sid of r.source_bio_ids) {
+              attendedKeysOnDay.add(sid)
+              const sn = normalizeBioIdKey(sid)
+              if (sn) attendedKeysOnDay.add(sn)
+            }
+          }
           if (matchedCanonical) {
             for (const alias of matchedCanonical.aliasBioIds) attendedKeysOnDay.add(alias)
             for (const aliasNorm of matchedCanonical.aliasCanonicalKeys) attendedKeysOnDay.add(aliasNorm)

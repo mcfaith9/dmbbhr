@@ -38,7 +38,7 @@ import { DateFormatter, getLocalTimeZone, parseDate, type DateValue } from '@int
 import type { DateRange } from 'reka-ui'
 import { employeeService } from '@/services/employees'
 import { formatDuration } from '@/lib/timeUtils'
-import { getEmployeeAllBioIds } from '@/lib/employeeIdentity'
+import { collectEmployeeIdKeys, getEmployeeAllBioIds, recordMatchesEmployee } from '@/lib/employeeIdentity'
 import type { WorkGroup, Employee } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -122,10 +122,16 @@ async function loadLookups() {
   }
 }
 
-// Find currently selected employee object for display
+// Find currently selected employee object for display (supports primary or linked Bio IDs)
 const selectedEmployee = computed(() => {
   if (selectedEmployeeBioId.value === 'all') return null
-  return employees.value.find(e => e.biometric_user_id === selectedEmployeeBioId.value) || null
+  return (
+    employees.value.find(
+      e =>
+        e.biometric_user_id === selectedEmployeeBioId.value ||
+        recordMatchesEmployee(selectedEmployeeBioId.value, collectEmployeeIdKeys(e))
+    ) || null
+  )
 })
 
 // Searchable filtered employee list for combobox

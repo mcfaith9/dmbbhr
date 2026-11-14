@@ -216,6 +216,8 @@ export function collectEmployeeIdKeys(...values: unknown[]): Set<string> {
       add(rec.id)
       add(rec.linked_bio_ids)
       add(rec.linkedBioIds)
+      add(rec.merged_from_bio_ids)
+      add(rec.mergedFromBioIds)
       add(rec.biometric_ids)
       add(rec.biometricIds)
       return
@@ -228,9 +230,15 @@ export function collectEmployeeIdKeys(...values: unknown[]): Set<string> {
     ids.add(unprefixed)
     const userStripped = unprefixed.replace(/^user/i, '')
     if (userStripped) ids.add(userStripped)
+    if (/^\d+$/.test(userStripped)) {
+      ids.add(userStripped.replace(/^0+/, '') || '0')
+    }
     if (!s.startsWith('emp-')) ids.add(`emp-${s}`)
     const digits = s.match(/\d+/)?.[0]
-    if (digits) ids.add(digits)
+    if (digits) {
+      ids.add(digits)
+      ids.add(digits.replace(/^0+/, '') || '0')
+    }
   }
 
   for (const value of values) add(value)
@@ -241,6 +249,14 @@ export function recordMatchesEmployee(recordBioId: string | undefined | null, ke
   const rBio = String(recordBioId || '').trim().toLowerCase()
   if (!rBio) return false
   const rUnprefixed = rBio.replace(/^emp[-_]/i, '').replace(/^user/i, '')
+  const rUnpadded = /^\d+$/.test(rUnprefixed) ? (rUnprefixed.replace(/^0+/, '') || '0') : rUnprefixed
   const digits = rBio.match(/\d+/)?.[0]
-  return keys.has(rBio) || keys.has(rUnprefixed) || (!!digits && keys.has(digits))
+  const digitsUnpadded = digits ? (digits.replace(/^0+/, '') || '0') : ''
+  return (
+    keys.has(rBio) ||
+    keys.has(rUnprefixed) ||
+    keys.has(rUnpadded) ||
+    (!!digits && keys.has(digits)) ||
+    (!!digitsUnpadded && keys.has(digitsUnpadded))
+  )
 }

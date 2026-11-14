@@ -306,6 +306,10 @@ export const employeeService = {
     return employeeRepository.onChange(callback)
   },
 
+  onEmployeesChangedImmediate(callback: () => void) {
+    return employeeRepository.onChangeImmediate(callback)
+  },
+
   notifyChange() {
     employeeRepository.notifyChange()
   }

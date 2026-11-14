@@ -379,9 +379,13 @@ export function processEmployeeDayPunches(
   // CHECK A: Approved Leave (0 punches or overriding)
   if (employeeContext?.approvedLeave && (!rawLogs || rawLogs.length === 0)) {
     const leave = employeeContext.approvedLeave
+    const primaryDisplayBio = employeeContext?.primaryBioId || bioId
+    const leaveSourceIds = Array.from(new Set([primaryDisplayBio, bioId].filter(Boolean)))
     return {
       id: `daily-${bioId}-${selectedDate}`,
       biometric_user_id: bioId,
+      primary_bio_id: primaryDisplayBio,
+      source_bio_ids: leaveSourceIds,
       employee_name: employeeName,
       department: employeeContext.department || '',
       location: employeeLocation,
@@ -426,9 +430,13 @@ export function processEmployeeDayPunches(
     (manual && (manual.reason?.toLowerCase().includes('field work') || manual.reason?.toLowerCase().includes('official business') || manual.notes?.toLowerCase().includes('field work') || manual.notes?.toLowerCase().includes('ob')))
 
   if (isFieldWorkContext && manual?.status === 'Approved' && (!rawLogs || rawLogs.length === 0)) {
+    const primaryDisplayBio = employeeContext?.primaryBioId || bioId
+    const fieldSourceIds = Array.from(new Set([primaryDisplayBio, bioId].filter(Boolean)))
     return {
       id: `daily-${bioId}-${selectedDate}`,
       biometric_user_id: bioId,
+      primary_bio_id: primaryDisplayBio,
+      source_bio_ids: fieldSourceIds,
       employee_name: employeeName,
       department: employeeContext?.department || '',
       location: employeeLocation,
@@ -481,7 +489,10 @@ export function processEmployeeDayPunches(
   if (Array.isArray(employeeContext?.biometricIds)) {
     for (const entry of employeeContext.biometricIds) {
       const k = normalizeBiometricIdKey(entry.bioId)
-      if (k) bioEntryMap.set(k, entry)
+      if (k) {
+        bioEntryMap.set(k, entry)
+        if (/^\d+$/.test(k)) bioEntryMap.set(k.replace(/^0+/, '') || '0', entry)
+      }
     }
   }
   const sourceBioIdSet = new Set<string>()
@@ -505,7 +516,9 @@ export function processEmployeeDayPunches(
     const sourceBioId = normalizeBiometricIdToken(log.source_bio_id || log.user_id) || String(log.user_id || bioId).trim()
     if (sourceBioId) sourceBioIdSet.add(sourceBioId)
 
-    const linkedEntry = bioEntryMap.get(normalizeBiometricIdKey(sourceBioId))
+    const sourceKey = normalizeBiometricIdKey(sourceBioId)
+    const sourceUnpadded = /^\d+$/.test(sourceKey) ? (sourceKey.replace(/^0+/, '') || '0') : sourceKey
+    const linkedEntry = bioEntryMap.get(sourceKey) || bioEntryMap.get(sourceUnpadded)
     let isDeactivatedBioId = false
     if (linkedEntry && linkedEntry.status === 'inactive') {
       const deactivatedMs = linkedEntry.deactivatedAt ? new Date(linkedEntry.deactivatedAt).getTime() : 0

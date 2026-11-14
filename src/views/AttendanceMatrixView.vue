@@ -539,6 +539,10 @@ async function loadEmployeePeriodAttendance() {
   try {
     const dates = currentPeriod.value.dates
     const map = new Map<string, DailyAttendanceRecord>()
+    const targetEmp = selectedEmployee.value
+    const targetKeys = targetEmp
+      ? collectEmployeeIdKeys(targetEmp, selectedBioId.value)
+      : collectEmployeeIdKeys(selectedBioId.value)
 
     // Use fast single-date indexed queries across the 15-day period
     await Promise.all(
@@ -552,7 +556,15 @@ async function loadEmployeePeriodAttendance() {
             selectedBioId.value
           )
           if (daily && daily.length > 0) {
-            map.set(dStr, daily[0])
+            const matched =
+              daily.find(r =>
+                recordMatchesEmployee(r.biometric_user_id, targetKeys) ||
+                (r.primary_bio_id && recordMatchesEmployee(r.primary_bio_id, targetKeys)) ||
+                (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => recordMatchesEmployee(id, targetKeys)))
+              ) || (daily.length === 1 && targetKeys.size === 0 ? daily[0] : undefined)
+            if (matched) {
+              map.set(dStr, matched)
+            }
           }
         } catch {
           // ignore date lookup error

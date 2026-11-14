@@ -11,6 +11,7 @@ import { attendanceService } from '@/services/attendance'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { getManilaDateString } from '@/services/attendanceEngine'
 import { punchRepository } from '@/repositories/punchRepository'
+import { employeeRepository } from '@/repositories/employeeRepository'
 import type { AttendanceLog } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -44,7 +45,11 @@ async function executeLoadDashboard() {
     ])
     recentLogs.value = recentRes.logs
     totalLogsToday.value = punchesToday.length
-    const set = new Set(punchesToday.map(l => l.user_id))
+    const set = new Set(
+      punchesToday.map(
+        l => l.linked_employee_bio_id || employeeRepository.resolveCanonicalBioIdSync(l.user_id) || l.user_id
+      )
+    )
     uniqueUsersToday.value = set.size
   } finally {
     loading.value = false

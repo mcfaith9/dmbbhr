@@ -24,7 +24,7 @@ import { attendanceRepository, overtimeRepository } from '@/repositories'
 import { scheduleRepository } from '@/repositories/scheduleRepository'
 import { holidayService } from '@/services/holidays/holidayService'
 import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateMultipleOvertimeRecordsForDay } from '@/services/overtimePolicy'
-import { collectEmployeeIdKeys, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
+import { collectEmployeeIdKeys, getEmployeePrimaryBioId, recordMatchesEmployee } from '@/lib/employeeIdentity'
 
 /**
  * Resolves holidays for the cutoff period from holidayService or scheduleRepository if not provided
@@ -315,7 +315,7 @@ export const payrollCalculationService = {
           existingSnap = await db.payrollSnapshots
             .where('periodId')
             .equals(period.id)
-            .filter(s => targetIds.has(String(s.bioId || '').trim().toLowerCase()))
+            .filter(s => recordMatchesEmployee(s.bioId, targetIds))
             .first()
         } catch {
           existingSnap = undefined
@@ -379,26 +379,44 @@ export const payrollCalculationService = {
 
     const registerRecord = (rec: DailyAttendanceRecord) => {
       if (!rec) return
-      const recBio = String(rec.biometric_user_id || (rec as any).bioId || (rec as any).user_id || '').trim().toLowerCase()
-      if (recBio && targetIds.size > 0 && !targetIds.has(recBio) && !targetIds.has(recBio.replace(/^emp[-_]/i, ''))) {
+      const candidateRecIds = [
+        rec.biometric_user_id,
+        rec.primary_bio_id,
+        ...(Array.isArray(rec.source_bio_ids) ? rec.source_bio_ids : []),
+        (rec as any).bioId,
+        (rec as any).user_id
+      ].filter(Boolean) as string[]
+      if (
+        candidateRecIds.length > 0 &&
+        targetIds.size > 0 &&
+        !candidateRecIds.some(cid => recordMatchesEmployee(cid, targetIds))
+      ) {
         return
       }
+      const setIfBetter = (key: string) => {
+        if (!key) return
+        const existing = empAttendanceMap.get(key)
+        if (existing) {
+          const existingScore = (existing.valid_punches_count || 0) + (existing.has_valid_out ? 2 : 0)
+          const incomingScore = (rec.valid_punches_count || 0) + (rec.has_valid_out ? 2 : 0)
+          if (incomingScore < existingScore) return
+        }
+        empAttendanceMap.set(key, rec)
+      }
       if (rec.raw_date) {
-        empAttendanceMap.set(rec.raw_date, rec)
-        const n = normalizeDateStr(rec.raw_date)
-        if (n) empAttendanceMap.set(n, rec)
+        setIfBetter(rec.raw_date)
+        setIfBetter(normalizeDateStr(rec.raw_date))
       }
       if (rec.date) {
-        empAttendanceMap.set(rec.date, rec)
-        const n = normalizeDateStr(rec.date)
-        if (n) empAttendanceMap.set(n, rec)
+        setIfBetter(rec.date)
+        setIfBetter(normalizeDateStr(rec.date))
       }
       if ((rec as any).id) {
         const parts = String((rec as any).id).split('-')
         if (parts.length >= 4) {
           const dFromId = `${parts[parts.length - 3]}-${parts[parts.length - 2]}-${parts[parts.length - 1]}`
           if (/^\d{4}-\d{2}-\d{2}$/.test(dFromId)) {
-            empAttendanceMap.set(dFromId, rec)
+            setIfBetter(dFromId)
           }
         }
       }
@@ -1028,9 +1046,14 @@ export const payrollCalculationService = {
     const seenCanonicalIds = new Set<string>()
     const targetEmployees = employees.filter(e => {
       if (e.status === 'resigned' || e.is_merged || e.merged_into_bio_id) return false
-      const canonId = String(e.canonical_bio_id || e.biometric_user_id || '').trim().toLowerCase()
-      if (!canonId || seenCanonicalIds.has(canonId)) return false
-      seenCanonicalIds.add(canonId)
+      const empKeys = collectEmployeeIdKeys(e)
+      if (empKeys.size === 0) return false
+      for (const k of empKeys) {
+        if (seenCanonicalIds.has(k)) return false
+      }
+      for (const k of empKeys) {
+        seenCanonicalIds.add(k)
+      }
       return true
     })
     const payrollRecords: EmployeePayrollRecord[] = []
@@ -1078,33 +1101,29 @@ export const payrollCalculationService = {
       attendancePrefetched = true
     }
 
-    // Index attendance by bioId for fast lookup
+    // Index attendance by all canonical, primary, and source Bio IDs for fast lookup
     const attendanceByBioId = new Map<string, DailyAttendanceRecord[]>()
     for (const rec of dailyAttendanceRecords) {
-      const recBio = String(rec.biometric_user_id || (rec as any).bioId || (rec as any).user_id || '').trim().toLowerCase()
-      if (recBio) {
-        const cleanBio = recBio.replace(/^emp[-_]/i, '')
-        if (!attendanceByBioId.has(recBio)) attendanceByBioId.set(recBio, [])
-        attendanceByBioId.get(recBio)!.push(rec)
-        if (cleanBio !== recBio) {
-          if (!attendanceByBioId.has(cleanBio)) attendanceByBioId.set(cleanBio, [])
-          attendanceByBioId.get(cleanBio)!.push(rec)
-        }
+      const recKeys = collectEmployeeIdKeys(
+        rec.biometric_user_id,
+        rec.primary_bio_id,
+        rec.source_bio_ids,
+        (rec as any).bioId,
+        (rec as any).user_id
+      )
+      for (const rk of recKeys) {
+        if (!attendanceByBioId.has(rk)) attendanceByBioId.set(rk, [])
+        attendanceByBioId.get(rk)!.push(rec)
       }
     }
 
-    // Index approved OT by bioId for fast lookup
+    // Index approved OT by all ID variants for fast lookup
     const otByBioId = new Map<string, OvertimeAuthorizationRecord[]>()
     for (const ot of allApprovedOt) {
-      const otBio = String(ot.bioId).trim().toLowerCase()
-      if (otBio) {
-        const cleanBio = otBio.replace(/^emp[-_]/i, '')
-        if (!otByBioId.has(otBio)) otByBioId.set(otBio, [])
-        otByBioId.get(otBio)!.push(ot)
-        if (cleanBio !== otBio) {
-          if (!otByBioId.has(cleanBio)) otByBioId.set(cleanBio, [])
-          otByBioId.get(cleanBio)!.push(ot)
-        }
+      const otKeys = collectEmployeeIdKeys(ot.bioId)
+      for (const ok of otKeys) {
+        if (!otByBioId.has(ok)) otByBioId.set(ok, [])
+        otByBioId.get(ok)!.push(ot)
       }
     }
 

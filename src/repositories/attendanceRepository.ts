@@ -8,10 +8,10 @@ import {
   type EmployeeScheduleContext
 } from '@/services/attendanceEngine'
 import { punchRepository } from './punchRepository'
-import { employeeRepository } from './employeeRepository'
+import { employeeRepository, findCachedEmployee } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
 import { manualAttendanceRepository } from './manualAttendanceRepository'
-import { getEmployeeAllBioIds, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
+import { collectEmployeeIdKeys, getEmployeeAllBioIds, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
 
 import type { EmployeeRecord } from '@/db'
 
@@ -98,7 +98,12 @@ export const attendanceRepository = {
       const direct = employeeMap.get(raw) || rawEmployeeLookup.get(raw) || rawEmployeeLookup.get(raw.toLowerCase())
       if (direct) return direct
       const norm = normalizeCanonicalBioId(raw)
-      return norm ? canonicalEmployeeMap.get(norm) : undefined
+      if (norm && canonicalEmployeeMap.has(norm)) {
+        return canonicalEmployeeMap.get(norm)
+      }
+      // Fallback to employeeRepository's merged/archived chain resolver
+      const cached = findCachedEmployee(raw) || (norm ? findCachedEmployee(norm) : null)
+      return cached?.record
     }
 
     const canonicalAdjustmentsMap = new Map<string, any>()
@@ -127,25 +132,36 @@ export const attendanceRepository = {
     }
 
     let dayPunches = rawDayPunches
+    let allowedFilterKeys: Set<string> | null = null
     if (bioIdFilter && bioIdFilter.trim()) {
       const matchedFilterEmp = resolveEmployee(bioIdFilter)
-      const allowedFilterKeys = new Set<string>()
+      allowedFilterKeys = new Set<string>()
       const addFilterKey = (v?: string | null) => {
         if (!v) return
         const l = String(v).trim().toLowerCase()
         const n = normalizeCanonicalBioId(v)
-        if (l) allowedFilterKeys.add(l)
-        if (n) allowedFilterKeys.add(n)
+        if (l) allowedFilterKeys!.add(l)
+        if (n) allowedFilterKeys!.add(n)
       }
       addFilterKey(bioIdFilter)
       if (matchedFilterEmp) {
         addFilterKey(matchedFilterEmp.bioId)
         for (const lid of getEmployeeAllBioIds(matchedFilterEmp)) addFilterKey(lid)
+        if (Array.isArray(matchedFilterEmp.mergedFromBioIds)) {
+          for (const mid of matchedFilterEmp.mergedFromBioIds) addFilterKey(mid)
+        }
       }
       dayPunches = dayPunches.filter(p => {
         const pLower = p.user_id.trim().toLowerCase()
         const pNorm = normalizeCanonicalBioId(p.user_id)
-        return allowedFilterKeys.has(pLower) || (pNorm !== '' && allowedFilterKeys.has(pNorm))
+        const pCanonLower = p.linked_employee_bio_id ? p.linked_employee_bio_id.trim().toLowerCase() : ''
+        const pCanonNorm = p.linked_employee_bio_id ? normalizeCanonicalBioId(p.linked_employee_bio_id) : ''
+        return (
+          allowedFilterKeys!.has(pLower) ||
+          (pNorm !== '' && allowedFilterKeys!.has(pNorm)) ||
+          (pCanonLower !== '' && allowedFilterKeys!.has(pCanonLower)) ||
+          (pCanonNorm !== '' && allowedFilterKeys!.has(pCanonNorm))
+        )
       })
     }
 
@@ -226,6 +242,20 @@ export const attendanceRepository = {
       const emp = resolvedEmp || employeeMap.get(bioId)
       const resolvedCanon = emp ? normalizeCanonicalBioId(emp.bioId) : normalizeCanonicalBioId(bioId)
       if (!emp) continue
+      if (allowedFilterKeys) {
+        const empCandidateIds = [
+          bioId,
+          emp.bioId,
+          ...getEmployeeAllBioIds(emp),
+          ...(Array.isArray(emp.mergedFromBioIds) ? emp.mergedFromBioIds : [])
+        ]
+        const matchesFilter = empCandidateIds.some(id => {
+          const l = String(id).trim().toLowerCase()
+          const n = normalizeCanonicalBioId(id)
+          return (l !== '' && allowedFilterKeys!.has(l)) || (n !== '' && allowedFilterKeys!.has(n))
+        })
+        if (!matchesFilter) continue
+      }
       if (processedBioIds.has(emp.bioId) || (resolvedCanon && processedCanonicalIds.has(resolvedCanon))) continue
 
       const isResignedOnSelectedDate =
@@ -247,6 +277,8 @@ export const attendanceRepository = {
 
       const empContext: EmployeeScheduleContext = {
         bioId: emp.bioId,
+        primaryBioId: getEmployeePrimaryBioId(emp),
+        biometricIds: emp.biometricIds,
         name: emp.fullName || `User ${emp.bioId}`,
         department: emp.department || '',
         location: empLocation,
@@ -348,10 +380,19 @@ export const attendanceRepository = {
 
     // Inspect raw punches in this date range to detect uncached or corrupted/stale daily summaries
     // Ensure employee cache is initialized so secondary/merged Bio IDs resolve to their canonical employee
-    const [, allPunchesInMonth] = await Promise.all([
+    const [employeeMap, allPunchesInMonth, manualAdjustmentsInMonth, currentActiveCount] = await Promise.all([
       employeeRepository.getEmployeeMap(),
-      db.biometricPunches.where('date').between(startDate, endDate, true, true).toArray()
+      db.biometricPunches.where('date').between(startDate, endDate, true, true).toArray(),
+      db.manualAdjustments.where('date').between(startDate, endDate, true, true).toArray().catch(() => []),
+      employeeRepository.countActive().catch(() => 0)
     ])
+    const datesWithApprovedManualAdj = new Set<string>()
+    for (const adj of manualAdjustmentsInMonth) {
+      if (adj.status === 'Approved' && adj.date) {
+        datesWithApprovedManualAdj.add(adj.date)
+      }
+    }
+
     const punchesByDate = new Map<string, { bioIds: Set<string>; latestImportTime: string }>()
     for (const p of allPunchesInMonth) {
       if (!p.date) continue
@@ -360,8 +401,16 @@ export const attendanceRepository = {
         group = { bioIds: new Set(), latestImportTime: p.importedAt || p.timestamp || '' }
         punchesByDate.set(p.date, group)
       }
-      const canonicalBio = employeeRepository.resolveCanonicalBioIdSync(p.bioId) || p.bioId
-      group.bioIds.add(canonicalBio)
+      const canonicalBio = employeeRepository.resolveCanonicalBioIdSync(p.bioId) || normalizeCanonicalBioId(p.bioId) || p.bioId
+      const matchedEmp = employeeMap.get(canonicalBio) || findCachedEmployee(p.bioId)?.record
+      // Align with updateDailySummaryCache exclusion of resigned employees on date p.date
+      const isResignedOnPunchDate =
+        matchedEmp &&
+        matchedEmp.status === 'resigned' &&
+        (!matchedEmp.resignationDate || matchedEmp.resignationDate <= p.date)
+      if (!isResignedOnPunchDate) {
+        group.bioIds.add(matchedEmp?.bioId || canonicalBio)
+      }
       const pTime = p.importedAt || p.timestamp || ''
       if (pTime && pTime > group.latestImportTime) {
         group.latestImportTime = pTime
@@ -376,12 +425,25 @@ export const attendanceRepository = {
       if (!existing) {
         dateGroups.add(d)
       } else {
-        // Detect stale counts (e.g. corrupted by a single-employee filter where presentCount < distinct punched employees)
-        // or where new punches were imported after the summary was cached
+        // Detect stale counts (both undercounts and pre-consolidation overcounts)
+        // or where employee totals or punch imports changed after the summary was cached
         const distinctPunched = group.bioIds.size
-        const isStaleCount = distinctPunched > 0 && existing.presentCount < distinctPunched
+        const isStaleUnderCount = distinctPunched > 0 && existing.presentCount < distinctPunched
+        const isStaleOverCount = existing.presentCount > distinctPunched && !datesWithApprovedManualAdj.has(d)
+        const isStaleTotal = currentActiveCount > 0 && existing.totalEmployees !== currentActiveCount
         const isNewerPunch = group.latestImportTime && existing.updatedAt && group.latestImportTime > existing.updatedAt
-        if (isStaleCount || isNewerPunch) {
+        if (isStaleUnderCount || isStaleOverCount || isStaleTotal || isNewerPunch) {
+          dateGroups.add(d)
+        }
+      }
+    }
+
+    // Check cached summaries that may have stale overcounts on dates with 0 remaining punches
+    for (const [d, existing] of summaryMap.entries()) {
+      if (!punchesByDate.has(d)) {
+        const isStaleOverCount = existing.presentCount > 0 && !datesWithApprovedManualAdj.has(d)
+        const isStaleTotal = currentActiveCount > 0 && existing.totalEmployees !== currentActiveCount
+        if (isStaleOverCount || isStaleTotal) {
           dateGroups.add(d)
         }
       }
@@ -430,15 +492,44 @@ export const attendanceRepository = {
     ])
 
     const canonicalId = resolvedEmployee?.canonical_bio_id || resolvedEmployee?.biometric_user_id || cleanBioId
-    const emp = employeeMap.get(canonicalId) || employeeMap.get(cleanBioId)
+    const emp =
+      employeeMap.get(canonicalId) ||
+      employeeMap.get(cleanBioId) ||
+      findCachedEmployee(canonicalId)?.record ||
+      findCachedEmployee(cleanBioId)?.record
 
-    // Collect all linked Bio IDs (canonical, primary, secondary, inactive, plus raw variants)
-    const idCandidates = new Set<string>([cleanBioId, canonicalId])
+    // Collect all linked Bio IDs (canonical, primary, secondary, inactive, merged, plus raw/case/padding variants)
+    const idCandidates = new Set<string>()
+    const addCandidateVariants = (rawVal?: string | null) => {
+      const v = String(rawVal || '').trim()
+      if (!v) return
+      idCandidates.add(v)
+      idCandidates.add(v.toUpperCase())
+      idCandidates.add(v.toLowerCase())
+      idCandidates.add(`user${v}`)
+      idCandidates.add(`USER${v}`)
+      idCandidates.add(`emp-${v}`)
+      idCandidates.add(`EMP-${v}`)
+      if (/^\d+$/.test(v)) {
+        const unpadded = v.replace(/^0+/, '') || '0'
+        idCandidates.add(unpadded)
+        for (const len of [4, 5, 6]) {
+          if (unpadded.length < len) idCandidates.add(unpadded.padStart(len, '0'))
+        }
+      }
+    }
+    addCandidateVariants(cleanBioId)
+    addCandidateVariants(canonicalId)
     if (emp) {
-      for (const lid of getEmployeeAllBioIds(emp)) {
-        idCandidates.add(lid)
-        idCandidates.add(`user${lid}`)
-        idCandidates.add(`emp-${lid}`)
+      addCandidateVariants(emp.bioId)
+      for (const lid of getEmployeeAllBioIds(emp)) addCandidateVariants(lid)
+      if (Array.isArray(emp.mergedFromBioIds)) {
+        for (const mid of emp.mergedFromBioIds) addCandidateVariants(mid)
+      }
+    }
+    if (resolvedEmployee) {
+      for (const k of collectEmployeeIdKeys(resolvedEmployee)) {
+        idCandidates.add(k)
       }
     }
     const queryIds = Array.from(idCandidates).filter(Boolean)
@@ -455,13 +546,29 @@ export const attendanceRepository = {
 
     const adjustmentsByDate = new Map<string, any>()
     for (const a of adjustments) {
-      adjustmentsByDate.set(a.date, a)
+      const existingAdj = adjustmentsByDate.get(a.date)
+      if (!existingAdj || (existingAdj.status !== 'Approved' && a.status === 'Approved')) {
+        adjustmentsByDate.set(a.date, a)
+      }
     }
 
     const leavesByDate = new Map<string, any>()
     for (const l of leaves) {
-      if (l.status === 'Approved') {
-        leavesByDate.set(l.startDate, l)
+      if (l.status === 'Approved' && l.startDate) {
+        const end = l.endDate && l.endDate >= l.startDate ? l.endDate : l.startDate
+        const [sy, sm, sd] = l.startDate.split('-').map(Number)
+        const [ey, em, ed] = end.split('-').map(Number)
+        if (sy && sm && sd && ey && em && ed) {
+          const cur = new Date(Date.UTC(sy, sm - 1, sd))
+          const endDt = new Date(Date.UTC(ey, em - 1, ed))
+          for (let guard = 0; cur <= endDt && guard < 366; guard++) {
+            const dIso = `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}-${String(cur.getUTCDate()).padStart(2, '0')}`
+            leavesByDate.set(dIso, l)
+            cur.setUTCDate(cur.getUTCDate() + 1)
+          }
+        } else {
+          leavesByDate.set(l.startDate, l)
+        }
       }
     }
 

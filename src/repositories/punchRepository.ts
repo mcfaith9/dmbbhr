@@ -4,7 +4,7 @@ import { getManilaDateString } from '@/services/attendanceEngine'
 import { parseBiometricTimestamp } from '@/utils/attendanceTimestampParser'
 import { employeeRepository, findCachedEmployee } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
-import { getEmployeeAllBioIds, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
+import { collectEmployeeIdKeys, getEmployeeAllBioIds, getEmployeePrimaryBioId, recordMatchesEmployee } from '@/lib/employeeIdentity'
 
 export interface ImportResult {
   totalInFile: number
@@ -235,13 +235,15 @@ export const punchRepository = {
     const userFilterTargets = new Set<string>()
     if (params.userId && params.userId.trim()) {
       const cleanU = params.userId.trim()
-      userFilterTargets.add(cleanU.toLowerCase())
+      for (const k of collectEmployeeIdKeys(cleanU)) userFilterTargets.add(k)
       userFilterTargets.add(cleanU)
       const matchedEmp = resolveEmployee(cleanU)
       if (matchedEmp) {
+        for (const k of collectEmployeeIdKeys(matchedEmp)) userFilterTargets.add(k)
         for (const lid of getEmployeeAllBioIds(matchedEmp)) {
           userFilterTargets.add(lid)
           userFilterTargets.add(lid.toLowerCase())
+          userFilterTargets.add(lid.toUpperCase())
         }
       }
     }
@@ -297,7 +299,7 @@ export const punchRepository = {
         const empName = emp?.fullName || r.employeeName || ''
         const empWg = emp?.workGroupId || r.workGroupId || 'wg-group-c'
 
-        if (userQ && !userFilterTargets.has(r.bioId.toLowerCase()) && r.bioId.toLowerCase() !== userQ) return false
+        if (userQ && !recordMatchesEmployee(r.bioId, userFilterTargets)) return false
 
         // If date filter was applied alongside userId
         if (params.date && r.date !== params.date) return false
