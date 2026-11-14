@@ -25,9 +25,10 @@ import PayrollCalculationDialog from '@/components/PayrollCalculationDialog.vue'
 import OvertimeDialog from '@/components/OvertimeDialog.vue'
 import ManualTimeDialog from '@/components/ManualTimeDialog.vue'
 import { employeeService } from '@/services/employees'
-import { attendanceService, type DailyAttendanceRecord } from '@/services/attendance'
+import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from '@/services/attendance'
 import { resolveApprovedDutyHours } from '@/services/attendanceEngine'
 import { holidayService } from '@/services/holidays/holidayService'
+import { getEffectiveStartDate, normalizeEmployeeDate } from '@/services/reportsService'
 import { overtimeRepository } from '@/repositories/overtimeRepository'
 import {
   collectEmployeeIdKeys,
@@ -364,8 +365,12 @@ export interface DutyCellData {
 
 const dutyCells = computed<DutyCellData[]>(() => {
   const dates = currentPeriod.value.dates
-  const now = new Date()
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const todayStr = getManilaDateString(new Date())
+  const emp = selectedEmployee.value
+  const empStartDate = emp ? getEffectiveStartDate(emp) : undefined
+  const empResDate = emp ? normalizeEmployeeDate(emp.resignation_date) : undefined
+  const empStatusNorm = String(emp?.status || 'active').trim().toLowerCase()
+  const isEmpActive = empStatusNorm === 'active' || empStatusNorm === 'a'
 
   return dates.map(dStr => {
     const [y, m, d] = dStr.split('-').map(Number)
@@ -443,9 +448,28 @@ const dutyCells = computed<DutyCellData[]>(() => {
       statusLabel = 'Scheduled'
       statusBadgeVariant = 'outline'
       notes = 'Future date'
+    } else if (emp?.exclude_from_biometric) {
+      statusCategory = 'unverified'
+      statusLabel = 'No Bio Required'
+      statusBadgeVariant = 'secondary'
+      notes = 'Excluded from biometric monitoring (Active - NB)'
+    } else if (!isEmpActive) {
+      statusCategory = 'unverified'
+      statusLabel = 'Inactive Status'
+      statusBadgeVariant = 'secondary'
+      notes = `Employee status: ${emp?.status || 'inactive'}`
+    } else if (empStartDate && dStr < empStartDate) {
+      statusCategory = 'unverified'
+      statusLabel = 'Pre-Hire'
+      statusBadgeVariant = 'outline'
+      notes = `Before employment start date (${empStartDate})`
+    } else if (empResDate && dStr >= empResDate) {
+      statusCategory = 'unverified'
+      statusLabel = 'Resigned'
+      statusBadgeVariant = 'outline'
+      notes = `On or after resignation date (${empResDate})`
     } else {
-      // Date has passed, employee has an active working schedule, not a Sunday, not a holiday, no punch
-      // Determine absence only when existing schedule and attendance data confirm no duty
+      // Date has passed, employee is eligible and active, not a Sunday, not a holiday, no punch
       statusCategory = 'absent'
       statusLabel = 'Absent'
       statusBadgeVariant = 'destructive'

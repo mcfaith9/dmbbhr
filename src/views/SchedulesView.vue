@@ -37,6 +37,7 @@ import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
 import { getManilaDateString } from '@/services/attendanceEngine'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { collectEmployeeIdKeys, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
+import { getEffectiveStartDate, normalizeEmployeeDate } from '@/services/reportsService'
 
 const router = useRouter()
 
@@ -386,19 +387,31 @@ async function openDayDetails(cell: CalendarDay) {
     }
 
     const absents: { bioId: string; name: string; workGroupId: string; workGroupName: string; schedule: string }[] = []
+    const todayStr = getManilaDateString(new Date())
+    const seenAbsentBioIds = new Set<string>()
     
-    // Only flag absences on regular workdays (not weekend, not holiday)
-    if (!cell.isWeekend && !cell.holiday) {
+    // Only flag absences on regular non-future workdays (not weekend, not holiday, not future)
+    if (!cell.isWeekend && !cell.holiday && cell.dateStr <= todayStr) {
       for (const emp of employees) {
+        if (emp.is_merged || emp.merged_into_bio_id) continue
         if (emp.status !== 'active' || emp.exclude_from_biometric) continue
+        const resDate = normalizeEmployeeDate(emp.resignation_date)
+        if (resDate && resDate <= cell.dateStr) continue
+        const startDate = getEffectiveStartDate(emp)
+        if (startDate && startDate > cell.dateStr) continue
+
+        const primaryId = getEmployeePrimaryBioId(emp) || emp.biometric_user_id
+        if (seenAbsentBioIds.has(emp.biometric_user_id)) continue
+
         const empKeys = collectEmployeeIdKeys(emp)
         const isPresent = Array.from(empKeys).some(k => presentBioKeys.has(k))
         const isOnLeave = Array.from(empKeys).some(k => onLeaveBioKeys.has(k))
         if (!isPresent && !isOnLeave) {
+          seenAbsentBioIds.add(emp.biometric_user_id)
           const wg = wgMap.get(emp.work_group_id || 'wg-group-c')
           const sched = wg ? `${wg.standard_in} – ${wg.expected_out}` : '08:00 – 17:00'
           absents.push({
-            bioId: getEmployeePrimaryBioId(emp) || emp.biometric_user_id,
+            bioId: primaryId,
             name: emp.full_name,
             workGroupId: emp.work_group_id || 'wg-group-c',
             workGroupName: wg?.name || 'Group C',

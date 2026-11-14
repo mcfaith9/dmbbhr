@@ -9,13 +9,17 @@
  * - Persistent storage in IndexedDB
  */
 
-import type { Employee, EmployeeLocation, WorkGroup } from '@/types'
+import type { Employee, EmployeeConsolidationAudit, EmployeeLocation, WorkGroup } from '@/types'
 import {
   employeeRepository,
   VALID_LOCATIONS,
   type PeopleImportPreviewResult,
   type PeopleImportRowItem,
   type PeopleImportApplyResult,
+  type ConsolidationConflictField,
+  type ConsolidationPreviewResult,
+  type ConsolidationExecuteInput,
+  type ConsolidationExecuteResult,
   parseEmploymentStatus,
   getStatusDisplayName,
   parseContractDate
@@ -23,13 +27,22 @@ import {
 import { workGroupRepository } from '@/repositories/workGroupRepository'
 
 export { VALID_LOCATIONS, parseEmploymentStatus, getStatusDisplayName, parseContractDate }
-export type { PeopleImportPreviewResult, PeopleImportRowItem, PeopleImportApplyResult }
+export type {
+  PeopleImportPreviewResult,
+  PeopleImportRowItem,
+  PeopleImportApplyResult,
+  ConsolidationConflictField,
+  ConsolidationPreviewResult,
+  ConsolidationExecuteInput,
+  ConsolidationExecuteResult,
+  EmployeeConsolidationAudit
+}
 
 export const employeeService = {
   /**
    * Returns all employees, with optional location, work group, and search filtering
    */
-  async getEmployees(params: { location?: string; workGroupId?: string; search?: string; status?: string } = {}): Promise<Employee[]> {
+  async getEmployees(params: { location?: string; workGroupId?: string; search?: string; status?: string; includeMerged?: boolean } = {}): Promise<Employee[]> {
     return employeeRepository.getEmployees(params)
   },
 
@@ -275,6 +288,18 @@ export const employeeService = {
 
   async removeLinkedBioId(canonicalBioId: string, targetBioId: string): Promise<Employee> {
     return employeeRepository.removeLinkedBioId(canonicalBioId, targetBioId)
+  },
+
+  async previewConsolidateEmployees(canonicalBioId: string, sourceBioId: string): Promise<ConsolidationPreviewResult> {
+    return employeeRepository.previewConsolidateEmployees(canonicalBioId, sourceBioId)
+  },
+
+  async consolidateEmployees(options: ConsolidationExecuteInput): Promise<ConsolidationExecuteResult> {
+    return employeeRepository.consolidateEmployees(options)
+  },
+
+  async getConsolidationAudits(bioId?: string): Promise<EmployeeConsolidationAudit[]> {
+    return employeeRepository.getConsolidationAudits(bioId)
   },
 
   onEmployeesChanged(callback: () => void) {

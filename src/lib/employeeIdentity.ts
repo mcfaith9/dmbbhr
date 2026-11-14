@@ -47,7 +47,10 @@ export function ensureBiometricIdsList(
           addedAt: typeof raw.addedAt === 'string' && raw.addedAt ? raw.addedAt : now,
           deactivatedAt: typeof raw.deactivatedAt === 'string' && raw.deactivatedAt ? raw.deactivatedAt : undefined,
           reactivatedAt: typeof raw.reactivatedAt === 'string' && raw.reactivatedAt ? raw.reactivatedAt : undefined,
-          notes: typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes.trim() : undefined
+          notes: typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes.trim() : undefined,
+          transferredFromBioId: typeof raw.transferredFromBioId === 'string' && raw.transferredFromBioId.trim() ? raw.transferredFromBioId.trim() : undefined,
+          transferredAt: typeof raw.transferredAt === 'string' && raw.transferredAt ? raw.transferredAt : undefined,
+          transferredBy: typeof raw.transferredBy === 'string' && raw.transferredBy.trim() ? raw.transferredBy.trim() : undefined
         })
       }
     }

@@ -263,7 +263,8 @@ export const workGroupRepository = {
    * Counts how many employees are currently assigned to a given work group
    */
   async getAssignedEmployeeCount(workGroupId: string): Promise<number> {
-    return await db.employees.where('workGroupId').equals(workGroupId).count()
+    const matches = await db.employees.where('workGroupId').equals(workGroupId).toArray()
+    return matches.filter(emp => !emp.isMerged && !emp.mergedIntoBioId).length
   },
 
   /**
@@ -273,6 +274,7 @@ export const workGroupRepository = {
     const employees = await db.employees.toArray()
     const counts: Record<string, number> = {}
     for (let i = 0; i < employees.length; i++) {
+      if (employees[i].isMerged || employees[i].mergedIntoBioId) continue
       const wgId = employees[i].workGroupId || 'wg-group-c'
       counts[wgId] = (counts[wgId] || 0) + 1
     }
@@ -375,7 +377,8 @@ export const workGroupRepository = {
       throw new Error('Target reassignment Work Group not found.')
     }
 
-    const employees = await db.employees.where('workGroupId').equals(fromId).toArray()
+    const employees = (await db.employees.where('workGroupId').equals(fromId).toArray())
+      .filter(emp => !emp.isMerged && !emp.mergedIntoBioId)
     for (const emp of employees) {
       emp.workGroupId = toId
       emp.updatedAt = new Date().toISOString()

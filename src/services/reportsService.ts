@@ -383,6 +383,7 @@ function isPlaceholderName(name?: string | null): boolean {
 }
 
 function scoreEmployeeRecordRichness(emp: Employee): number {
+  if (emp.is_merged || emp.merged_into_bio_id) return -1000
   let score = 0
   if (isActiveStatus(emp.status)) score += 100
   if (!isPlaceholderName(emp.full_name)) score += 20
@@ -411,9 +412,9 @@ export function deduplicateEmployees(
   const lookupByAnyKey = new Map<string, CanonicalEmployee>()
   const groups: CanonicalEmployee[] = []
 
-  // Sort deterministically by canonical Bio ID then raw Bio ID so ties
-  // always resolve identically regardless of IndexedDB insertion order across PCs.
-  const sortedEmployees = [...employees].sort((a, b) => {
+  // Exclude archived/merged records; sort deterministically by canonical Bio ID then raw Bio ID
+  const nonMergedEmployees = employees.filter(e => !e.is_merged && !e.merged_into_bio_id)
+  const sortedEmployees = [...nonMergedEmployees].sort((a, b) => {
     const ka = normalizeBioIdKey(a.biometric_user_id) || String(a.biometric_user_id || '')
     const kb = normalizeBioIdKey(b.biometric_user_id) || String(b.biometric_user_id || '')
     const cmp = ka.localeCompare(kb)
@@ -499,7 +500,7 @@ export function deduplicateEmployees(
       aliasBioIds: Array.from(new Set(g.mergedRecords.map(r => r.biometric_user_id)))
     }))
 
-  const mergedCount = employees.length - groups.length
+  const mergedCount = nonMergedEmployees.length - groups.length
   return { canonicalEmployees: groups, lookupByAnyKey, mergedCount, mergedDuplicatePeople }
 }
 
@@ -789,6 +790,11 @@ export const reportsService = {
 
         const empStatus = matchedCanonical?.primary.status ?? r.employee_status ?? 'active'
         const empResDate = matchedCanonical?.primary.resignation_date ?? r.resignation_date
+
+        // Exclude Active - NB (No Bio) employees from biometric attendance counts
+        if (matchedCanonical?.primary.exclude_from_biometric) {
+          continue
+        }
 
         // Date-based resignation exclusion for Present
         if (isEmployeeResignedOnDate(empStatus, empResDate, dStr, todayStr)) {

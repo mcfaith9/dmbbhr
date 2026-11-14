@@ -56,6 +56,41 @@ export interface BiometricIdEntry {
   deactivatedAt?: string
   reactivatedAt?: string
   notes?: string
+  transferredFromBioId?: string
+  transferredAt?: string
+  transferredBy?: string
+}
+
+export interface EmployeeConsolidationFieldResolution {
+  field: string
+  label: string
+  canonicalValue: string
+  sourceValue: string
+  chosenSource: 'canonical' | 'source'
+  resolvedValue: string
+  hadBothValues?: boolean
+}
+
+export interface EmployeeConsolidationAudit {
+  id: string
+  canonicalBioId: string
+  canonicalName: string
+  sourceBioId: string
+  sourceName: string
+  transferredBioIds: string[]
+  fieldResolutions: EmployeeConsolidationFieldResolution[]
+  transferredRecordsCount: {
+    punchesPreserved: number
+    leaveRecords: number
+    overtimeAuthorizations: number
+    manualAdjustments: number
+    hrNotices: number
+    payrollSnapshotsTransferred: number
+    finalizedSnapshotsPreserved: number
+  }
+  performedBy: string
+  performedAt: string
+  notes?: string
 }
 
 export interface Employee {
@@ -66,6 +101,12 @@ export interface Employee {
   primary_bio_id?: string // Active primary biometric ID for attendance & display
   biometric_ids?: BiometricIdEntry[] // Full list of primary, secondary, and inactive biometric IDs
   linked_bio_ids?: string[] // Convenience array of all linked Bio IDs
+  is_merged?: boolean // True when archived/consolidated into another canonical employee
+  merged_into_bio_id?: string // Canonical Bio ID this archived record was merged into
+  merged_at?: string
+  merged_by?: string
+  merged_from_bio_ids?: string[] // Archived source Bio IDs consolidated into this canonical employee
+  consolidation_audits?: EmployeeConsolidationAudit[]
   full_name: string
   preferred_name?: string
   photo?: string | null // Photo path e.g. /employee-photos/25065.jpg or data URL

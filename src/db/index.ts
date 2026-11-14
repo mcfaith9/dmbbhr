@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie'
-import type { BiometricIdEntry, EmployeeLocation, EmploymentStatus } from '@/types'
-export type { BiometricIdEntry, EmploymentStatus }
+import type { BiometricIdEntry, EmployeeConsolidationAudit, EmployeeLocation, EmploymentStatus } from '@/types'
+export type { BiometricIdEntry, EmployeeConsolidationAudit, EmploymentStatus }
 
 export interface WorkGroupRecord {
   id: string // "wg-group-a", "wg-group-b", "wg-group-c"
@@ -43,6 +43,12 @@ export interface EmployeeRecord {
   primaryBioId?: string // Active primary biometric ID (defaults to bioId)
   biometricIds?: BiometricIdEntry[] // Structured linked Bio IDs (primary, secondary, inactive)
   linkedBioIds?: string[] // Indexed multi-entry list of all linked Bio IDs for fast lookups
+  isMerged?: boolean // True when archived via employee consolidation
+  mergedIntoBioId?: string // Surviving canonical Bio ID
+  mergedAt?: string
+  mergedBy?: string
+  mergedFromBioIds?: string[] // Source Bio IDs consolidated into this canonical employee
+  consolidationAudits?: EmployeeConsolidationAudit[]
   fullName: string
   preferredName?: string
   photo?: string | null // Photo path e.g. /employee-photos/25065.jpg or data URL
@@ -330,6 +336,7 @@ export class DMBBHRDatabase extends Dexie {
   hrNotices!: Table<HrNoticeRecord, string>
   payrollSnapshots!: Table<PayrollSnapshotRecord, string>
   overtimeAuthorizations!: Table<OvertimeAuthorizationRecord, string>
+  consolidationAudits!: Table<EmployeeConsolidationAudit, string>
 
   constructor() {
     super('DMBBHR_LocalDB')
@@ -390,6 +397,11 @@ export class DMBBHRDatabase extends Dexie {
         }
         emp.linkedBioIds = Array.from(linkedSet).filter(Boolean)
       })
+    })
+
+    // v11: Persistent employee consolidation audit trail
+    this.version(11).stores({
+      consolidationAudits: 'id, canonicalBioId, sourceBioId, performedAt'
     })
   }
 }

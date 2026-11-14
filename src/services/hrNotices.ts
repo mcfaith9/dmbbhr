@@ -310,6 +310,47 @@ class HrNoticeService {
   }
 
   /**
+   * Synchronizes in-memory, localStorage, and BroadcastChannel HR notices
+   * after an employee consolidation updates db.hrNotices inside a transaction.
+   */
+  public syncConsolidatedNotices(sourceKeys: string[], canonicalBioId: string, canonicalName: string): number {
+    const cleanCanonical = normalizeBioId(canonicalBioId) || String(canonicalBioId || '').trim()
+    if (!cleanCanonical) return 0
+
+    const matchKeys = new Set<string>()
+    for (const k of sourceKeys) {
+      const norm = normalizeBioId(k)
+      if (norm) matchKeys.add(norm)
+      const trimmed = String(k || '').trim().toLowerCase()
+      if (trimmed) matchKeys.add(trimmed)
+    }
+    if (matchKeys.size === 0) return 0
+
+    const now = new Date().toISOString()
+    let updatedCount = 0
+    const nextList = this.notices.value.map(n => {
+      const nNorm = normalizeBioId(n.bioId)
+      const nLower = String(n.bioId || '').trim().toLowerCase()
+      if (matchKeys.has(nNorm) || matchKeys.has(nLower)) {
+        updatedCount++
+        return {
+          ...n,
+          bioId: cleanCanonical,
+          employeeName: canonicalName || n.employeeName,
+          updatedAt: now
+        }
+      }
+      return n
+    })
+
+    if (updatedCount > 0) {
+      this.notices.value = nextList
+      this.persistStorage(nextList, true)
+    }
+    return updatedCount
+  }
+
+  /**
    * Triggers a preview of the HR notice in the Punch Display window via BroadcastChannel
    */
   public triggerNoticePreview(notice: HrNotice) {

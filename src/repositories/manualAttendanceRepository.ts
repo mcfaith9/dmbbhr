@@ -256,10 +256,16 @@ export const manualAttendanceRepository = {
       attendanceTime = existing.originalIn || existing.originalOut || '—'
     }
 
-    // Lookup full name if not set
+    // Lookup full name if not set (resolving merged/linked records to canonical employee)
     let empName = existing.employeeName
     if (!empName || empName.startsWith('User #')) {
-      const emp = await db.employees.get(existing.bioId)
+      let emp = await db.employees.get(existing.bioId)
+      if (!emp) {
+        emp = await db.employees.where('linkedBioIds').equals(existing.bioId).first()
+      }
+      if (emp?.mergedIntoBioId) {
+        emp = (await db.employees.get(emp.mergedIntoBioId)) || emp
+      }
       if (emp?.fullName) {
         empName = emp.fullName
       }
@@ -335,10 +341,16 @@ export const manualAttendanceRepository = {
       attendanceTime = existing.originalIn || existing.originalOut || '—'
     }
 
-    // Lookup full name if not set
+    // Lookup full name if not set (resolving merged/linked records to canonical employee)
     let empName = existing.employeeName
     if (!empName || empName.startsWith('User #')) {
-      const emp = await db.employees.get(existing.bioId)
+      let emp = await db.employees.get(existing.bioId)
+      if (!emp) {
+        emp = await db.employees.where('linkedBioIds').equals(existing.bioId).first()
+      }
+      if (emp?.mergedIntoBioId) {
+        emp = (await db.employees.get(emp.mergedIntoBioId)) || emp
+      }
       if (emp?.fullName) {
         empName = emp.fullName
       }

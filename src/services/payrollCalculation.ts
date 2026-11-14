@@ -624,7 +624,22 @@ export const payrollCalculationService = {
       const statusWorked = att?.status === 'Present' || att?.status === 'Late' || att?.status === 'Overtime' || att?.status === 'Early Departure' || att?.status === 'Incomplete'
       const hasWorked = hasValidIn || (typeof att?.worked_minutes === 'number' && att.worked_minutes > 0) || (typeof att?.total_hours_decimal === 'number' && att.total_hours_decimal > 0) || statusWorked
 
-      if (!isSunday && !isHoliday) {
+      const empStartDate = employee.hire_date || employee.contract_date
+        ? (employee.hire_date && employee.contract_date
+            ? (employee.hire_date <= employee.contract_date ? employee.hire_date : employee.contract_date)
+            : (employee.hire_date || employee.contract_date))
+        : undefined
+      const normStartDate = empStartDate ? normalizeDateStr(empStartDate) : undefined
+      const normResDate = employee.resignation_date ? normalizeDateStr(employee.resignation_date) : undefined
+      const normEmpStatus = String(employee.status || 'active').trim().toLowerCase()
+      const isActiveEmpStatus = normEmpStatus === 'active' || normEmpStatus === 'a'
+      const isDateEligibleForAttendance =
+        isActiveEmpStatus &&
+        !employee.exclude_from_biometric &&
+        (!normStartDate || normStartDate <= normDStr) &&
+        (!normResDate || normResDate > normDStr)
+
+      if (!isSunday && !isHoliday && isDateEligibleForAttendance) {
         scheduledDays++
       }
 
@@ -681,13 +696,13 @@ export const payrollCalculationService = {
               // For Monthly: covered in monthly basic salary (0 deduction)
             } else {
               // Ineligible: Unworked regular holiday without entitlement
-              if (salaryType === 'Monthly') {
+              if (salaryType === 'Monthly' && isDateEligibleForAttendance) {
                 absentDays++
               }
             }
           } else if (isSpecialWorking) {
             // Unworked special working day: 0%
-            if (!isFuture && salaryType === 'Monthly') {
+            if (!isFuture && salaryType === 'Monthly' && isDateEligibleForAttendance) {
               absentDays++
             }
           } else {
@@ -768,6 +783,9 @@ export const payrollCalculationService = {
           leaveDays++
         } else if (isFuture) {
           futureScheduledDays++
+        } else if (!isDateEligibleForAttendance) {
+          // Excluded from biometric monitoring (Active - NB), inactive/suspended/on_leave/csr, pre-hire, or post-resignation:
+          // Do not mark as Absent or Unresolved.
         } else if (!att && empAttendanceMap.size === 0) {
           unresolvedDays++
         } else {
@@ -908,7 +926,13 @@ export const payrollCalculationService = {
       reviewReasons.push(`Net pay is negative (₱${netPay.toLocaleString('en-US', { minimumFractionDigits: 2 })}) due to deductions exceeding earnings`)
     }
 
-    if (empAttendanceMap.size === 0) {
+    const empStatusNorm = String(employee.status || 'active').trim().toLowerCase()
+    const requiresBiometricAttendanceCheck =
+      !employee.exclude_from_biometric &&
+      (empStatusNorm === 'active' || empStatusNorm === 'a') &&
+      scheduledDays > 0
+
+    if (empAttendanceMap.size === 0 && requiresBiometricAttendanceCheck) {
       reviewReasons.push('No attendance records could be matched for this cutoff. Please check attendance logs before finalization.')
     } else if (unresolvedDays > 0) {
       reviewReasons.push(`${unresolvedDays} day(s) have unresolved attendance requiring HR audit`)
@@ -1001,7 +1025,14 @@ export const payrollCalculationService = {
     holidays: HolidayRecord[] = [],
     dailyAttendanceRecords: DailyAttendanceRecord[] = []
   ): Promise<EmployeePayrollRecord[]> {
-    const targetEmployees = employees.filter(e => e.status !== 'resigned')
+    const seenCanonicalIds = new Set<string>()
+    const targetEmployees = employees.filter(e => {
+      if (e.status === 'resigned' || e.is_merged || e.merged_into_bio_id) return false
+      const canonId = String(e.canonical_bio_id || e.biometric_user_id || '').trim().toLowerCase()
+      if (!canonId || seenCanonicalIds.has(canonId)) return false
+      seenCanonicalIds.add(canonId)
+      return true
+    })
     const payrollRecords: EmployeePayrollRecord[] = []
 
     // 1. Pre-fetch holidays once for the batch using resolveCutoffHolidays

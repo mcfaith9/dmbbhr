@@ -222,14 +222,16 @@ export const attendanceRepository = {
 
     // Process employees with approved leave who had 0 punches
     for (const [bioId, leaveRec] of leaveMap.entries()) {
-      const canonUid = normalizeCanonicalBioId(bioId)
-      if (processedBioIds.has(bioId) || (canonUid && processedCanonicalIds.has(canonUid))) continue
-      const emp = employeeMap.get(bioId) || (canonUid ? canonicalEmployeeMap.get(canonUid) : undefined)
+      const resolvedEmp = resolveEmployee(bioId)
+      const emp = resolvedEmp || employeeMap.get(bioId)
+      const resolvedCanon = emp ? normalizeCanonicalBioId(emp.bioId) : normalizeCanonicalBioId(bioId)
+      if (!emp) continue
+      if (processedBioIds.has(emp.bioId) || (resolvedCanon && processedCanonicalIds.has(resolvedCanon))) continue
+
       const isResignedOnSelectedDate =
-        emp &&
         (emp.status === 'resigned' || (emp.status as string).toLowerCase() === 'r') &&
         (!emp.resignationDate || emp.resignationDate <= selectedDate)
-      if (!emp || isResignedOnSelectedDate) continue
+      if (isResignedOnSelectedDate) continue
 
       const empLocation = emp.location || 'DBB CEBU'
       const empWgId = emp.workGroupId || 'wg-group-c'
@@ -241,7 +243,7 @@ export const attendanceRepository = {
       }
 
       processedBioIds.add(emp.bioId)
-      if (canonUid) processedCanonicalIds.add(canonUid)
+      if (resolvedCanon) processedCanonicalIds.add(resolvedCanon)
 
       const empContext: EmployeeScheduleContext = {
         bioId: emp.bioId,
@@ -345,7 +347,11 @@ export const attendanceRepository = {
     }
 
     // Inspect raw punches in this date range to detect uncached or corrupted/stale daily summaries
-    const allPunchesInMonth = await db.biometricPunches.where('date').between(startDate, endDate, true, true).toArray()
+    // Ensure employee cache is initialized so secondary/merged Bio IDs resolve to their canonical employee
+    const [, allPunchesInMonth] = await Promise.all([
+      employeeRepository.getEmployeeMap(),
+      db.biometricPunches.where('date').between(startDate, endDate, true, true).toArray()
+    ])
     const punchesByDate = new Map<string, { bioIds: Set<string>; latestImportTime: string }>()
     for (const p of allPunchesInMonth) {
       if (!p.date) continue
@@ -354,7 +360,8 @@ export const attendanceRepository = {
         group = { bioIds: new Set(), latestImportTime: p.importedAt || p.timestamp || '' }
         punchesByDate.set(p.date, group)
       }
-      group.bioIds.add(p.bioId)
+      const canonicalBio = employeeRepository.resolveCanonicalBioIdSync(p.bioId) || p.bioId
+      group.bioIds.add(canonicalBio)
       const pTime = p.importedAt || p.timestamp || ''
       if (pTime && pTime > group.latestImportTime) {
         group.latestImportTime = pTime

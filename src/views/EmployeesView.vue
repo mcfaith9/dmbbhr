@@ -36,7 +36,8 @@ import {
   Power,
   RotateCcw,
   Trash2,
-  Link2
+  Link2,
+  ArrowRight
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -44,8 +45,11 @@ import {
   VALID_LOCATIONS,
   type PeopleImportPreviewResult,
   type PeopleImportRowItem,
-  type PeopleImportApplyResult
+  type PeopleImportApplyResult,
+  type ConsolidationPreviewResult,
+  type EmployeeConsolidationAudit
 } from '@/services/employees'
+import { authService } from '@/services/auth'
 import {
   getEmployeeBiometricEntries,
   getEmployeePrimaryBioId,
@@ -196,6 +200,20 @@ const bioIdSuccessMsg = ref('')
 const pendingBioIdLinkConfirm = ref<{ bioId: string; notes?: string } | null>(null)
 const pendingBioIdRemoveConfirm = ref<string | null>(null)
 
+// Employee Consolidation Workflow state
+const consolidationTargetBioId = ref('')
+const consolidationSearchQuery = ref('')
+const consolidationDirection = ref<'absorb_into_current' | 'merge_current_into_target'>('absorb_into_current')
+const consolidationPreview = ref<ConsolidationPreviewResult | null>(null)
+const consolidationResolutions = ref<Record<string, 'canonical' | 'source'>>({})
+const consolidationConfirmedByAdmin = ref(false)
+const consolidationNotes = ref('')
+const consolidationLoading = ref(false)
+const consolidationExecuting = ref(false)
+const consolidationErrorMsg = ref('')
+const consolidationSuccessMsg = ref('')
+const consolidationAudits = ref<EmployeeConsolidationAudit[]>([])
+
 function resetBioIdManagementState() {
   newSecondaryBioId.value = ''
   newSecondaryBioIdNotes.value = ''
@@ -204,6 +222,161 @@ function resetBioIdManagementState() {
   bioIdSuccessMsg.value = ''
   pendingBioIdLinkConfirm.value = null
   pendingBioIdRemoveConfirm.value = null
+
+  consolidationTargetBioId.value = ''
+  consolidationSearchQuery.value = ''
+  consolidationDirection.value = 'absorb_into_current'
+  consolidationPreview.value = null
+  consolidationResolutions.value = {}
+  consolidationConfirmedByAdmin.value = false
+  consolidationNotes.value = ''
+  consolidationLoading.value = false
+  consolidationExecuting.value = false
+  consolidationErrorMsg.value = ''
+  consolidationSuccessMsg.value = ''
+  consolidationAudits.value = []
+}
+
+async function loadConsolidationAuditsForEmployee(bioId?: string) {
+  if (!bioId) {
+    consolidationAudits.value = []
+    return
+  }
+  try {
+    consolidationAudits.value = await employeeService.getConsolidationAudits(bioId)
+  } catch {
+    consolidationAudits.value = []
+  }
+}
+
+const consolidationCandidates = computed(() => {
+  const currentId = selectedEmployee.value?.biometric_user_id
+  const q = consolidationSearchQuery.value.trim().toLowerCase()
+  return employees.value
+    .filter(e => !e.is_merged && !e.merged_into_bio_id && e.biometric_user_id !== currentId)
+    .filter(e => {
+      if (!q) return true
+      return (
+        e.full_name.toLowerCase().includes(q) ||
+        e.biometric_user_id.toLowerCase().includes(q) ||
+        getEmployeeAllBioIds(e).some(id => id.toLowerCase().includes(q)) ||
+        (e.department || '').toLowerCase().includes(q)
+      )
+    })
+})
+
+const consolidationTargetEmployee = computed<Employee | null>(() => {
+  if (!consolidationTargetBioId.value) return null
+  return employees.value.find(e => e.biometric_user_id === consolidationTargetBioId.value) || null
+})
+
+const canonicalBioIdForConsolidation = computed(() => {
+  if (!selectedEmployee.value || !consolidationTargetBioId.value) return ''
+  return consolidationDirection.value === 'absorb_into_current'
+    ? selectedEmployee.value.biometric_user_id
+    : consolidationTargetBioId.value
+})
+
+const sourceBioIdForConsolidation = computed(() => {
+  if (!selectedEmployee.value || !consolidationTargetBioId.value) return ''
+  return consolidationDirection.value === 'absorb_into_current'
+    ? consolidationTargetBioId.value
+    : selectedEmployee.value.biometric_user_id
+})
+
+const hasUnresolvedConsolidationConflicts = computed(() => {
+  if (!consolidationPreview.value) return false
+  return consolidationPreview.value.conflictFields.some(
+    cf => cf.hadBothValues && !consolidationResolutions.value[cf.field]
+  )
+})
+
+function toggleConsolidationDirection() {
+  consolidationDirection.value =
+    consolidationDirection.value === 'absorb_into_current'
+      ? 'merge_current_into_target'
+      : 'absorb_into_current'
+  consolidationPreview.value = null
+  consolidationResolutions.value = {}
+  consolidationConfirmedByAdmin.value = false
+  consolidationErrorMsg.value = ''
+  consolidationSuccessMsg.value = ''
+}
+
+function setConsolidationFieldChoice(field: string, choice: 'canonical' | 'source') {
+  consolidationResolutions.value = {
+    ...consolidationResolutions.value,
+    [field]: choice
+  }
+}
+
+async function runConsolidationPreview() {
+  if (!canonicalBioIdForConsolidation.value || !sourceBioIdForConsolidation.value) {
+    consolidationErrorMsg.value = 'Select another existing employee record to consolidate first.'
+    return
+  }
+  consolidationLoading.value = true
+  consolidationErrorMsg.value = ''
+  consolidationSuccessMsg.value = ''
+  consolidationPreview.value = null
+  consolidationResolutions.value = {}
+  consolidationConfirmedByAdmin.value = false
+
+  try {
+    const preview = await employeeService.previewConsolidateEmployees(
+      canonicalBioIdForConsolidation.value,
+      sourceBioIdForConsolidation.value
+    )
+    consolidationPreview.value = preview
+    // Pre-fill only non-conflicting empty canonical fields with source values;
+    // true conflicts (hadBothValues) require explicit administrator choice.
+    const initialChoices: Record<string, 'canonical' | 'source'> = {}
+    for (const cf of preview.conflictFields) {
+      if (!cf.hadBothValues) {
+        initialChoices[cf.field] = cf.recommendedChoice
+      }
+    }
+    consolidationResolutions.value = initialChoices
+  } catch (err: any) {
+    consolidationErrorMsg.value = err?.message || 'Failed to preview employee consolidation.'
+  } finally {
+    consolidationLoading.value = false
+  }
+}
+
+async function executeConsolidation() {
+  if (!consolidationPreview.value || !consolidationConfirmedByAdmin.value) return
+  if (hasUnresolvedConsolidationConflicts.value) {
+    consolidationErrorMsg.value = 'Please choose Canonical or Source for every highlighted conflict field before confirming.'
+    return
+  }
+
+  consolidationExecuting.value = true
+  consolidationErrorMsg.value = ''
+  consolidationSuccessMsg.value = ''
+
+  try {
+    const currentUser = authService.getCurrentUser()
+    const performedBy = currentUser?.name || currentUser?.username || 'Administrator'
+    const result = await employeeService.consolidateEmployees({
+      canonicalBioId: consolidationPreview.value.canonicalBioId,
+      sourceBioId: consolidationPreview.value.sourceBioId,
+      confirmedByAdmin: true,
+      resolutions: consolidationResolutions.value,
+      performedBy,
+      notes: consolidationNotes.value.trim() || undefined
+    })
+
+    const savedSuccessMsg = `Consolidated Bio ID ${result.archivedSourceEmployee.biometric_user_id} (${result.archivedSourceEmployee.full_name}) into canonical Bio ID ${result.canonicalEmployee.biometric_user_id} (${result.canonicalEmployee.full_name}). All Bio IDs, raw punches, and finalized payroll snapshots are preserved.`
+    await executeLoadEmployees()
+    openProfile(result.canonicalEmployee, 'edit', 'biometric')
+    consolidationSuccessMsg.value = savedSuccessMsg
+    await loadConsolidationAuditsForEmployee(result.canonicalEmployee.biometric_user_id)
+  } catch (err: any) {
+    consolidationErrorMsg.value = err?.message || 'Failed to consolidate employee records.'
+  } finally {
+    consolidationExecuting.value = false
+  }
 }
 
 function getBioIdEntries(emp?: Employee | null): BiometricIdEntry[] {
@@ -803,6 +976,7 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   profileErrorMsg.value = ''
   resetBioIdManagementState()
   showProfileModal.value = true
+  loadConsolidationAuditsForEmployee(emp.biometric_user_id)
 
   nextTick(() => {
     isInitializingProfileForm.value = false
@@ -1790,6 +1964,30 @@ onUnmounted(() => {
                   <span class="text-[9px] uppercase px-1 rounded bg-muted/80 text-muted-foreground">
                     {{ entry.status === 'inactive' ? 'Inactive' : entry.role === 'primary' ? 'Primary' : 'Secondary' }}
                   </span>
+                  <span v-if="entry.transferredFromBioId" class="text-[9px] text-muted-foreground">
+                    (merged from {{ entry.transferredFromBioId }})
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="consolidationAudits.length > 0" class="pt-2 border-t space-y-1.5">
+                <div class="text-[11px] font-semibold text-foreground">Consolidation History</div>
+                <div
+                  v-for="audit in consolidationAudits"
+                  :key="audit.id"
+                  class="p-2 rounded-md border bg-card text-[11px] space-y-0.5"
+                >
+                  <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <span class="font-medium text-foreground">
+                      Merged <strong class="font-mono">{{ audit.sourceBioId }}</strong> ({{ audit.sourceName }}) → <strong class="font-mono">{{ audit.canonicalBioId }}</strong>
+                    </span>
+                    <span class="text-[10px] text-muted-foreground font-mono">
+                      {{ formatIsoShortDate(audit.performedAt) }} • {{ audit.performedBy }}
+                    </span>
+                  </div>
+                  <div class="text-[10px] text-muted-foreground">
+                    Transferred: {{ audit.transferredBioIds.join(', ') || audit.sourceBioId }} • Preserved {{ audit.transferredRecordsCount.punchesPreserved }} punch(es), {{ audit.transferredRecordsCount.finalizedSnapshotsPreserved }} finalized snapshot(s)
+                  </div>
                 </div>
               </div>
             </div>
@@ -2888,6 +3086,319 @@ onUnmounted(() => {
                     <p class="text-muted-foreground text-[10px] leading-relaxed">
                       <strong>Duplicate & Merge Safety:</strong> Similar employee names never merge automatically. Each linked Biometric ID must be unique across all employees and explicitly confirmed by an administrator. Deactivating a secondary ID preserves historical attendance while flagging any future punches on that ID for admin review.
                     </p>
+                  </div>
+
+                  <!-- Consolidate Existing Employee Records Workflow (Separate from Add Secondary Bio ID) -->
+                  <div class="rounded-lg bg-card p-3 border space-y-3 text-xs">
+                    <div class="flex items-center justify-between gap-2 flex-wrap border-b pb-2">
+                      <div class="flex items-center gap-1.5 font-semibold text-foreground">
+                        <Users class="size-3.5 text-primary" />
+                        <span>Consolidate Existing Employee Records</span>
+                      </div>
+                      <Badge variant="outline" class="text-[10px] font-mono">
+                        Admin-Confirmed Merge
+                      </Badge>
+                    </div>
+
+                    <p class="text-[11px] text-muted-foreground leading-relaxed">
+                      Use this workflow when two <strong>already-existing</strong> employee profiles (each with its own Primary Bio ID) belong to the same physical person. Both Bio IDs, all raw punches, and finalized payroll snapshots are preserved while the archived duplicate is consolidated into one canonical employee.
+                    </p>
+
+                    <div
+                      v-if="consolidationErrorMsg"
+                      class="p-2.5 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-[11px] flex items-start gap-2"
+                    >
+                      <AlertCircle class="size-3.5 shrink-0 mt-0.5" />
+                      <span>{{ consolidationErrorMsg }}</span>
+                    </div>
+                    <div
+                      v-if="consolidationSuccessMsg"
+                      class="p-2.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-[11px] flex items-start gap-2"
+                    >
+                      <CheckCircle2 class="size-3.5 shrink-0 mt-0.5 text-emerald-600" />
+                      <span>{{ consolidationSuccessMsg }}</span>
+                    </div>
+
+                    <!-- Step 1: Select other employee & canonical direction -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div class="space-y-1">
+                        <label class="text-[11px] font-semibold text-foreground block">
+                          Filter Existing Employees
+                        </label>
+                        <div class="relative">
+                          <Search class="size-3.5 text-muted-foreground absolute left-2.5 top-2.5" />
+                          <Input
+                            v-model="consolidationSearchQuery"
+                            type="text"
+                            placeholder="Search name or Bio ID (e.g. 50305)..."
+                            class="h-8 pl-8 text-xs"
+                          />
+                        </div>
+                      </div>
+                      <div class="space-y-1">
+                        <label class="text-[11px] font-semibold text-foreground block">
+                          Select Matching Employee Record
+                        </label>
+                        <select
+                          v-model="consolidationTargetBioId"
+                          class="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                          @change="consolidationPreview = null; consolidationErrorMsg = ''; consolidationSuccessMsg = ''"
+                        >
+                          <option value="">-- Choose employee to consolidate --</option>
+                          <option
+                            v-for="cand in consolidationCandidates"
+                            :key="cand.biometric_user_id"
+                            :value="cand.biometric_user_id"
+                          >
+                            {{ cand.full_name }} (Bio ID: {{ cand.biometric_user_id }} • {{ formatStatusDisplay(cand.status, cand.exclude_from_biometric) }})
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <!-- Step 2: Surviving Canonical vs Source Archive Direction -->
+                    <div
+                      v-if="consolidationTargetEmployee"
+                      class="rounded-md border bg-muted/20 p-2.5 space-y-2"
+                    >
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div class="flex items-center gap-2 flex-wrap text-[11px]">
+                          <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/30">
+                            Canonical (Survives):
+                            {{
+                              consolidationDirection === 'absorb_into_current'
+                                ? `${selectedEmployee?.full_name} (${selectedEmployee?.biometric_user_id})`
+                                : `${consolidationTargetEmployee.full_name} (${consolidationTargetEmployee.biometric_user_id})`
+                            }}
+                          </span>
+                          <ArrowRight class="size-3.5 text-muted-foreground shrink-0" />
+                          <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-800 dark:text-amber-300 font-semibold border border-amber-500/30">
+                            Source (Archived):
+                            {{
+                              consolidationDirection === 'absorb_into_current'
+                                ? `${consolidationTargetEmployee.full_name} (${consolidationTargetEmployee.biometric_user_id})`
+                                : `${selectedEmployee?.full_name} (${selectedEmployee?.biometric_user_id})`
+                            }}
+                          </span>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-7 text-[11px] gap-1"
+                            :disabled="consolidationLoading || consolidationExecuting"
+                            @click="toggleConsolidationDirection"
+                          >
+                            <RotateCcw class="size-3" />
+                            <span>Swap Canonical</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            class="h-7 text-[11px] gap-1"
+                            :disabled="consolidationLoading || consolidationExecuting"
+                            @click="runConsolidationPreview"
+                          >
+                            <RefreshCw v-if="consolidationLoading" class="size-3 animate-spin" />
+                            <span>{{ consolidationLoading ? 'Analyzing...' : 'Preview Consolidation' }}</span>
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Step 3: Side-by-Side Comparison, Conflict Resolution & Confirmation -->
+                    <div
+                      v-if="consolidationPreview"
+                      class="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3"
+                    >
+                      <div class="flex items-center justify-between gap-2 flex-wrap border-b border-primary/15 pb-2">
+                        <div class="font-semibold text-foreground flex items-center gap-1.5">
+                          <ShieldAlert class="size-4 text-primary shrink-0" />
+                          <span>Side-by-Side Consolidation Preview</span>
+                        </div>
+                        <span class="text-[10px] font-mono text-muted-foreground">
+                          Canonical {{ consolidationPreview.canonicalBioId }} ⇐ Source {{ consolidationPreview.sourceBioId }}
+                        </span>
+                      </div>
+
+                      <!-- Side-by-side Employee Cards -->
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px]">
+                        <div class="rounded-md border bg-card p-2.5 space-y-1">
+                          <div class="font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+                            <span>Surviving Canonical Profile</span>
+                            <Badge variant="success" class="text-[9px] font-mono">Primary: {{ consolidationPreview.canonicalBioId }}</Badge>
+                          </div>
+                          <div class="font-bold text-foreground">{{ consolidationPreview.canonicalEmployee.full_name }}</div>
+                          <div class="text-muted-foreground">
+                            {{ consolidationPreview.canonicalEmployee.department || 'Operations' }} • {{ consolidationPreview.canonicalEmployee.work_group_name || 'Group C' }} • {{ formatStatusDisplay(consolidationPreview.canonicalEmployee.status, consolidationPreview.canonicalEmployee.exclude_from_biometric) }}
+                          </div>
+                        </div>
+
+                        <div class="rounded-md border bg-card p-2.5 space-y-1">
+                          <div class="font-semibold text-amber-700 dark:text-amber-300 flex items-center justify-between">
+                            <span>Source Record (Will Be Archived)</span>
+                            <Badge variant="outline" class="text-[9px] font-mono">Bio ID: {{ consolidationPreview.sourceBioId }}</Badge>
+                          </div>
+                          <div class="font-bold text-foreground">{{ consolidationPreview.sourceEmployee.full_name }}</div>
+                          <div class="text-muted-foreground">
+                            {{ consolidationPreview.sourceEmployee.department || 'Operations' }} • {{ consolidationPreview.sourceEmployee.work_group_name || 'Group C' }} • {{ formatStatusDisplay(consolidationPreview.sourceEmployee.status, consolidationPreview.sourceEmployee.exclude_from_biometric) }}
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Impact Summary -->
+                      <div class="rounded-md border bg-card p-2.5 space-y-1.5">
+                        <div class="text-[11px] font-semibold text-foreground">Data & Ownership Impact</div>
+                        <div class="flex flex-wrap gap-1.5 text-[10px] font-mono">
+                          <Badge variant="outline">Punches Preserved: {{ consolidationPreview.impactSummary.punchesPreserved }}</Badge>
+                          <Badge variant="outline">Leaves to Transfer: {{ consolidationPreview.impactSummary.leaveRecords }}</Badge>
+                          <Badge variant="outline">OT Forms to Transfer: {{ consolidationPreview.impactSummary.overtimeAuthorizations }}</Badge>
+                          <Badge variant="outline">Manual Adj. to Transfer: {{ consolidationPreview.impactSummary.manualAdjustments }}</Badge>
+                          <Badge variant="outline">HR Notices to Transfer: {{ consolidationPreview.impactSummary.hrNotices }}</Badge>
+                          <Badge variant="outline">Draft Payroll to Transfer: {{ consolidationPreview.impactSummary.draftSnapshotsToTransfer }}</Badge>
+                          <Badge variant="secondary">Finalized Payroll Untouched: {{ consolidationPreview.impactSummary.finalizedSnapshotsPreserved }}</Badge>
+                        </div>
+                      </div>
+
+                      <!-- Warnings -->
+                      <div
+                        v-for="(warn, wIdx) in consolidationPreview.warnings"
+                        :key="wIdx"
+                        class="p-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-[11px] flex items-start gap-2"
+                      >
+                        <AlertTriangle class="size-3.5 shrink-0 mt-0.5" />
+                        <span>{{ warn }}</span>
+                      </div>
+
+                      <!-- Conflict Resolution Fields -->
+                      <div v-if="consolidationPreview.conflictFields.length > 0" class="space-y-2">
+                        <div class="text-[11px] font-semibold text-foreground flex items-center justify-between">
+                          <span>Resolve Field Differences ({{ consolidationPreview.conflictFields.length }})</span>
+                          <span v-if="hasUnresolvedConsolidationConflicts" class="text-destructive text-[10px]">
+                            Select Canonical or Source for every conflict
+                          </span>
+                        </div>
+                        <div class="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                          <div
+                            v-for="cf in consolidationPreview.conflictFields"
+                            :key="cf.field"
+                            class="rounded-md border bg-card p-2 space-y-1.5"
+                            :class="cf.hadBothValues && !consolidationResolutions[cf.field] ? 'border-amber-500/60' : ''"
+                          >
+                            <div class="flex items-center justify-between gap-2">
+                              <span class="font-semibold text-[11px] text-foreground">{{ cf.label }}</span>
+                              <Badge
+                                :variant="cf.hadBothValues ? 'warning' : 'secondary'"
+                                class="text-[9px] uppercase font-mono"
+                              >
+                                {{ cf.hadBothValues ? 'Conflict — Choose One' : 'Fill Empty Field' }}
+                              </Badge>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              <button
+                                type="button"
+                                class="text-left p-1.5 rounded border text-[11px] transition-colors cursor-pointer"
+                                :class="
+                                  consolidationResolutions[cf.field] === 'canonical'
+                                    ? 'border-primary bg-primary/10 text-foreground font-semibold'
+                                    : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                                "
+                                @click="setConsolidationFieldChoice(cf.field, 'canonical')"
+                              >
+                                <span class="text-[9px] uppercase font-mono block text-muted-foreground">Keep Canonical</span>
+                                <span class="break-words">{{ cf.canonicalDisplay }}</span>
+                              </button>
+                              <button
+                                type="button"
+                                class="text-left p-1.5 rounded border text-[11px] transition-colors cursor-pointer"
+                                :class="
+                                  consolidationResolutions[cf.field] === 'source'
+                                    ? 'border-primary bg-primary/10 text-foreground font-semibold'
+                                    : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                                "
+                                @click="setConsolidationFieldChoice(cf.field, 'source')"
+                              >
+                                <span class="text-[9px] uppercase font-mono block text-muted-foreground">Use Source</span>
+                                <span class="break-words">{{ cf.sourceDisplay }}</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="text-[11px] text-muted-foreground bg-card rounded-md border p-2">
+                        No conflicting field values detected between these two records.
+                      </div>
+
+                      <!-- Admin Confirmation & Notes -->
+                      <div class="space-y-2 pt-1 border-t border-primary/15">
+                        <Input
+                          v-model="consolidationNotes"
+                          type="text"
+                          placeholder="Optional consolidation audit note (e.g. Same person enrolled twice on terminal)"
+                          class="h-8 text-xs bg-card"
+                        />
+                        <label class="flex items-start gap-2 text-[11px] text-foreground cursor-pointer select-none">
+                          <input
+                            v-model="consolidationConfirmedByAdmin"
+                            type="checkbox"
+                            class="mt-0.5 rounded border-border accent-primary"
+                          />
+                          <span>
+                            I confirm as Administrator that Bio ID <strong class="font-mono">{{ consolidationPreview.canonicalBioId }}</strong> and Bio ID <strong class="font-mono">{{ consolidationPreview.sourceBioId }}</strong> belong to the same physical employee and should be consolidated into one canonical record.
+                          </span>
+                        </label>
+                        <div class="flex items-center gap-2 pt-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            class="h-7 text-xs gap-1.5"
+                            :disabled="consolidationExecuting || !consolidationConfirmedByAdmin || hasUnresolvedConsolidationConflicts"
+                            @click="executeConsolidation"
+                          >
+                            <RefreshCw v-if="consolidationExecuting" class="size-3 animate-spin" />
+                            <CheckCircle2 v-else class="size-3" />
+                            <span>{{ consolidationExecuting ? 'Consolidating...' : 'Confirm & Consolidate Employees' }}</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-7 text-xs"
+                            :disabled="consolidationExecuting"
+                            @click="consolidationPreview = null; consolidationConfirmedByAdmin = false"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Consolidation Audit History -->
+                    <div v-if="consolidationAudits.length > 0" class="pt-2 border-t space-y-1.5">
+                      <div class="text-[11px] font-semibold text-foreground">Consolidation Audit Trail</div>
+                      <div
+                        v-for="audit in consolidationAudits"
+                        :key="audit.id"
+                        class="p-2 rounded-md border bg-muted/20 text-[11px] space-y-0.5"
+                      >
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                          <span class="font-medium text-foreground">
+                            Merged <strong class="font-mono">{{ audit.sourceBioId }}</strong> ({{ audit.sourceName }}) → <strong class="font-mono">{{ audit.canonicalBioId }}</strong>
+                          </span>
+                          <span class="text-[10px] text-muted-foreground font-mono">
+                            {{ formatIsoShortDate(audit.performedAt) }} • {{ audit.performedBy }}
+                          </span>
+                        </div>
+                        <div class="text-[10px] text-muted-foreground">
+                          Transferred Bio IDs: {{ audit.transferredBioIds.join(', ') || audit.sourceBioId }} • Punches preserved: {{ audit.transferredRecordsCount.punchesPreserved }} • Finalized snapshots untouched: {{ audit.transferredRecordsCount.finalizedSnapshotsPreserved }}
+                        </div>
+                        <div v-if="audit.notes" class="text-[10px] italic text-muted-foreground">
+                          Note: {{ audit.notes }}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="pt-1 flex items-center gap-2 flex-wrap">
