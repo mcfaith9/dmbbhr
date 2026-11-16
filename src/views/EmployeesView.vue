@@ -37,7 +37,9 @@ import {
   RotateCcw,
   Trash2,
   Link2,
-  ArrowRight
+  ArrowRight,
+  ChevronsUpDown,
+  Check
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -77,6 +79,11 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent
+} from '@/components/ui/popover'
 
 const router = useRouter()
 const route = useRoute()
@@ -202,6 +209,7 @@ const pendingBioIdLinkConfirm = ref<{ bioId: string; notes?: string } | null>(nu
 const pendingBioIdRemoveConfirm = ref<string | null>(null)
 
 // Employee Consolidation Workflow state
+const isConsolidationSelectorOpen = ref(false)
 const consolidationTargetBioId = ref('')
 const consolidationSearchQuery = ref('')
 const consolidationDirection = ref<'absorb_into_current' | 'merge_current_into_target'>('absorb_into_current')
@@ -224,6 +232,7 @@ function resetBioIdManagementState() {
   pendingBioIdLinkConfirm.value = null
   pendingBioIdRemoveConfirm.value = null
 
+  isConsolidationSelectorOpen.value = false
   consolidationTargetBioId.value = ''
   consolidationSearchQuery.value = ''
   consolidationDirection.value = 'absorb_into_current'
@@ -291,6 +300,17 @@ const hasUnresolvedConsolidationConflicts = computed(() => {
     cf => cf.hadBothValues && !consolidationResolutions.value[cf.field]
   )
 })
+
+function selectConsolidationCandidate(bioId: string) {
+  consolidationTargetBioId.value = bioId
+  isConsolidationSelectorOpen.value = false
+  consolidationSearchQuery.value = ''
+  consolidationPreview.value = null
+  consolidationResolutions.value = {}
+  consolidationConfirmedByAdmin.value = false
+  consolidationErrorMsg.value = ''
+  consolidationSuccessMsg.value = ''
+}
 
 function toggleConsolidationDirection() {
   consolidationDirection.value =
@@ -3205,40 +3225,92 @@ onUnmounted(() => {
                     </div>
 
                     <!-- Step 1: Select other employee & canonical direction -->
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      <div class="space-y-1">
-                        <label class="text-[11px] font-semibold text-foreground block">
-                          Filter Existing Employees
-                        </label>
-                        <div class="relative">
-                          <Search class="size-3.5 text-muted-foreground absolute left-2.5 top-2.5" />
-                          <Input
-                            v-model="consolidationSearchQuery"
-                            type="text"
-                            placeholder="Search name or Bio ID (e.g. 50305)..."
-                            class="h-8 pl-8 text-xs"
-                          />
-                        </div>
-                      </div>
-                      <div class="space-y-1">
-                        <label class="text-[11px] font-semibold text-foreground block">
-                          Select Matching Employee Record
-                        </label>
-                        <select
-                          v-model="consolidationTargetBioId"
-                          class="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                          @change="consolidationPreview = null; consolidationErrorMsg = ''; consolidationSuccessMsg = ''"
-                        >
-                          <option value="">-- Choose employee to consolidate --</option>
-                          <option
-                            v-for="cand in consolidationCandidates"
-                            :key="cand.biometric_user_id"
-                            :value="cand.biometric_user_id"
+                    <div class="space-y-1">
+                      <label class="text-[11px] font-semibold text-foreground block">
+                        Select Matching Employee Records
+                      </label>
+                      <Popover v-model:open="isConsolidationSelectorOpen">
+                        <PopoverTrigger as-child>
+                          <button
+                            type="button"
+                            role="combobox"
+                            :aria-expanded="isConsolidationSelectorOpen"
+                            class="flex h-8 w-full items-center justify-between rounded-md border border-input bg-card px-2.5 text-xs shadow-2xs transition-colors hover:bg-muted/40 focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+                            :class="consolidationTargetEmployee ? 'text-foreground font-medium' : 'text-muted-foreground'"
                           >
-                            {{ cand.full_name }} (Bio ID: {{ cand.biometric_user_id }} • {{ formatStatusDisplay(cand.status, cand.exclude_from_biometric) }})
-                          </option>
-                        </select>
-                      </div>
+                            <span class="truncate mr-2">
+                              <template v-if="consolidationTargetEmployee">
+                                {{ consolidationTargetEmployee.full_name }} (Bio ID: {{ consolidationTargetEmployee.biometric_user_id }} • {{ formatStatusDisplay(consolidationTargetEmployee.status, consolidationTargetEmployee.exclude_from_biometric) }})
+                              </template>
+                              <template v-else>
+                                -- Choose employee to consolidate --
+                              </template>
+                            </span>
+                            <div class="flex items-center gap-1 shrink-0">
+                              <span
+                                v-if="consolidationTargetBioId"
+                                class="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Clear selected employee"
+                                @click.stop="selectConsolidationCandidate('')"
+                              >
+                                <X class="size-3" />
+                              </span>
+                              <ChevronsUpDown class="size-3.5 text-muted-foreground opacity-60" />
+                            </div>
+                          </button>
+                        </PopoverTrigger>
+
+                        <PopoverContent
+                          align="start"
+                          class="z-[60] w-(--reka-popover-trigger-width) min-w-[280px] max-w-[calc(100vw-2rem)] p-2 shadow-lg rounded-xl text-xs space-y-2"
+                        >
+                          <div class="relative">
+                            <Search class="size-3.5 text-muted-foreground absolute left-2.5 top-2.5 pointer-events-none" />
+                            <Input
+                              v-model="consolidationSearchQuery"
+                              type="text"
+                              placeholder="Search name, Bio ID, or department..."
+                              class="h-8 pl-8 text-xs bg-background"
+                              autofocus
+                            />
+                          </div>
+
+                          <div class="max-h-60 overflow-y-auto space-y-0.5 pr-0.5">
+                            <div
+                              v-if="consolidationCandidates.length === 0"
+                              class="p-3 text-center text-xs text-muted-foreground"
+                            >
+                              No matching employee records found.
+                            </div>
+
+                            <button
+                              v-for="cand in consolidationCandidates"
+                              :key="cand.biometric_user_id"
+                              type="button"
+                              class="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted cursor-pointer"
+                              :class="
+                                consolidationTargetBioId === cand.biometric_user_id
+                                  ? 'bg-primary/10 text-primary font-semibold'
+                                  : 'text-foreground'
+                              "
+                              @click="selectConsolidationCandidate(cand.biometric_user_id)"
+                            >
+                              <span class="min-w-0 flex-1">
+                                <span class="block truncate font-medium">
+                                  {{ cand.full_name }}
+                                </span>
+                                <span class="block truncate text-[10px] text-muted-foreground font-mono">
+                                  Bio ID: {{ cand.biometric_user_id }} · {{ formatStatusDisplay(cand.status, cand.exclude_from_biometric) }}<template v-if="cand.department"> · {{ cand.department }}</template>
+                                </span>
+                              </span>
+                              <Check
+                                v-if="consolidationTargetBioId === cand.biometric_user_id"
+                                class="size-3.5 shrink-0 text-primary"
+                              />
+                            </button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
 
                     <!-- Step 2: Surviving Canonical vs Source Archive Direction -->

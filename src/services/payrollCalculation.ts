@@ -25,6 +25,14 @@ import { scheduleRepository } from '@/repositories/scheduleRepository'
 import { holidayService } from '@/services/holidays/holidayService'
 import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateMultipleOvertimeRecordsForDay } from '@/services/overtimePolicy'
 import { collectEmployeeIdKeys, getEmployeePrimaryBioId, recordMatchesEmployee } from '@/lib/employeeIdentity'
+import {
+  deduplicateEmployees,
+  getEffectiveStartDate,
+  isActiveStatus,
+  isEmployeeResignedOnDate,
+  isResignedStatus,
+  normalizeEmployeeDate
+} from './reportsService'
 
 /**
  * Resolves holidays for the cutoff period from holidayService or scheduleRepository if not provided
@@ -296,7 +304,12 @@ export const payrollCalculationService = {
     holidays: HolidayRecord[] = [],
     dailyAttendanceRecords: DailyAttendanceRecord[] = [],
     overtimeAuthorizations: OvertimeAuthorizationRecord[] = [],
-    options: { attendancePrefetched?: boolean; existingSnapshot?: PayrollSnapshotRecord | null } = {}
+    options: {
+      attendancePrefetched?: boolean
+      existingSnapshot?: PayrollSnapshotRecord | null
+      approvedLeaveDates?: Set<string>
+      datesWithAnyAttendance?: Set<string>
+    } = {}
   ): Promise<EmployeePayrollRecord> {
     const rawBioId = String(employee.canonical_bio_id || employee.biometric_user_id || (employee as any).bioId || employee.employee_number || employee.id || '').trim()
     const targetIds = collectEmployeeIdKeys(employee, rawBioId)
@@ -356,6 +369,29 @@ export const payrollCalculationService = {
       const normHDate = normalizeDateStr(h.date)
       if (periodDatesSet.has(normHDate)) {
         holidayMap.set(normHDate, { ...h, date: normHDate })
+      }
+    }
+
+    // 2b. Obtain approved leaves across all linked Bio IDs for this employee
+    const approvedLeaveDatesSet = new Set<string>(options.approvedLeaveDates ? Array.from(options.approvedLeaveDates) : [])
+    if (!options.approvedLeaveDates) {
+      try {
+        const allApprovedLeaves = await db.leaveRecords
+          .where('status')
+          .equals('Approved')
+          .toArray()
+        for (const l of allApprovedLeaves) {
+          if (!recordMatchesEmployee(l.bioId, targetIds)) continue
+          const lStart = normalizeDateStr(l.startDate)
+          const lEnd = normalizeDateStr(l.endDate || l.startDate)
+          for (const dStr of periodDatesSet) {
+            if (lStart && lEnd && lStart <= dStr && lEnd >= dStr) {
+              approvedLeaveDatesSet.add(dStr)
+            }
+          }
+        }
+      } catch {
+        // ignore leave query errors
       }
     }
 
@@ -561,9 +597,9 @@ export const payrollCalculationService = {
 
     // Helper: Check unworked regular holiday eligibility under Philippine Labor Code
     const isEligibleForUnworkedRegularHoliday = (hDateStr: string): boolean => {
-      if (employee.resignation_date && employee.resignation_date < hDateStr) return false
-      if (employee.contract_date && employee.contract_date > hDateStr) return false
-      if (employee.hire_date && employee.hire_date > hDateStr) return false
+      if (isEmployeeResignedOnDate(employee.status, employee.resignation_date, hDateStr, todayStr)) return false
+      const effStart = getEffectiveStartDate(employee)
+      if (effStart && effStart > hDateStr) return false
 
       const [hy, hm, hd] = hDateStr.split('-').map(Number)
       const holidayDate = new Date(Date.UTC(hy, hm - 1, hd))
@@ -582,14 +618,19 @@ export const payrollCalculationService = {
           continue
         }
 
+        if (approvedLeaveDatesSet.has(prevDateStr)) return true
+
         // Found preceding scheduled workday
         const prevAtt = empAttendanceMap.get(prevDateStr) || empAttendanceMap.get(normalizeDateStr(prevDateStr))
         if (!prevAtt) {
           if (!period.dates.includes(prevDateStr)) {
-            return employee.status === 'active'
+            return isActiveStatus(employee.status)
           }
           return false
         }
+
+        const prevStatusLower = String(prevAtt.status || '').trim().toLowerCase()
+        if (prevStatusLower === 'on leave' || prevStatusLower === 'leave' || prevStatusLower.includes('leave')) return true
 
         const prevIn = prevAtt.actual_in?.trim() || ''
         const hasPrevIn = Boolean(
@@ -601,11 +642,10 @@ export const payrollCalculationService = {
         )
 
         if (hasPrevIn) return true
-        if (prevAtt.status === 'On Leave' || prevAtt.status === 'Leave') return true
         return false
       }
 
-      return employee.status === 'active'
+      return isActiveStatus(employee.status)
     }
 
     for (const dStr of period.dates) {
@@ -639,23 +679,26 @@ export const payrollCalculationService = {
         actualOut !== '—' &&
         actualOut !== '-'
       )
+      const attStatusLower = String(att?.status || '').trim().toLowerCase()
+      const isLeaveRecord =
+        attStatusLower === 'leave' ||
+        attStatusLower === 'on leave' ||
+        attStatusLower.includes('leave') ||
+        approvedLeaveDatesSet.has(normDStr) ||
+        approvedLeaveDatesSet.has(dStr)
+      const isAbsentRecord = attStatusLower.includes('absent')
       const statusWorked = att?.status === 'Present' || att?.status === 'Late' || att?.status === 'Overtime' || att?.status === 'Early Departure' || att?.status === 'Incomplete'
-      const hasWorked = hasValidIn || (typeof att?.worked_minutes === 'number' && att.worked_minutes > 0) || (typeof att?.total_hours_decimal === 'number' && att.total_hours_decimal > 0) || statusWorked
+      const hasWorked =
+        !isLeaveRecord &&
+        !isAbsentRecord &&
+        (hasValidIn || (typeof att?.worked_minutes === 'number' && att.worked_minutes > 0) || (typeof att?.total_hours_decimal === 'number' && att.total_hours_decimal > 0) || statusWorked)
 
-      const empStartDate = employee.hire_date || employee.contract_date
-        ? (employee.hire_date && employee.contract_date
-            ? (employee.hire_date <= employee.contract_date ? employee.hire_date : employee.contract_date)
-            : (employee.hire_date || employee.contract_date))
-        : undefined
-      const normStartDate = empStartDate ? normalizeDateStr(empStartDate) : undefined
-      const normResDate = employee.resignation_date ? normalizeDateStr(employee.resignation_date) : undefined
-      const normEmpStatus = String(employee.status || 'active').trim().toLowerCase()
-      const isActiveEmpStatus = normEmpStatus === 'active' || normEmpStatus === 'a'
+      const normStartDate = getEffectiveStartDate(employee)
       const isDateEligibleForAttendance =
-        isActiveEmpStatus &&
+        isActiveStatus(employee.status) &&
         !employee.exclude_from_biometric &&
         (!normStartDate || normStartDate <= normDStr) &&
-        (!normResDate || normResDate > normDStr)
+        !isEmployeeResignedOnDate(employee.status, employee.resignation_date, normDStr, todayStr)
 
       if (!isSunday && !isHoliday && isDateEligibleForAttendance) {
         scheduledDays++
@@ -797,14 +840,14 @@ export const payrollCalculationService = {
             standardShiftsUndertimeMinutes += dayUndertime
             standardShiftsUndertimeDeduction += dayUndertimeDed
           }
-        } else if (att?.status === 'On Leave' || att?.status === 'Leave') {
+        } else if (isLeaveRecord || att?.status === 'On Leave' || att?.status === 'Leave') {
           leaveDays++
         } else if (isFuture) {
           futureScheduledDays++
         } else if (!isDateEligibleForAttendance) {
           // Excluded from biometric monitoring (Active - NB), inactive/suspended/on_leave/csr, pre-hire, or post-resignation:
           // Do not mark as Absent or Unresolved.
-        } else if (!att && empAttendanceMap.size === 0) {
+        } else if (!att && empAttendanceMap.size === 0 && !(options.datesWithAnyAttendance?.has(normDStr) || options.datesWithAnyAttendance?.has(dStr))) {
           unresolvedDays++
         } else {
           absentDays++
@@ -871,9 +914,13 @@ export const payrollCalculationService = {
       // Daily wage worker: Base working pay is calculated from actual payable hours/days rendered
       basePay = Math.round(regularWorkedDaysPay * 100) / 100
     } else if (salaryType === 'Monthly') {
-      const semiMonthlyBasic = Math.round((basicSalary / 2) * 100) / 100
-      const absenceDeduction = Math.round(absentDays * dailyRate * 100) / 100
-      basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction) * 100) / 100)
+      if (!isActiveStatus(employee.status)) {
+        basePay = Math.round(regularWorkedDaysPay * 100) / 100
+      } else {
+        const semiMonthlyBasic = Math.round((basicSalary / 2) * 100) / 100
+        const absenceDeduction = Math.round(absentDays * dailyRate * 100) / 100
+        basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction) * 100) / 100)
+      }
     } else if (salaryType === 'Hourly') {
       basePay = Math.round(regularWorkedDaysPay * 100) / 100
     } else {
@@ -944,13 +991,12 @@ export const payrollCalculationService = {
       reviewReasons.push(`Net pay is negative (₱${netPay.toLocaleString('en-US', { minimumFractionDigits: 2 })}) due to deductions exceeding earnings`)
     }
 
-    const empStatusNorm = String(employee.status || 'active').trim().toLowerCase()
     const requiresBiometricAttendanceCheck =
       !employee.exclude_from_biometric &&
-      (empStatusNorm === 'active' || empStatusNorm === 'a') &&
+      isActiveStatus(employee.status) &&
       scheduledDays > 0
 
-    if (empAttendanceMap.size === 0 && requiresBiometricAttendanceCheck) {
+    if (empAttendanceMap.size === 0 && leaveDays === 0 && absentDays === 0 && requiresBiometricAttendanceCheck) {
       reviewReasons.push('No attendance records could be matched for this cutoff. Please check attendance logs before finalization.')
     } else if (unresolvedDays > 0) {
       reviewReasons.push(`${unresolvedDays} day(s) have unresolved attendance requiring HR audit`)
@@ -1043,19 +1089,18 @@ export const payrollCalculationService = {
     holidays: HolidayRecord[] = [],
     dailyAttendanceRecords: DailyAttendanceRecord[] = []
   ): Promise<EmployeePayrollRecord[]> {
-    const seenCanonicalIds = new Set<string>()
-    const targetEmployees = employees.filter(e => {
-      if (e.status === 'resigned' || e.is_merged || e.merged_into_bio_id) return false
-      const empKeys = collectEmployeeIdKeys(e)
-      if (empKeys.size === 0) return false
-      for (const k of empKeys) {
-        if (seenCanonicalIds.has(k)) return false
-      }
-      for (const k of empKeys) {
-        seenCanonicalIds.add(k)
-      }
-      return true
-    })
+    const { canonicalEmployees } = deduplicateEmployees(employees)
+    const targetEmployees = canonicalEmployees
+      .map(ce => ce.primary)
+      .filter(e => {
+        if (e.is_merged || e.merged_into_bio_id) return false
+        if (isResignedStatus(e.status)) return false
+        const resDate = normalizeEmployeeDate(e.resignation_date)
+        if (resDate && resDate < period.startDate) return false
+        const startDate = getEffectiveStartDate(e)
+        if (startDate && startDate > period.endDate) return false
+        return true
+      })
     const payrollRecords: EmployeePayrollRecord[] = []
 
     // 1. Pre-fetch holidays once for the batch using resolveCutoffHolidays
@@ -1067,9 +1112,34 @@ export const payrollCalculationService = {
       const periodSnaps = await db.payrollSnapshots.where('periodId').equals(period.id).toArray()
       for (const snap of periodSnaps) {
         if (snap.bioId) {
-          const sBio = String(snap.bioId).trim().toLowerCase()
-          snapshotMap.set(sBio, snap)
-          snapshotMap.set(sBio.replace(/^emp[-_]/i, ''), snap)
+          for (const sk of collectEmployeeIdKeys(snap.bioId)) {
+            snapshotMap.set(sk, snap)
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // 2b. Pre-fetch approved leaves once for the batch
+    const leavesByBioId = new Map<string, Set<string>>()
+    try {
+      const allApprovedLeaves = await db.leaveRecords
+        .where('status')
+        .equals('Approved')
+        .toArray()
+      for (const l of allApprovedLeaves) {
+        const lStart = (l.startDate || '').trim().slice(0, 10)
+        const lEnd = ((l.endDate || l.startDate) || '').trim().slice(0, 10)
+        if (!lStart || !lEnd) continue
+        const lKeys = collectEmployeeIdKeys(l.bioId)
+        for (const dStr of (period.dates || [])) {
+          if (lStart <= dStr && lEnd >= dStr) {
+            for (const lk of lKeys) {
+              if (!leavesByBioId.has(lk)) leavesByBioId.set(lk, new Set<string>())
+              leavesByBioId.get(lk)!.add(dStr)
+            }
+          }
         }
       }
     } catch {
@@ -1102,8 +1172,12 @@ export const payrollCalculationService = {
     }
 
     // Index attendance by all canonical, primary, and source Bio IDs for fast lookup
+    // Also track all dates where the company has recorded attendance activity
     const attendanceByBioId = new Map<string, DailyAttendanceRecord[]>()
+    const datesWithAnyAttendance = new Set<string>()
     for (const rec of dailyAttendanceRecords) {
+      if (rec.raw_date) datesWithAnyAttendance.add(String(rec.raw_date).trim().slice(0, 10))
+      if (rec.date) datesWithAnyAttendance.add(String(rec.date).trim().slice(0, 10))
       const recKeys = collectEmployeeIdKeys(
         rec.biometric_user_id,
         rec.primary_bio_id,
@@ -1131,11 +1205,13 @@ export const payrollCalculationService = {
       const empKeys = collectEmployeeIdKeys(emp)
       const empAttendanceSet = new Set<DailyAttendanceRecord>()
       const empOtSet = new Set<OvertimeAuthorizationRecord>()
+      const empApprovedLeaveDates = new Set<string>()
       let snap: PayrollSnapshotRecord | null = null
 
       for (const k of empKeys) {
         for (const rec of (attendanceByBioId.get(k) || [])) empAttendanceSet.add(rec)
         for (const ot of (otByBioId.get(k) || [])) empOtSet.add(ot)
+        for (const ld of (leavesByBioId.get(k) || [])) empApprovedLeaveDates.add(ld)
         if (!snap && snapshotMap.has(k)) {
           snap = snapshotMap.get(k) || null
         }
@@ -1147,7 +1223,12 @@ export const payrollCalculationService = {
         holidays,
         Array.from(empAttendanceSet),
         Array.from(empOtSet),
-        { attendancePrefetched, existingSnapshot: snap }
+        {
+          attendancePrefetched,
+          existingSnapshot: snap,
+          approvedLeaveDates: empApprovedLeaveDates,
+          datesWithAnyAttendance
+        }
       )
       payrollRecords.push(record)
     }

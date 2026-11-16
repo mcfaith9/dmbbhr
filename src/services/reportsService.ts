@@ -799,15 +799,21 @@ export const reportsService = {
             if (matchedCanonical) break
           }
         }
-        if (!matchedCanonical && r.biometric_user_id) {
-          unmatchedPunchBioIdsSet.add(r.biometric_user_id)
+        if (!matchedCanonical) {
+          if (r.biometric_user_id) {
+            unmatchedPunchBioIdsSet.add(r.biometric_user_id)
+          }
+          continue
         }
 
-        const empStatus = matchedCanonical?.primary.status ?? r.employee_status ?? 'active'
-        const empResDate = matchedCanonical?.primary.resignation_date ?? r.resignation_date
+        const empStatus = matchedCanonical.primary.status ?? r.employee_status ?? 'active'
+        const empResDate = matchedCanonical.primary.resignation_date ?? r.resignation_date
 
         // Exclude Active - NB (No Bio) employees from biometric attendance counts
-        if (matchedCanonical?.primary.exclude_from_biometric) {
+        const isExcludedNoBio =
+          Boolean(matchedCanonical.primary.exclude_from_biometric) ||
+          matchedCanonical.mergedRecords.some(m => isActiveStatus(m.status) && Boolean(m.exclude_from_biometric))
+        if (isExcludedNoBio) {
           continue
         }
 

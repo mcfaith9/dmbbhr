@@ -4909,7 +4909,7 @@ export const employeeRepository = {
     await ensureInitialized()
     let count = 0
     for (const emp of employeeCache!.values()) {
-      if (emp.status !== 'resigned') count++
+      if (emp.status === 'active' && !emp.excludeFromBiometric) count++
     }
     return count
   },
