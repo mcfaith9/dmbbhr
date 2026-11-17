@@ -1103,30 +1103,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           </div>
         </div>
 
-        <!-- B. Daily Absence Trend (High-Resolution Trend) -->
-        <div class="rounded-xl border bg-card p-5 shadow-xs space-y-3">
-          <div class="flex items-center justify-between border-b pb-2.5">
-            <div>
-              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <TrendingUp class="size-3.5 text-red-500" />
-                <span>Daily Absence Trend ({{ reportData.dateRangeLabel }})</span>
-              </h3>
-              <p class="text-[11px] text-muted-foreground mt-0.5">
-                Daily unexcused absence occurrences across scheduled working shifts. Sundays, official holidays, and post-resignation dates are fully excluded.
-              </p>
-            </div>
-            <Badge variant="outline" class="text-xs font-mono">
-              {{ reportData.kpis.absentCount }} Missed Workdays
-            </Badge>
-          </div>
-
-          <AttendanceTrendChart
-            :data="reportData.dailyTrend"
-            title="Daily Workforce Absence Frequency"
-          />
-        </div>
-
-        <!-- C. Weekly & Monthly Absence Trends -->
+        <!-- B. Weekly & Monthly Absence Trends -->
         <div class="rounded-xl border bg-card p-5 shadow-xs">
           <AbsencePeriodicChart
             :weekly-data="reportData.weeklyTrend"
