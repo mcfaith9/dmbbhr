@@ -1124,97 +1124,19 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           />
         </div>
 
-        <!-- C. Weekly / Monthly Trends + Department Distribution (2 Columns) -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <!-- Weekly & Monthly Trend Component -->
-          <div class="rounded-xl border bg-card p-5 shadow-xs">
-            <AbsencePeriodicChart
-              :weekly-data="reportData.weeklyTrend"
-              :monthly-data="reportData.monthlyTrend"
-            />
-          </div>
-
-          <!-- Departmental Absence Distribution Component -->
-          <div class="rounded-xl border bg-card p-5 shadow-xs">
-            <AbsenceDistributionChart
-              :distribution="reportData.departmentDistribution"
-            />
-          </div>
+        <!-- C. Weekly & Monthly Absence Trends -->
+        <div class="rounded-xl border bg-card p-5 shadow-xs">
+          <AbsencePeriodicChart
+            :weekly-data="reportData.weeklyTrend"
+            :monthly-data="reportData.monthlyTrend"
+          />
         </div>
 
-        <!-- D. Top Employees with Absences -->
-        <div class="rounded-xl border bg-card p-5 shadow-xs space-y-4">
-          <div class="flex items-center justify-between border-b pb-3">
-            <div>
-              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <UserRoundX class="size-3.5 text-red-500" />
-                <span>Top Employees with Absences</span>
-              </h3>
-              <p class="text-[11px] text-muted-foreground mt-0.5">
-                Employees with the highest number of unexcused absences within the selected period.
-              </p>
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-7 text-xs gap-1 cursor-pointer"
-              @click="activeTab = 'absent_table'"
-            >
-              <span>View Full Log</span>
-              <ChevronRight class="size-3" />
-            </Button>
-          </div>
-
-          <div v-if="reportData.topAbsentEmployees.length > 0" class="overflow-x-auto">
-            <Table class="text-xs">
-              <TableHeader>
-                <TableRow class="bg-muted/40 hover:bg-muted/40">
-                  <TableHead class="font-semibold text-foreground min-w-[130px]">Employee Name</TableHead>
-                  <TableHead class="font-semibold text-foreground min-w-[70px]">Bio ID</TableHead>
-                  <TableHead class="font-semibold text-foreground min-w-[100px]">Department</TableHead>
-                  <TableHead class="font-semibold text-foreground min-w-[100px]">Position</TableHead>
-                  <TableHead class="font-semibold text-foreground min-w-[90px]">Work Group</TableHead>
-                  <TableHead class="font-semibold text-foreground text-right min-w-[80px]">Absence Count</TableHead>
-                </TableRow>
-              </TableHeader>
-
-              <TableBody>
-                <TableRow
-                  v-for="emp in reportData.topAbsentEmployees.slice(0, 10)"
-                  :key="emp.bioId"
-                  class="hover:bg-muted/30 transition-colors"
-                >
-                  <TableCell class="py-2.5 font-medium text-foreground">
-                    {{ emp.name }}
-                  </TableCell>
-                  <TableCell class="py-2.5 font-mono text-[11px] text-muted-foreground">
-                    {{ emp.bioId }}
-                  </TableCell>
-                  <TableCell class="py-2.5 text-muted-foreground text-[11px]">
-                    {{ emp.department }}
-                  </TableCell>
-                  <TableCell class="py-2.5 text-muted-foreground text-[11px]">
-                    {{ emp.position }}
-                  </TableCell>
-                  <TableCell class="py-2.5 text-muted-foreground text-[11px]">
-                    {{ emp.workGroupName }}
-                  </TableCell>
-                  <TableCell class="py-2.5 text-right font-mono font-bold text-red-500">
-                    {{ emp.absentCount }} day{{ emp.absentCount > 1 ? 's' : '' }}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-
-          <div v-else class="p-8 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
-            <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5 opacity-80" />
-            <div class="font-medium text-foreground">Zero Absences Recorded</div>
-            <p class="text-[11px] text-muted-foreground mt-0.5">
-              Every eligible employee reported for their scheduled duties.
-            </p>
-          </div>
+        <!-- D. Absence Distribution by Department (Paginated: 6 per page) -->
+        <div class="rounded-xl border bg-card p-5 shadow-xs">
+          <AbsenceDistributionChart
+            :distribution="reportData.departmentDistribution"
+          />
         </div>
       </div>
 
