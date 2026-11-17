@@ -77,7 +77,7 @@ const selectedDepartment = ref('all')
 const selectedEmployeeBioId = ref('all')
 
 // Active Section Tab
-const activeTab = ref<'overview' | 'absent_analytics' | 'absent_table'>('overview')
+const activeTab = ref<'overview' | 'absent_analytics' | 'absent_table' | 'late_employees' | 'missing_out'>('overview')
 
 // Absent Table Search & Filter State
 const absentTableSearch = ref('')
@@ -693,8 +693,8 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
         </div>
       </div>
 
-      <!-- Navigation Tabs (Overview vs Absenteeism Analytics vs Absent Employee Table) -->
-      <div class="flex items-center gap-1.5 border-b border-border text-xs">
+      <!-- Navigation Tabs -->
+      <div class="flex flex-wrap items-center gap-1.5 border-b border-border text-xs">
         <button
           type="button"
           class="px-3.5 py-2 font-medium text-xs border-b-2 transition-colors cursor-pointer flex items-center gap-2"
@@ -722,9 +722,33 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           :class="activeTab === 'absent_table' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = 'absent_table'"
         >
-          <span>Absent Employee Table</span>
+          <span>Absent Employees</span>
           <Badge v-if="reportData" variant="outline" class="text-[10px] px-1.5 py-0 font-mono">
             {{ reportData.absentRecords.length }}
+          </Badge>
+        </button>
+
+        <button
+          type="button"
+          class="px-3.5 py-2 font-medium text-xs border-b-2 transition-colors cursor-pointer flex items-center gap-2"
+          :class="activeTab === 'late_employees' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
+          @click="activeTab = 'late_employees'"
+        >
+          <span>Late Employees</span>
+          <Badge v-if="reportData" variant="outline" class="text-[10px] px-1.5 py-0 font-mono">
+            {{ reportData.topLateEmployees.length }}
+          </Badge>
+        </button>
+
+        <button
+          type="button"
+          class="px-3.5 py-2 font-medium text-xs border-b-2 transition-colors cursor-pointer flex items-center gap-2"
+          :class="activeTab === 'missing_out' ? 'border-primary text-foreground font-semibold' : 'border-transparent text-muted-foreground hover:text-foreground'"
+          @click="activeTab = 'missing_out'"
+        >
+          <span>Missing OUT</span>
+          <Badge v-if="reportData" variant="outline" class="text-[10px] px-1.5 py-0 font-mono">
+            {{ reportData.missingOutItems.length }}
           </Badge>
         </button>
       </div>
@@ -996,168 +1020,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           </div>
         </div>
 
-        <!-- 4. REPEATED LATENESS & MISSING OUT MONITORING -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <!-- Top Repeated Lateness Card -->
-          <div class="rounded-xl border bg-card p-5 shadow-xs space-y-4">
-            <div class="border-b pb-3">
-              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                <Clock class="size-3.5 text-amber-500" />
-                <span>Lateness (Top Frequency)</span>
-              </h3>
-              <p class="text-[11px] text-muted-foreground mt-0.5">
-                Employees with the highest number of late arrivals after scheduled shift start.
-              </p>
-            </div>
-
-            <div v-if="reportData.topLateEmployees.length > 0" class="overflow-x-auto">
-              <Table class="text-xs">
-                <TableHeader>
-                  <TableRow class="bg-muted/40 hover:bg-muted/40">
-                    <TableHead class="font-semibold text-foreground min-w-[130px]">Employee</TableHead>
-                    <TableHead class="font-semibold text-foreground min-w-[70px]">Bio ID</TableHead>
-                    <TableHead class="font-semibold text-foreground min-w-[100px]">Work Group</TableHead>
-                    <TableHead class="font-semibold text-foreground min-w-[80px]">Date</TableHead>
-                    <TableHead class="font-semibold text-foreground text-right min-w-[80px]">Late</TableHead>
-                  </TableRow>
-                </TableHeader>
-
-                <TableBody>
-                  <template v-for="emp in reportData.topLateEmployees" :key="emp.bioId">
-                    <TableRow
-                      v-for="rec in emp.lateRecords"
-                      :key="`${emp.bioId}-${rec.date}`"
-                      class="hover:bg-muted/30 transition-colors border-b border-border/40"
-                    >
-                      <TableCell class="py-2 font-medium text-foreground">
-                        {{ emp.name }}
-                      </TableCell>
-                      <TableCell class="py-2 font-mono text-muted-foreground text-[11px]">
-                        {{ emp.bioId }}
-                      </TableCell>
-                      <TableCell class="py-2 text-muted-foreground text-[11px]">
-                        {{ emp.workGroupName }}
-                      </TableCell>
-                      <TableCell class="py-2 font-mono text-[11px] text-foreground whitespace-nowrap">
-                        {{ formatShortDate(rec.date) }}
-                      </TableCell>
-                      <TableCell class="py-2 text-right font-mono font-medium text-amber-600 dark:text-amber-400">
-                        {{ formatDuration(rec.lateMinutes) }}
-                      </TableCell>
-                    </TableRow>
-
-                    <TableRow class="bg-muted/40 hover:bg-muted/40 border-b-2 border-border font-semibold">
-                      <TableCell class="py-2 font-bold text-foreground">
-                        Total
-                      </TableCell>
-                      <TableCell class="py-2"></TableCell>
-                      <TableCell class="py-2"></TableCell>
-                      <TableCell class="py-2 font-mono font-bold text-foreground whitespace-nowrap text-[11px]">
-                        {{ emp.lateDays }} late day{{ emp.lateDays > 1 ? 's' : '' }}
-                      </TableCell>
-                      <TableCell class="py-2 text-right font-mono font-bold text-amber-700 dark:text-amber-300">
-                        {{ formatDuration(emp.totalLateMinutes) }}
-                      </TableCell>
-                    </TableRow>
-                  </template>
-                </TableBody>
-              </Table>
-            </div>
-
-            <div v-else class="p-8 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
-              <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5 opacity-80" />
-              <div class="font-medium text-foreground">Zero Lateness Recorded</div>
-              <p class="text-[11px] text-muted-foreground mt-0.5">
-                All employees arrived on time for this selection.
-              </p>
-            </div>
-          </div>
-
-          <!-- Missing OUT Monitoring Card -->
-          <div class="rounded-xl border bg-card p-5 shadow-xs space-y-4">
-            <div class="flex items-center justify-between border-b pb-3">
-              <div>
-                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
-                  <FileQuestion class="size-3.5 text-indigo-500" />
-                  <span>{{ selectedPreset === 'today' ? 'Active Shifts & Missing OUT' : 'Missing OUT Monitoring' }}</span>
-                </h3>
-                <p class="text-[11px] text-muted-foreground">
-                  {{ selectedPreset === 'today' ? 'Active shifts awaiting exit punch, or records requiring manual adjustment.' : 'Incomplete shift records requiring employee manual adjustment or HR resolution.' }}
-                </p>
-              </div>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                class="h-7 text-xs text-primary gap-1 cursor-pointer px-2"
-                @click="navigateToDaily('missing_out')"
-              >
-                <span>View All</span>
-                <ChevronRight class="size-3" />
-              </Button>
-            </div>
-
-            <div v-if="reportData.missingOutItems.length > 0" class="overflow-x-auto">
-              <Table class="text-xs">
-                <TableHeader>
-                  <TableRow class="bg-muted/40 hover:bg-muted/40">
-                    <TableHead class="font-semibold text-foreground">Employee</TableHead>
-                    <TableHead class="font-semibold text-foreground">Date</TableHead>
-                    <TableHead class="font-semibold text-foreground">Time IN</TableHead>
-                    <TableHead class="font-semibold text-foreground">Status</TableHead>
-                    <TableHead class="font-semibold text-foreground text-right w-[80px]">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-
-                <TableBody>
-                  <TableRow
-                    v-for="item in reportData.missingOutItems"
-                    :key="item.bioId + item.date"
-                    class="hover:bg-muted/30 transition-colors"
-                  >
-                    <TableCell class="py-2.5">
-                      <div class="font-semibold text-foreground">{{ item.name }}</div>
-                      <div class="text-[10px] text-muted-foreground font-mono">Bio ID: {{ item.bioId }}</div>
-                    </TableCell>
-
-                    <TableCell class="py-2.5 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
-                      {{ item.date }}
-                    </TableCell>
-
-                    <TableCell class="py-2.5 font-mono font-medium text-foreground whitespace-nowrap">
-                      {{ item.timeIn }}
-                    </TableCell>
-
-                    <TableCell class="py-2.5">
-                      <Badge variant="outline" class="text-[10px] font-mono text-indigo-700 bg-indigo-500/10 border-indigo-500/30">
-                        {{ item.status }}
-                      </Badge>
-                    </TableCell>
-
-                    <TableCell class="py-2.5 text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        class="h-6 px-2 text-[10px] cursor-pointer"
-                        @click="navigateToDaily(undefined, item.bioId, item.date)"
-                      >
-                        Resolve
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-
-            <div v-else class="p-8 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
-              <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5 opacity-80" />
-              <div class="font-medium text-foreground">No Missing OUT Punches</div>
-              <p class="text-[11px] text-muted-foreground mt-0.5">
-                All shifts recorded during this period contain valid check-in and check-out punches.
-              </p>
-            </div>
-          </div>
-        </div>
       </div>
 
       <!-- ============================================================== -->
@@ -1549,6 +1411,174 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                 Next
               </Button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- TAB 4: LATE EMPLOYEES -->
+      <!-- ============================================================== -->
+      <div v-else-if="activeTab === 'late_employees'" class="space-y-4">
+        <div class="rounded-xl border bg-card p-5 shadow-xs space-y-4">
+          <div class="border-b pb-3">
+            <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <Clock class="size-3.5 text-amber-500" />
+              <span>Lateness (Top Frequency)</span>
+            </h3>
+            <p class="text-[11px] text-muted-foreground mt-0.5">
+              Employees with the highest number of late arrivals after scheduled shift start.
+            </p>
+          </div>
+
+          <div v-if="reportData.topLateEmployees.length > 0" class="overflow-x-auto">
+            <Table class="text-xs">
+              <TableHeader>
+                <TableRow class="bg-muted/40 hover:bg-muted/40">
+                  <TableHead class="font-semibold text-foreground min-w-[130px]">Employee</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[70px]">Bio ID</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[100px]">Work Group</TableHead>
+                  <TableHead class="font-semibold text-foreground min-w-[80px]">Date</TableHead>
+                  <TableHead class="font-semibold text-foreground text-right min-w-[80px]">Late</TableHead>
+                </TableRow>
+              </TableHeader>
+
+              <TableBody>
+                <template v-for="emp in reportData.topLateEmployees" :key="emp.bioId">
+                  <TableRow
+                    v-for="rec in emp.lateRecords"
+                    :key="`${emp.bioId}-${rec.date}`"
+                    class="hover:bg-muted/30 transition-colors border-b border-border/40"
+                  >
+                    <TableCell class="py-2 font-medium text-foreground">
+                      {{ emp.name }}
+                    </TableCell>
+                    <TableCell class="py-2 font-mono text-muted-foreground text-[11px]">
+                      {{ emp.bioId }}
+                    </TableCell>
+                    <TableCell class="py-2 text-muted-foreground text-[11px]">
+                      {{ emp.workGroupName }}
+                    </TableCell>
+                    <TableCell class="py-2 font-mono text-[11px] text-foreground whitespace-nowrap">
+                      {{ formatShortDate(rec.date) }}
+                    </TableCell>
+                    <TableCell class="py-2 text-right font-mono font-medium text-amber-600 dark:text-amber-400">
+                      {{ formatDuration(rec.lateMinutes) }}
+                    </TableCell>
+                  </TableRow>
+
+                  <TableRow class="bg-muted/40 hover:bg-muted/40 border-b-2 border-border font-semibold">
+                    <TableCell class="py-2 font-bold text-foreground">
+                      Total
+                    </TableCell>
+                    <TableCell class="py-2"></TableCell>
+                    <TableCell class="py-2"></TableCell>
+                    <TableCell class="py-2 font-mono font-bold text-foreground whitespace-nowrap text-[11px]">
+                      {{ emp.lateDays }} late day{{ emp.lateDays > 1 ? 's' : '' }}
+                    </TableCell>
+                    <TableCell class="py-2 text-right font-mono font-bold text-amber-700 dark:text-amber-300">
+                      {{ formatDuration(emp.totalLateMinutes) }}
+                    </TableCell>
+                  </TableRow>
+                </template>
+              </TableBody>
+            </Table>
+          </div>
+
+          <div v-else class="p-8 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
+            <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5 opacity-80" />
+            <div class="font-medium text-foreground">Zero Lateness Recorded</div>
+            <p class="text-[11px] text-muted-foreground mt-0.5">
+              All employees arrived on time for this selection.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- TAB 5: MISSING OUT -->
+      <!-- ============================================================== -->
+      <div v-else-if="activeTab === 'missing_out'" class="space-y-4">
+        <div class="rounded-xl border bg-card p-5 shadow-xs space-y-4">
+          <div class="flex items-center justify-between border-b pb-3">
+            <div>
+              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                <FileQuestion class="size-3.5 text-indigo-500" />
+                <span>{{ selectedPreset === 'today' ? 'Active Shifts & Missing OUT' : 'Missing OUT Monitoring' }}</span>
+              </h3>
+              <p class="text-[11px] text-muted-foreground">
+                {{ selectedPreset === 'today' ? 'Active shifts awaiting exit punch, or records requiring manual adjustment.' : 'Incomplete shift records requiring employee manual adjustment or HR resolution.' }}
+              </p>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-7 text-xs text-primary gap-1 cursor-pointer px-2"
+              @click="navigateToDaily('missing_out')"
+            >
+              <span>View All</span>
+              <ChevronRight class="size-3" />
+            </Button>
+          </div>
+
+          <div v-if="reportData.missingOutItems.length > 0" class="overflow-x-auto">
+            <Table class="text-xs">
+              <TableHeader>
+                <TableRow class="bg-muted/40 hover:bg-muted/40">
+                  <TableHead class="font-semibold text-foreground">Employee</TableHead>
+                  <TableHead class="font-semibold text-foreground">Date</TableHead>
+                  <TableHead class="font-semibold text-foreground">Time IN</TableHead>
+                  <TableHead class="font-semibold text-foreground">Status</TableHead>
+                  <TableHead class="font-semibold text-foreground text-right w-[80px]">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+
+              <TableBody>
+                <TableRow
+                  v-for="item in reportData.missingOutItems"
+                  :key="item.bioId + item.date"
+                  class="hover:bg-muted/30 transition-colors"
+                >
+                  <TableCell class="py-2.5">
+                    <div class="font-semibold text-foreground">{{ item.name }}</div>
+                    <div class="text-[10px] text-muted-foreground font-mono">Bio ID: {{ item.bioId }}</div>
+                  </TableCell>
+
+                  <TableCell class="py-2.5 font-mono text-[11px] text-muted-foreground whitespace-nowrap">
+                    {{ item.date }}
+                  </TableCell>
+
+                  <TableCell class="py-2.5 font-mono font-medium text-foreground whitespace-nowrap">
+                    {{ item.timeIn }}
+                  </TableCell>
+
+                  <TableCell class="py-2.5">
+                    <Badge variant="outline" class="text-[10px] font-mono text-indigo-700 bg-indigo-500/10 border-indigo-500/30">
+                      {{ item.status }}
+                    </Badge>
+                  </TableCell>
+
+                  <TableCell class="py-2.5 text-right">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="h-6 px-2 text-[10px] cursor-pointer"
+                      @click="navigateToDaily(undefined, item.bioId, item.date)"
+                    >
+                      Resolve
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+
+          <div v-else class="p-8 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
+            <CheckCircle2 class="size-6 text-emerald-600 mx-auto mb-1.5 opacity-80" />
+            <div class="font-medium text-foreground">No Missing OUT Punches</div>
+            <p class="text-[11px] text-muted-foreground mt-0.5">
+              All shifts recorded during this period contain valid check-in and check-out punches.
+            </p>
           </div>
         </div>
       </div>

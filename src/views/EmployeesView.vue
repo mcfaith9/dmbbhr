@@ -31,7 +31,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Bell,
-  Plus,
   Star,
   Power,
   RotateCcw,
@@ -56,8 +55,7 @@ import { authService } from '@/services/auth'
 import {
   getEmployeeBiometricEntries,
   getEmployeePrimaryBioId,
-  getEmployeeAllBioIds,
-  normalizeBiometricIdToken
+  getEmployeeAllBioIds
 } from '@/lib/employeeIdentity'
 import { hrNoticeService, isNoticeActive } from '@/services/hrNotices'
 import { normalizeBioId } from '@/services/punchDisplay'
@@ -200,12 +198,9 @@ const formStatus = ref<EmploymentStatus>('active')
 const formExcludeFromBiometric = ref(false)
 
 // Multi-Biometric ID management state
-const newSecondaryBioId = ref('')
-const newSecondaryBioIdNotes = ref('')
 const bioIdActionLoading = ref(false)
 const bioIdErrorMsg = ref('')
 const bioIdSuccessMsg = ref('')
-const pendingBioIdLinkConfirm = ref<{ bioId: string; notes?: string } | null>(null)
 const pendingBioIdRemoveConfirm = ref<string | null>(null)
 
 // Employee Consolidation Workflow state
@@ -224,12 +219,9 @@ const consolidationSuccessMsg = ref('')
 const consolidationAudits = ref<EmployeeConsolidationAudit[]>([])
 
 function resetBioIdManagementState() {
-  newSecondaryBioId.value = ''
-  newSecondaryBioIdNotes.value = ''
   bioIdActionLoading.value = false
   bioIdErrorMsg.value = ''
   bioIdSuccessMsg.value = ''
-  pendingBioIdLinkConfirm.value = null
   pendingBioIdRemoveConfirm.value = null
 
   isConsolidationSelectorOpen.value = false
@@ -425,81 +417,11 @@ function formatIsoShortDate(iso?: string): string {
   }
 }
 
-async function requestLinkSecondaryBioId() {
-  if (!selectedEmployee.value) return
-  bioIdErrorMsg.value = ''
-  bioIdSuccessMsg.value = ''
-  pendingBioIdLinkConfirm.value = null
-  pendingBioIdRemoveConfirm.value = null
-
-  const cleanNewId = normalizeBiometricIdToken(newSecondaryBioId.value)
-  if (!cleanNewId || !/^[a-zA-Z0-9_-]+$/.test(cleanNewId)) {
-    bioIdErrorMsg.value = 'Enter a valid Biometric ID (letters, numbers, dash, or underscore only).'
-    return
-  }
-
-  const currentEntries = getEmployeeBiometricEntries(selectedEmployee.value)
-  const selfMatch = currentEntries.find(e => e.bioId.toLowerCase() === cleanNewId.toLowerCase())
-  if (selfMatch) {
-    bioIdErrorMsg.value = selfMatch.status === 'active'
-      ? `Biometric ID ${cleanNewId} is already actively linked to this employee.`
-      : `Biometric ID ${cleanNewId} is already linked as Inactive. Click Reactivate instead.`
-    return
-  }
-
-  bioIdActionLoading.value = true
-  try {
-    const conflict = await employeeService.findBioIdConflict(cleanNewId, selectedEmployee.value.biometric_user_id)
-    if (conflict) {
-      const conflictPrimary = getEmployeePrimaryBioId(conflict.conflictEmployee)
-      bioIdErrorMsg.value = `Cannot link Biometric ID ${cleanNewId}: already assigned to ${conflict.conflictEmployee.full_name} (Primary ID: ${conflictPrimary}, Status: ${conflict.entryStatus === 'active' ? 'Active' : 'Inactive'}).`
-      return
-    }
-
-    pendingBioIdLinkConfirm.value = {
-      bioId: cleanNewId,
-      notes: newSecondaryBioIdNotes.value.trim() || undefined
-    }
-  } catch (err: any) {
-    bioIdErrorMsg.value = err?.message || 'Failed to validate Biometric ID.'
-  } finally {
-    bioIdActionLoading.value = false
-  }
-}
-
-async function confirmLinkSecondaryBioId() {
-  if (!selectedEmployee.value || !pendingBioIdLinkConfirm.value) return
-  bioIdActionLoading.value = true
-  bioIdErrorMsg.value = ''
-  bioIdSuccessMsg.value = ''
-  try {
-    const updated = await employeeService.linkSecondaryBioId(
-      selectedEmployee.value.biometric_user_id,
-      pendingBioIdLinkConfirm.value.bioId,
-      {
-        confirmedByAdmin: true,
-        notes: pendingBioIdLinkConfirm.value.notes
-      }
-    )
-    selectedEmployee.value = updated
-    bioIdSuccessMsg.value = `Biometric ID ${pendingBioIdLinkConfirm.value.bioId} linked to ${updated.full_name}. Future and historical punches for this ID now resolve to this employee.`
-    newSecondaryBioId.value = ''
-    newSecondaryBioIdNotes.value = ''
-    pendingBioIdLinkConfirm.value = null
-    await executeLoadEmployees()
-  } catch (err: any) {
-    bioIdErrorMsg.value = err?.message || 'Failed to link Biometric ID.'
-  } finally {
-    bioIdActionLoading.value = false
-  }
-}
-
 async function handleSetPrimaryBioId(targetBioId: string) {
   if (!selectedEmployee.value) return
   bioIdActionLoading.value = true
   bioIdErrorMsg.value = ''
   bioIdSuccessMsg.value = ''
-  pendingBioIdLinkConfirm.value = null
   pendingBioIdRemoveConfirm.value = null
   try {
     const updated = await employeeService.setPrimaryBioId(selectedEmployee.value.biometric_user_id, targetBioId)
@@ -518,7 +440,6 @@ async function handleDeactivateBioId(targetBioId: string) {
   bioIdActionLoading.value = true
   bioIdErrorMsg.value = ''
   bioIdSuccessMsg.value = ''
-  pendingBioIdLinkConfirm.value = null
   pendingBioIdRemoveConfirm.value = null
   try {
     const updated = await employeeService.deactivateLinkedBioId(selectedEmployee.value.biometric_user_id, targetBioId)
@@ -537,7 +458,6 @@ async function handleReactivateBioId(targetBioId: string) {
   bioIdActionLoading.value = true
   bioIdErrorMsg.value = ''
   bioIdSuccessMsg.value = ''
-  pendingBioIdLinkConfirm.value = null
   pendingBioIdRemoveConfirm.value = null
   try {
     const updated = await employeeService.reactivateLinkedBioId(selectedEmployee.value.biometric_user_id, targetBioId)
@@ -556,7 +476,6 @@ async function confirmRemoveBioId(targetBioId: string) {
   bioIdActionLoading.value = true
   bioIdErrorMsg.value = ''
   bioIdSuccessMsg.value = ''
-  pendingBioIdLinkConfirm.value = null
   try {
     const updated = await employeeService.removeLinkedBioId(selectedEmployee.value.biometric_user_id, targetBioId)
     selectedEmployee.value = updated
