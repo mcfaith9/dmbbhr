@@ -1106,7 +1106,8 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
         <!-- B. Weekly & Monthly Absence Trends -->
         <div class="rounded-xl border bg-card p-5 shadow-xs">
           <AbsencePeriodicChart
-            :weekly-data="reportData.weeklyTrend"
+            :weekly-daily-windows="reportData.weeklyDailyWindows"
+            :selected-week-start="reportData.selectedWeekStart"
             :monthly-data="reportData.monthlyTrend"
           />
         </div>

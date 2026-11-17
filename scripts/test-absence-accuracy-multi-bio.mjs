@@ -649,20 +649,20 @@ try {
   const currWeekWorkdayStr = fmtUtc(currWeekWorkdayObj)
 
   await resetAll()
-  await memTables.employees.bulkPut([
-    {
-      bioId: '25061', employeeNumber: '25061', fullName: 'Reynald Abelido',
-      biometricIds: ['25061', '50305'], location: 'DBB CEBU', workGroupId: 'wg-group-c',
-      department: 'Operations', position: 'Technician', status: 'active',
-      excludeFromBiometric: false, hireDate: fmtUtc(mMinus2Start), createdAt: nowIso, updatedAt: nowIso
-    },
-    {
-      bioId: '25062', employeeNumber: '25062', fullName: 'Elena Santos',
-      biometricIds: ['25062'], location: 'DBB CEBU', workGroupId: 'wg-group-c',
-      department: 'Finance', position: 'Accountant', status: 'active',
-      excludeFromBiometric: false, hireDate: fmtUtc(mMinus2Start), createdAt: nowIso, updatedAt: nowIso
-    }
-  ])
+  await employeeRepository.registerFromPunch('25061', 'Reynald Abelido', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.updateEmployee('25061', {
+    department: 'Operations',
+    position: 'Technician',
+    hire_date: fmtUtc(mMinus2Start)
+  })
+  await employeeRepository.linkSecondaryBioId('25061', '50305', { confirmedByAdmin: true })
+
+  await employeeRepository.registerFromPunch('25062', 'Elena Santos', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.updateEmployee('25062', {
+    department: 'Finance',
+    position: 'Accountant',
+    hire_date: fmtUtc(mMinus2Start)
+  })
 
   // Reynald punches via secondary Bio ID 50305 on all 3 test workdays; Elena has NO punches on those 3 days
   await memTables.biometricPunches.bulkPut([
@@ -670,7 +670,6 @@ try {
     manilaPunch('t11-r2', '50305', prevMonthDay.dateStr, '08:00:00'),
     manilaPunch('t11-r3', '50305', currWeekWorkdayStr, '08:00:00')
   ])
-  await employeeRepository.reloadFromDb()
 
   // Even when report preset is 'today', weeklyTrend and monthlyTrend must span their fixed windows
   const todayReport = await reportsService.getReportSummary({ preset: 'today' }, true)
@@ -740,7 +739,38 @@ try {
     false,
     'Weekly view must not include weeks from 2 months ago outside previous month..current week'
   )
-  ok('Additional Test 11: Weekly (prev month -> current week) & Monthly (last 3 months) trends group absences and filters accurately')
+
+  // Verify 7-day Sunday-Saturday weeklyDailyWindows and selectedWeekStart
+  const expectedSun = new Date(todayUtc)
+  expectedSun.setUTCDate(expectedSun.getUTCDate() - expectedSun.getUTCDay())
+  const expectedSunStr = fmtUtc(expectedSun)
+  assert.strictEqual(finReport.selectedWeekStart, expectedSunStr, 'Today preset selects Sunday of current calendar week')
+  const finSelectedWeek = finReport.weeklyDailyWindows.find((w) => w.weekStart === finReport.selectedWeekStart)
+  assert.ok(finSelectedWeek, 'Selected week window must exist in weeklyDailyWindows')
+  assert.strictEqual(finSelectedWeek.days.length, 7, 'Selected week window must have all 7 days (Sun-Sat)')
+  assert.strictEqual(finSelectedWeek.days[0].dayName, 'Sun', 'Selected week starts on Sunday')
+  assert.strictEqual(finSelectedWeek.days[0].absentCount, 0, 'Sunday must have 0 absences')
+  assert.strictEqual(finSelectedWeek.days[6].dayName, 'Sat', 'Selected week ends on Saturday')
+  const finCurrWorkdayPoint = finSelectedWeek.days.find((d) => d.date === currWeekWorkdayStr)
+  assert.strictEqual(finCurrWorkdayPoint?.absentCount, 1, 'Current-week workday must show 1 absent for Finance Elena')
+  for (const d of finSelectedWeek.days) {
+    if (d.date > todayStr) {
+      assert.strictEqual(d.absentCount, 0, `Future date ${d.date} must have 0 absentCount`)
+      assert.strictEqual(d.isFuture, true)
+    }
+  }
+
+  // Operations (Reynald punched on secondary 50305) must show 0 on currWeekWorkdayStr in 7-day weekly view
+  const opsSelectedWeek = opsReport.weeklyDailyWindows.find((w) => w.weekStart === opsReport.selectedWeekStart)
+  const opsCurrWorkdayPoint = opsSelectedWeek?.days.find((d) => d.date === currWeekWorkdayStr)
+  assert.strictEqual(opsCurrWorkdayPoint?.absentCount, 0, 'Secondary Bio ID 50305 punch prevents absence on 7-day weekly line chart')
+
+  // Last Week preset anchors selectedWeekStart to previous Sunday-Saturday week
+  const lastWeekReport = await reportsService.getReportSummary({ preset: 'last_week', department: 'Finance' }, true)
+  const expectedPrevSun = new Date(expectedSun)
+  expectedPrevSun.setUTCDate(expectedPrevSun.getUTCDate() - 7)
+  assert.strictEqual(lastWeekReport.selectedWeekStart, fmtUtc(expectedPrevSun), 'Last Week preset selects prior Sunday-Saturday week')
+  ok('Additional Test 11: Weekly 7-day windows, selectedWeekStart, Monthly 3-month trends & filters verified accurately')
 
   console.log('\n======================================================================')
   console.log(`ALL ${passed} ABSENCE ACCURACY & ELIGIBILITY TESTS PASSED SUCCESSFULLY!`)

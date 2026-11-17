@@ -47,6 +47,27 @@ export interface WeekTrendPoint {
   absenceRate: number
 }
 
+export interface WeeklyDailyAbsencePoint {
+  date: string // YYYY-MM-DD
+  shortDate: string // e.g. "Nov 15"
+  dayName: string // e.g. "Sun"
+  fullDateLabel: string // e.g. "Sun, Nov 15, 2026"
+  absentCount: number
+  eligibleWorkdays: number
+  absenceRate: number
+  isSunday: boolean
+  isHoliday: boolean
+  isFuture: boolean
+}
+
+export interface WeeklyAbsenceWindowGroup {
+  weekStart: string // YYYY-MM-DD (Sunday)
+  weekEnd: string // YYYY-MM-DD (Saturday)
+  label: string // e.g. "Nov 15 – 21, 2026"
+  shortRangeLabel: string // e.g. "Nov 15–21"
+  days: WeeklyDailyAbsencePoint[]
+}
+
 export interface MonthTrendPoint {
   monthKey: string // e.g. "2026-10"
   label: string // e.g. "Oct 2026"
@@ -166,6 +187,8 @@ export interface ReportSummaryResult {
   }
   dailyTrend: DayTrendPoint[]
   weeklyTrend: WeekTrendPoint[]
+  weeklyDailyWindows: WeeklyAbsenceWindowGroup[]
+  selectedWeekStart: string
   monthlyTrend: MonthTrendPoint[]
   departmentDistribution: DepartmentAbsencePoint[]
   topAbsentEmployees: TopAbsentEmployee[]
@@ -318,6 +341,48 @@ function getWeekKeyAndLabel(dObj: Date): { key: string; label: string } {
   const label = `W${weekNo} (${mStart} - ${mEnd})`
 
   return { key: weekKey, label }
+}
+
+/**
+ * Computes Sunday–Saturday calendar week bounds containing a YYYY-MM-DD date string (e.g. Nov 15–21, 2026)
+ */
+function getSundayWeekBounds(dateStr: string): {
+  weekStart: string
+  weekEnd: string
+  label: string
+  shortRangeLabel: string
+} {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dObj = new Date(Date.UTC(y, m - 1, d))
+  const sun = new Date(dObj)
+  sun.setUTCDate(sun.getUTCDate() - dObj.getUTCDay())
+  const sat = new Date(sun)
+  sat.setUTCDate(sat.getUTCDate() + 6)
+
+  const weekStart = getManilaDateString(sun)
+  const weekEnd = getManilaDateString(sat)
+
+  const sunMonth = sun.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' })
+  const satMonth = sat.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' })
+  const sunDay = sun.getUTCDate()
+  const satDay = sat.getUTCDate()
+  const sunYear = sun.getUTCFullYear()
+  const satYear = sat.getUTCFullYear()
+
+  let label = ''
+  let shortRangeLabel = ''
+  if (sunYear === satYear && sunMonth === satMonth) {
+    label = `${sunMonth} ${sunDay} – ${satDay}, ${sunYear}`
+    shortRangeLabel = `${sunMonth} ${sunDay}–${satDay}`
+  } else if (sunYear === satYear) {
+    label = `${sunMonth} ${sunDay} – ${satMonth} ${satDay}, ${sunYear}`
+    shortRangeLabel = `${sunMonth} ${sunDay}–${satMonth} ${satDay}`
+  } else {
+    label = `${sunMonth} ${sunDay}, ${sunYear} – ${satMonth} ${satDay}, ${satYear}`
+    shortRangeLabel = `${sunMonth} ${sunDay}–${satMonth} ${satDay}`
+  }
+
+  return { weekStart, weekEnd, label, shortRangeLabel }
 }
 
 /**
@@ -658,12 +723,17 @@ export const reportsService = {
     const trendStartStr = monthlyStartStr <= weeklyStartStr ? monthlyStartStr : weeklyStartStr
     const trendEndStr = todayStr
 
-    // Determine all calendar years spanned by dateList and trend window so holidayService covers multi-year ranges too
+    // Selected 7-day Sunday–Saturday week anchored to the active Period filter
+    const selectedWeekAnchorStr = preset === 'last_week' ? start : end
+    const selectedWeekBounds = getSundayWeekBounds(selectedWeekAnchorStr)
+    const needsExtraWeekFetch = selectedWeekBounds.weekStart < trendStartStr
+
+    // Determine all calendar years spanned by dateList, trend window, and selected week so holidayService covers multi-year ranges too
     const yearsInRangeSet = new Set(dateList.map(d => parseInt(d.slice(0, 4), 10)).filter(Boolean))
-    const trendStartYear = parseInt(trendStartStr.slice(0, 4), 10)
-    const trendEndYear = parseInt(trendEndStr.slice(0, 4), 10)
-    if (trendStartYear) yearsInRangeSet.add(trendStartYear)
-    if (trendEndYear) yearsInRangeSet.add(trendEndYear)
+    for (const ds of [trendStartStr, trendEndStr, selectedWeekBounds.weekStart, selectedWeekBounds.weekEnd]) {
+      const yr = parseInt(ds.slice(0, 4), 10)
+      if (yr) yearsInRangeSet.add(yr)
+    }
     if (yearsInRangeSet.size === 0) {
       yearsInRangeSet.add(new Date().getFullYear())
     }
@@ -678,7 +748,9 @@ export const reportsService = {
       dbHolidays,
       holidayServiceResults,
       trendPunches,
-      trendManualAdjustments
+      trendManualAdjustments,
+      extraWeekPunches,
+      extraWeekAdjustments
     ] = await Promise.all([
       Promise.all(
         dateList.map(dateStr =>
@@ -712,7 +784,21 @@ export const reportsService = {
         .where('date')
         .between(trendStartStr, trendEndStr, true, true)
         .toArray()
-        .catch(() => [])
+        .catch(() => []),
+      needsExtraWeekFetch
+        ? db.biometricPunches
+            .where('date')
+            .between(selectedWeekBounds.weekStart, selectedWeekBounds.weekEnd, true, true)
+            .toArray()
+            .catch(() => [])
+        : Promise.resolve([]),
+      needsExtraWeekFetch
+        ? db.manualAdjustments
+            .where('date')
+            .between(selectedWeekBounds.weekStart, selectedWeekBounds.weekEnd, true, true)
+            .toArray()
+            .catch(() => [])
+        : Promise.resolve([])
     ])
 
     // 2. Deduplicate employees by canonical Bio ID and same-person dual Bio IDs
@@ -1124,58 +1210,78 @@ export const reportsService = {
     for (const p of trendPunches) {
       addCanonicalPresenceOnDate(p.date, p.bioId)
     }
+    for (const p of extraWeekPunches) {
+      addCanonicalPresenceOnDate(p.date, p.bioId)
+    }
     for (const adj of trendManualAdjustments) {
       if (adj.status === 'Approved') {
         addCanonicalPresenceOnDate(adj.date, adj.bioId)
       }
     }
+    for (const adj of extraWeekAdjustments) {
+      if (adj.status === 'Approved') {
+        addCanonicalPresenceOnDate(adj.date, adj.bioId)
+      }
+    }
 
+    const computeDayAbsenceStats = (dStr: string): { absent: number; eligible: number } => {
+      const existingStats = periodDayStatsByDate.get(dStr)
+      if (existingStats) {
+        return {
+          absent: existingStats.absent,
+          eligible: existingStats.expectedScheduled
+        }
+      }
+
+      const [y, m, d] = dStr.split('-').map(Number)
+      const dObj = new Date(Date.UTC(y, m - 1, d))
+      const isSun = dObj.getUTCDay() === 0
+      const isHol = holidayDateSet.has(dStr)
+      const punchedOnDay = punchedCanonicalKeysByDate.get(dStr)
+
+      let dayAbs = 0
+      let dayElig = 0
+
+      if (!isSun && !isHol && dStr <= todayStr) {
+        for (const ce of scopedCanonicalEmployees) {
+          const elig = evaluateEmployeeEligibilityOnDate(ce, dStr, todayStr, employeeLeavesMap)
+          if (!elig.eligible) continue
+          dayElig++
+          if (!punchedOnDay || !punchedOnDay.has(ce.canonicalKey)) {
+            dayAbs++
+          }
+        }
+      } else if (punchedOnDay && punchedOnDay.size > 0 && dStr <= todayStr) {
+        for (const ce of scopedCanonicalEmployees) {
+          if (!punchedOnDay.has(ce.canonicalKey)) continue
+          const emp = ce.primary
+          if (emp.exclude_from_biometric || ce.mergedRecords.some(r => isActiveStatus(r.status) && Boolean(r.exclude_from_biometric))) {
+            continue
+          }
+          if (isEmployeeResignedOnDate(emp.status, emp.resignation_date, dStr, todayStr)) continue
+          if (!isActiveStatus(emp.status)) continue
+          dayElig++
+        }
+      }
+
+      return { absent: dayAbs, eligible: dayElig }
+    }
+
+    const dailyStatsByDate = new Map<string, { absent: number; eligible: number }>()
     const trendDates = getDatesInRange(trendStartStr, trendEndStr)
     for (const dStr of trendDates) {
       const [y, m, d] = dStr.split('-').map(Number)
       const dObj = new Date(Date.UTC(y, m - 1, d))
 
-      let dayAbs = 0
-      let dayElig = 0
-
-      const existingStats = periodDayStatsByDate.get(dStr)
-      if (existingStats) {
-        dayAbs = existingStats.absent
-        dayElig = existingStats.expectedScheduled
-      } else {
-        const isSun = dObj.getUTCDay() === 0
-        const isHol = holidayDateSet.has(dStr)
-        const punchedOnDay = punchedCanonicalKeysByDate.get(dStr)
-
-        if (!isSun && !isHol && dStr <= todayStr) {
-          for (const ce of scopedCanonicalEmployees) {
-            const elig = evaluateEmployeeEligibilityOnDate(ce, dStr, todayStr, employeeLeavesMap)
-            if (!elig.eligible) continue
-            dayElig++
-            if (!punchedOnDay || !punchedOnDay.has(ce.canonicalKey)) {
-              dayAbs++
-            }
-          }
-        } else if (punchedOnDay && punchedOnDay.size > 0) {
-          for (const ce of scopedCanonicalEmployees) {
-            if (!punchedOnDay.has(ce.canonicalKey)) continue
-            const emp = ce.primary
-            if (emp.exclude_from_biometric || ce.mergedRecords.some(r => isActiveStatus(r.status) && Boolean(r.exclude_from_biometric))) {
-              continue
-            }
-            if (isEmployeeResignedOnDate(emp.status, emp.resignation_date, dStr, todayStr)) continue
-            if (!isActiveStatus(emp.status)) continue
-            dayElig++
-          }
-        }
-      }
+      const stats = computeDayAbsenceStats(dStr)
+      dailyStatsByDate.set(dStr, stats)
 
       // Accumulate into Weekly view if week falls within previous month .. current week
       const { key: wKey } = getWeekKeyAndLabel(dObj)
       const wItem = weekMap.get(wKey)
       if (wItem) {
-        wItem.absentCount += dayAbs
-        wItem.eligible += dayElig
+        wItem.absentCount += stats.absent
+        wItem.eligible += stats.eligible
       }
 
       // Accumulate into Monthly view if date falls within last 3 months
@@ -1183,8 +1289,8 @@ export const reportsService = {
         const mKey = `${y}-${String(m).padStart(2, '0')}`
         const mItem = monthMap.get(mKey)
         if (mItem) {
-          mItem.absentCount += dayAbs
-          mItem.eligible += dayElig
+          mItem.absentCount += stats.absent
+          mItem.eligible += stats.eligible
         }
       }
     }
@@ -1198,6 +1304,64 @@ export const reportsService = {
         absenceRate: item.eligible > 0 ? Number(((item.absentCount / item.eligible) * 100).toFixed(1)) : 0
       }))
       .sort((a, b) => a.weekKey.localeCompare(b.weekKey))
+
+    // Build 7-day Sunday–Saturday windows (previous month through current week + active selected week)
+    const firstSundayWeekStart = getSundayWeekBounds(getManilaDateString(prevMonthFirstDate)).weekStart
+    const currentSundayWeekStart = getSundayWeekBounds(todayStr).weekStart
+    const weekWindowStarts = new Set<string>()
+    const [swY, swM, swD] = firstSundayWeekStart.split('-').map(Number)
+    const sunCursor = new Date(Date.UTC(swY, swM - 1, swD))
+    const [cwY, cwM, cwD] = currentSundayWeekStart.split('-').map(Number)
+    const currentSunUtc = new Date(Date.UTC(cwY, cwM - 1, cwD))
+    while (sunCursor <= currentSunUtc) {
+      weekWindowStarts.add(getManilaDateString(sunCursor))
+      sunCursor.setUTCDate(sunCursor.getUTCDate() + 7)
+    }
+    weekWindowStarts.add(selectedWeekBounds.weekStart)
+
+    const weeklyDailyWindows: WeeklyAbsenceWindowGroup[] = Array.from(weekWindowStarts)
+      .sort((a, b) => a.localeCompare(b))
+      .map((wStart) => {
+        const bounds = getSundayWeekBounds(wStart)
+        const daysList = getDatesInRange(bounds.weekStart, bounds.weekEnd)
+        const days: WeeklyDailyAbsencePoint[] = daysList.map((dStr) => {
+          const [y, m, d] = dStr.split('-').map(Number)
+          const dObj = new Date(Date.UTC(y, m - 1, d))
+          const isSun = dObj.getUTCDay() === 0
+          const isHol = holidayDateSet.has(dStr)
+          const isFuture = dStr > todayStr
+          let stats = dailyStatsByDate.get(dStr)
+          if (!stats) {
+            stats = dStr <= todayStr ? computeDayAbsenceStats(dStr) : { absent: 0, eligible: 0 }
+            dailyStatsByDate.set(dStr, stats)
+          }
+          return {
+            date: dStr,
+            shortDate: dObj.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }),
+            dayName: dObj.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short' }),
+            fullDateLabel: dObj.toLocaleDateString('en-US', {
+              timeZone: 'UTC',
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric'
+            }),
+            absentCount: stats.absent,
+            eligibleWorkdays: stats.eligible,
+            absenceRate: stats.eligible > 0 ? Number(((stats.absent / stats.eligible) * 100).toFixed(1)) : 0,
+            isSunday: isSun,
+            isHoliday: isHol,
+            isFuture
+          }
+        })
+        return {
+          weekStart: bounds.weekStart,
+          weekEnd: bounds.weekEnd,
+          label: bounds.label,
+          shortRangeLabel: bounds.shortRangeLabel,
+          days
+        }
+      })
 
     const monthlyTrend: MonthTrendPoint[] = Array.from(monthMap.entries())
       .map(([monthKey, item]) => ({
@@ -1404,6 +1568,8 @@ export const reportsService = {
       },
       dailyTrend: dayTrends,
       weeklyTrend,
+      weeklyDailyWindows,
+      selectedWeekStart: selectedWeekBounds.weekStart,
       monthlyTrend,
       departmentDistribution,
       topAbsentEmployees,
