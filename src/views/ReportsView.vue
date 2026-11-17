@@ -23,7 +23,9 @@ import {
   Calendar,
   Percent,
   UserRoundX,
-  TrendingUp
+  TrendingUp,
+  ArrowUpNarrowWide,
+  ArrowDownWideNarrow
 } from '@lucide/vue'
 import {
   reportsService,
@@ -1195,12 +1197,20 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                 </SelectContent>
               </Select>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                class="h-8 px-2 text-xs"
+                class="h-8 w-8 p-0"
+                :aria-label="absentTableSortOrder === 'asc' ? 'Sort descending' : 'Sort ascending'"
                 @click="absentTableSortOrder = absentTableSortOrder === 'asc' ? 'desc' : 'asc'"
               >
-                {{ absentTableSortOrder === 'asc' ? '↑ Asc' : '↓ Desc' }}
+                <ArrowUpNarrowWide
+                  v-if="absentTableSortOrder === 'asc'"
+                  class="size-4"
+                />
+                <ArrowDownWideNarrow
+                  v-else
+                  class="size-4"
+                />
               </Button>
             </div>
           </div>
@@ -1216,16 +1226,6 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
             >
               <Download class="size-3 text-emerald-600" />
               <span>Export Excel</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-8 text-xs gap-1.5 shadow-2xs cursor-pointer"
-              :disabled="!filteredAbsentRecords.length"
-              @click="exportAbsentRecords('csv')"
-            >
-              <Download class="size-3 text-muted-foreground" />
-              <span>Export CSV</span>
             </Button>
           </div>
         </div>
@@ -1345,10 +1345,10 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           <div class="border-b pb-3">
             <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
               <Clock class="size-3.5 text-amber-500" />
-              <span>Lateness (Top Frequency)</span>
+              <span>Late Attendance Records</span>
             </h3>
             <p class="text-[11px] text-muted-foreground mt-0.5">
-              Employees with the highest number of late arrivals after scheduled shift start.
+              Employees with recorded late attendance.
             </p>
           </div>
 
