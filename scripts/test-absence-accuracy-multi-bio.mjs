@@ -594,6 +594,154 @@ try {
   assert.strictEqual(pc2Snapshot, pc1Snapshot, 'Two PCs with reversed DB insertion order must compute identical reports & diagnostics')
   ok('Additional Test 10: Two-PC determinism verified (identical KPIs, absentRecords, and diagnostics across reversed DB order)')
 
+  // -------------------------------------------------------------------------
+  // Additional Test 11: Weekly & Monthly Absence Frequency Date Ranges & Grouping
+  // -------------------------------------------------------------------------
+  const attEngMod = await server.ssrLoadModule('/src/services/attendanceEngine.ts')
+  const holMod = await server.ssrLoadModule('/src/services/holidays/holidayService.ts')
+  const { getManilaDateString } = attEngMod
+  const { holidayService } = holMod
+
+  const todayStr = getManilaDateString(new Date())
+  const [ty, tm, td] = todayStr.split('-').map(Number)
+  const todayUtc = new Date(Date.UTC(ty, tm - 1, td))
+
+  const fmtUtc = (dObj) =>
+    `${dObj.getUTCFullYear()}-${String(dObj.getUTCMonth() + 1).padStart(2, '0')}-${String(dObj.getUTCDate()).padStart(2, '0')}`
+  const isoWeekKey = (dObj) => {
+    const d = new Date(Date.UTC(dObj.getUTCFullYear(), dObj.getUTCMonth(), dObj.getUTCDate()))
+    const dayNum = d.getUTCDay() || 7
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+  }
+
+  // Collect official holiday dates so test dates are guaranteed regular working days
+  const holidaySet = new Set()
+  for (const yr of new Set([ty - 1, ty, ty + 1])) {
+    const res = await holidayService.getHolidays(yr).catch(() => ({ holidays: [] }))
+    for (const h of res.holidays) {
+      if (h.type !== 'Special Working') holidaySet.add(h.date)
+    }
+  }
+  const pickWorkday = (year, monthIndex0, startDay = 10) => {
+    const d = new Date(Date.UTC(year, monthIndex0, startDay))
+    while (d.getUTCMonth() === ((monthIndex0 % 12) + 12) % 12) {
+      const ds = fmtUtc(d)
+      if (d.getUTCDay() !== 0 && !holidaySet.has(ds) && ds <= todayStr) return { dateStr: ds, dateObj: d }
+      d.setUTCDate(d.getUTCDate() + 1)
+    }
+    throw new Error(`No workday found for ${year}-${monthIndex0 + 1}`)
+  }
+
+  const mMinus2Start = new Date(Date.UTC(ty, tm - 3, 1))
+  const mMinus1Start = new Date(Date.UTC(ty, tm - 2, 1))
+  const mCurrStart = new Date(Date.UTC(ty, tm - 1, 1))
+
+  const twoMonthsAgoDay = pickWorkday(mMinus2Start.getUTCFullYear(), mMinus2Start.getUTCMonth(), 10)
+  const prevMonthDay = pickWorkday(mMinus1Start.getUTCFullYear(), mMinus1Start.getUTCMonth(), 10)
+  // Pick a workday in the current week (or most recent workday <= today)
+  const currWeekWorkdayObj = new Date(todayUtc)
+  while (currWeekWorkdayObj.getUTCDay() === 0 || holidaySet.has(fmtUtc(currWeekWorkdayObj))) {
+    currWeekWorkdayObj.setUTCDate(currWeekWorkdayObj.getUTCDate() - 1)
+  }
+  const currWeekWorkdayStr = fmtUtc(currWeekWorkdayObj)
+
+  await resetAll()
+  await memTables.employees.bulkPut([
+    {
+      bioId: '25061', employeeNumber: '25061', fullName: 'Reynald Abelido',
+      biometricIds: ['25061', '50305'], location: 'DBB CEBU', workGroupId: 'wg-group-c',
+      department: 'Operations', position: 'Technician', status: 'active',
+      excludeFromBiometric: false, hireDate: fmtUtc(mMinus2Start), createdAt: nowIso, updatedAt: nowIso
+    },
+    {
+      bioId: '25062', employeeNumber: '25062', fullName: 'Elena Santos',
+      biometricIds: ['25062'], location: 'DBB CEBU', workGroupId: 'wg-group-c',
+      department: 'Finance', position: 'Accountant', status: 'active',
+      excludeFromBiometric: false, hireDate: fmtUtc(mMinus2Start), createdAt: nowIso, updatedAt: nowIso
+    }
+  ])
+
+  // Reynald punches via secondary Bio ID 50305 on all 3 test workdays; Elena has NO punches on those 3 days
+  await memTables.biometricPunches.bulkPut([
+    manilaPunch('t11-r1', '50305', twoMonthsAgoDay.dateStr, '08:00:00'),
+    manilaPunch('t11-r2', '50305', prevMonthDay.dateStr, '08:00:00'),
+    manilaPunch('t11-r3', '50305', currWeekWorkdayStr, '08:00:00')
+  ])
+  await employeeRepository.reloadFromDb()
+
+  // Even when report preset is 'today', weeklyTrend and monthlyTrend must span their fixed windows
+  const todayReport = await reportsService.getReportSummary({ preset: 'today' }, true)
+
+  // Monthly view: exact 3 months [tm-2, tm-1, tm] including current month
+  const expectedMonthKeys = [mMinus2Start, mMinus1Start, mCurrStart].map(
+    (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+  )
+  assert.deepStrictEqual(
+    todayReport.monthlyTrend.map((m) => m.monthKey),
+    expectedMonthKeys,
+    'Monthly view must contain the last 3 months including current month'
+  )
+
+  // Weekly view: all weeks from previous month's first week through the current week
+  const prevMonthFirstDay = mMinus1Start.getUTCDay()
+  const weeklyStart = new Date(mMinus1Start)
+  weeklyStart.setUTCDate(weeklyStart.getUTCDate() + (prevMonthFirstDay === 0 ? -6 : 1 - prevMonthFirstDay))
+  const expectedWeekKeys = []
+  const wCur = new Date(weeklyStart)
+  while (wCur <= todayUtc) {
+    const wk = isoWeekKey(wCur)
+    if (!expectedWeekKeys.includes(wk)) expectedWeekKeys.push(wk)
+    wCur.setUTCDate(wCur.getUTCDate() + 7)
+  }
+  const currWeekKey = isoWeekKey(todayUtc)
+  if (!expectedWeekKeys.includes(currWeekKey)) expectedWeekKeys.push(currWeekKey)
+
+  assert.deepStrictEqual(
+    todayReport.weeklyTrend.map((w) => w.weekKey),
+    expectedWeekKeys,
+    'Weekly view must contain all weeks from previous month through current week'
+  )
+
+  // Reynald (Operations) punched on secondary Bio ID 50305 on those days -> 0 absences for Reynald on those buckets
+  const opsReport = await reportsService.getReportSummary(
+    { preset: 'today', department: 'Operations' },
+    true
+  )
+  const opsPrevWeek = opsReport.weeklyTrend.find((w) => w.weekKey === isoWeekKey(prevMonthDay.dateObj))
+  const opsCurrWeek = opsReport.weeklyTrend.find((w) => w.weekKey === currWeekKey)
+  assert.ok(opsPrevWeek && opsCurrWeek, 'Previous-month and current-week buckets must exist under department filter')
+
+  // Finance (Elena, 0 punches) must show exact absence contribution on prevMonthDay & currWeekWorkday, plus twoMonthsAgoDay in Monthly[0]
+  const finReport = await reportsService.getReportSummary(
+    { preset: 'today', department: 'Finance' },
+    true
+  )
+  assert.ok(
+    finReport.monthlyTrend[0].absentCount >= 1,
+    '2-months-ago absence must be counted in Monthly view first bucket'
+  )
+  assert.ok(
+    finReport.monthlyTrend[1].absentCount >= 1,
+    'Previous-month absence must be counted in Monthly view second bucket'
+  )
+  assert.ok(
+    finReport.monthlyTrend[2].absentCount >= 1,
+    'Current-month absence must be counted in Monthly view current month bucket'
+  )
+  const finPrevWeek = finReport.weeklyTrend.find((w) => w.weekKey === isoWeekKey(prevMonthDay.dateObj))
+  const finCurrWeek = finReport.weeklyTrend.find((w) => w.weekKey === currWeekKey)
+  assert.ok(finPrevWeek && finPrevWeek.absentCount >= 1, 'Previous-month absence must appear in its corresponding Weekly bucket')
+  assert.ok(finCurrWeek && finCurrWeek.absentCount >= 1, 'Current-week absence must appear in current week Weekly bucket')
+  assert.strictEqual(
+    finReport.weeklyTrend.some((w) => w.weekKey === isoWeekKey(twoMonthsAgoDay.dateObj) && !expectedWeekKeys.includes(w.weekKey)),
+    false,
+    'Weekly view must not include weeks from 2 months ago outside previous month..current week'
+  )
+  ok('Additional Test 11: Weekly (prev month -> current week) & Monthly (last 3 months) trends group absences and filters accurately')
+
   console.log('\n======================================================================')
   console.log(`ALL ${passed} ABSENCE ACCURACY & ELIGIBILITY TESTS PASSED SUCCESSFULLY!`)
   console.log('======================================================================')

@@ -642,14 +642,44 @@ export const reportsService = {
     const dateList = getDatesInRange(start, end)
     const bioFilter = employeeBioId && employeeBioId !== 'all' ? employeeBioId : undefined
 
-    // Determine all calendar years spanned by dateList so holidayService covers multi-year ranges too
-    const yearsInRange = Array.from(new Set(dateList.map(d => parseInt(d.slice(0, 4), 10)).filter(Boolean)))
-    if (yearsInRange.length === 0) {
-      yearsInRange.push(new Date().getFullYear())
-    }
+    // Determine Weekly (previous month through current week) and Monthly (last 3 months including current month) windows
+    const [ty, tm, td] = todayStr.split('-').map(Number)
+    const todayUtc = new Date(Date.UTC(ty, tm - 1, td))
+    const monthlyStartDate = new Date(Date.UTC(ty, tm - 3, 1))
+    const monthlyStartStr = getManilaDateString(monthlyStartDate)
 
-    // 1. Fetch daily records, employees, work groups, leaves, and holidays concurrently
-    const [dailyRecordsArrays, allEmployees, workGroups, leaves, dbHolidays, holidayServiceResults] = await Promise.all([
+    const prevMonthFirstDate = new Date(Date.UTC(ty, tm - 2, 1))
+    const prevMonthDay = prevMonthFirstDate.getUTCDay()
+    const diffToMon = prevMonthDay === 0 ? -6 : 1 - prevMonthDay
+    const weeklyStartDate = new Date(prevMonthFirstDate)
+    weeklyStartDate.setUTCDate(weeklyStartDate.getUTCDate() + diffToMon)
+    const weeklyStartStr = getManilaDateString(weeklyStartDate)
+
+    const trendStartStr = monthlyStartStr <= weeklyStartStr ? monthlyStartStr : weeklyStartStr
+    const trendEndStr = todayStr
+
+    // Determine all calendar years spanned by dateList and trend window so holidayService covers multi-year ranges too
+    const yearsInRangeSet = new Set(dateList.map(d => parseInt(d.slice(0, 4), 10)).filter(Boolean))
+    const trendStartYear = parseInt(trendStartStr.slice(0, 4), 10)
+    const trendEndYear = parseInt(trendEndStr.slice(0, 4), 10)
+    if (trendStartYear) yearsInRangeSet.add(trendStartYear)
+    if (trendEndYear) yearsInRangeSet.add(trendEndYear)
+    if (yearsInRangeSet.size === 0) {
+      yearsInRangeSet.add(new Date().getFullYear())
+    }
+    const yearsInRange = Array.from(yearsInRangeSet)
+
+    // 1. Fetch daily records, employees, work groups, leaves, holidays, and 3-month raw activity concurrently
+    const [
+      dailyRecordsArrays,
+      allEmployees,
+      workGroups,
+      leaves,
+      dbHolidays,
+      holidayServiceResults,
+      trendPunches,
+      trendManualAdjustments
+    ] = await Promise.all([
       Promise.all(
         dateList.map(dateStr =>
           attendanceService.getDailyAttendance(dateStr, location, workGroupId, {}, bioFilter)
@@ -672,7 +702,17 @@ export const reportsService = {
         yearsInRange.map(yr =>
           holidayService.getHolidays(yr).catch(() => ({ holidays: [] as any[], activeSource: 'local' as const, isFallback: false }))
         )
-      )
+      ),
+      db.biometricPunches
+        .where('date')
+        .between(trendStartStr, trendEndStr, true, true)
+        .toArray()
+        .catch(() => []),
+      db.manualAdjustments
+        .where('date')
+        .between(trendStartStr, trendEndStr, true, true)
+        .toArray()
+        .catch(() => [])
     ])
 
     // 2. Deduplicate employees by canonical Bio ID and same-person dual Bio IDs
@@ -1030,31 +1070,123 @@ export const reportsService = {
       .slice(0, 10)
 
     // Weekly & Monthly Trends
+    // - Weekly view: all weeks from the previous month through the current month, including the current week
+    // - Monthly view: last 3 months, including the current month
     const weekMap = new Map<string, { label: string; absentCount: number; eligible: number }>()
     const monthMap = new Map<string, { label: string; absentCount: number; eligible: number }>()
 
-    for (const pt of dayTrends) {
-      const [y, m, d] = pt.date.split('-').map(Number)
-      const dObj = new Date(Date.UTC(y, m - 1, d))
-
-      // Week
-      const { key: wKey, label: wLabel } = getWeekKeyAndLabel(dObj)
+    // Pre-seed all weeks from previous month's first week through the current week
+    const curWeekCursor = new Date(weeklyStartDate)
+    while (curWeekCursor <= todayUtc) {
+      const { key: wKey, label: wLabel } = getWeekKeyAndLabel(curWeekCursor)
       if (!weekMap.has(wKey)) {
         weekMap.set(wKey, { label: wLabel, absentCount: 0, eligible: 0 })
       }
-      const wItem = weekMap.get(wKey)!
-      wItem.absentCount += pt.absent
-      wItem.eligible += pt.expectedScheduled
+      curWeekCursor.setUTCDate(curWeekCursor.getUTCDate() + 7)
+    }
+    const { key: currentWeekKey, label: currentWeekLabel } = getWeekKeyAndLabel(todayUtc)
+    if (!weekMap.has(currentWeekKey)) {
+      weekMap.set(currentWeekKey, { label: currentWeekLabel, absentCount: 0, eligible: 0 })
+    }
 
-      // Month
-      const mKey = `${y}-${String(m).padStart(2, '0')}`
-      const mLabel = dObj.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', year: 'numeric' })
-      if (!monthMap.has(mKey)) {
-        monthMap.set(mKey, { label: mLabel, absentCount: 0, eligible: 0 })
+    // Pre-seed last 3 months including the current month
+    for (const offset of [-2, -1, 0]) {
+      const mDate = new Date(Date.UTC(ty, tm - 1 + offset, 1))
+      const mY = mDate.getUTCFullYear()
+      const mM = mDate.getUTCMonth() + 1
+      const mKey = `${mY}-${String(mM).padStart(2, '0')}`
+      const mLabel = mDate.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', year: 'numeric' })
+      monthMap.set(mKey, { label: mLabel, absentCount: 0, eligible: 0 })
+    }
+
+    // Reuse exact dayTrends stats for dates within the active report filter range
+    const periodDayStatsByDate = new Map<string, { absent: number; expectedScheduled: number }>()
+    for (const pt of dayTrends) {
+      periodDayStatsByDate.set(pt.date, {
+        absent: pt.absent,
+        expectedScheduled: pt.expectedScheduled
+      })
+    }
+
+    // Index raw biometric punches and approved manual adjustments across the 3-month trend window
+    const punchedCanonicalKeysByDate = new Map<string, Set<string>>()
+    const addCanonicalPresenceOnDate = (dateStr?: string | null, rawBioId?: string | null) => {
+      if (!dateStr || !rawBioId) return
+      const cleanKey = normalizeBioIdKey(rawBioId) || rawBioId
+      const matched = lookupByAnyKey.get(rawBioId) || lookupByAnyKey.get(cleanKey)
+      if (!matched) return
+      if (!punchedCanonicalKeysByDate.has(dateStr)) {
+        punchedCanonicalKeysByDate.set(dateStr, new Set<string>())
       }
-      const mItem = monthMap.get(mKey)!
-      mItem.absentCount += pt.absent
-      mItem.eligible += pt.expectedScheduled
+      punchedCanonicalKeysByDate.get(dateStr)!.add(matched.canonicalKey)
+    }
+
+    for (const p of trendPunches) {
+      addCanonicalPresenceOnDate(p.date, p.bioId)
+    }
+    for (const adj of trendManualAdjustments) {
+      if (adj.status === 'Approved') {
+        addCanonicalPresenceOnDate(adj.date, adj.bioId)
+      }
+    }
+
+    const trendDates = getDatesInRange(trendStartStr, trendEndStr)
+    for (const dStr of trendDates) {
+      const [y, m, d] = dStr.split('-').map(Number)
+      const dObj = new Date(Date.UTC(y, m - 1, d))
+
+      let dayAbs = 0
+      let dayElig = 0
+
+      const existingStats = periodDayStatsByDate.get(dStr)
+      if (existingStats) {
+        dayAbs = existingStats.absent
+        dayElig = existingStats.expectedScheduled
+      } else {
+        const isSun = dObj.getUTCDay() === 0
+        const isHol = holidayDateSet.has(dStr)
+        const punchedOnDay = punchedCanonicalKeysByDate.get(dStr)
+
+        if (!isSun && !isHol && dStr <= todayStr) {
+          for (const ce of scopedCanonicalEmployees) {
+            const elig = evaluateEmployeeEligibilityOnDate(ce, dStr, todayStr, employeeLeavesMap)
+            if (!elig.eligible) continue
+            dayElig++
+            if (!punchedOnDay || !punchedOnDay.has(ce.canonicalKey)) {
+              dayAbs++
+            }
+          }
+        } else if (punchedOnDay && punchedOnDay.size > 0) {
+          for (const ce of scopedCanonicalEmployees) {
+            if (!punchedOnDay.has(ce.canonicalKey)) continue
+            const emp = ce.primary
+            if (emp.exclude_from_biometric || ce.mergedRecords.some(r => isActiveStatus(r.status) && Boolean(r.exclude_from_biometric))) {
+              continue
+            }
+            if (isEmployeeResignedOnDate(emp.status, emp.resignation_date, dStr, todayStr)) continue
+            if (!isActiveStatus(emp.status)) continue
+            dayElig++
+          }
+        }
+      }
+
+      // Accumulate into Weekly view if week falls within previous month .. current week
+      const { key: wKey } = getWeekKeyAndLabel(dObj)
+      const wItem = weekMap.get(wKey)
+      if (wItem) {
+        wItem.absentCount += dayAbs
+        wItem.eligible += dayElig
+      }
+
+      // Accumulate into Monthly view if date falls within last 3 months
+      if (dStr >= monthlyStartStr) {
+        const mKey = `${y}-${String(m).padStart(2, '0')}`
+        const mItem = monthMap.get(mKey)
+        if (mItem) {
+          mItem.absentCount += dayAbs
+          mItem.eligible += dayElig
+        }
+      }
     }
 
     const weeklyTrend: WeekTrendPoint[] = Array.from(weekMap.entries())

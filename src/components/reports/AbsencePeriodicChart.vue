@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { WeekTrendPoint, MonthTrendPoint } from '@/services/reportsService'
 
 const props = defineProps<{
@@ -9,6 +9,10 @@ const props = defineProps<{
 
 const activeView = ref<'weekly' | 'monthly'>('weekly')
 const hoveredIndex = ref<number | null>(null)
+
+watch(activeView, () => {
+  hoveredIndex.value = null
+})
 
 const activePoints = computed(() => {
   if (activeView.value === 'weekly') {
@@ -36,9 +40,9 @@ const maxCount = computed(() => {
 })
 
 // SVG Dimensions
-const viewBoxWidth = 600
-const viewBoxHeight = 200
-const padding = { top: 20, right: 20, bottom: 40, left: 40 }
+const viewBoxWidth = 720
+const viewBoxHeight = 206
+const padding = { top: 20, right: 20, bottom: 46, left: 40 }
 const chartWidth = viewBoxWidth - padding.left - padding.right
 const chartHeight = viewBoxHeight - padding.top - padding.bottom
 
@@ -74,7 +78,7 @@ const hoveredItem = computed(() => {
           {{ activeView === 'weekly' ? 'Weekly Absence Frequency' : 'Monthly Absence Comparison' }}
         </h4>
         <p class="text-[11px] text-muted-foreground mt-0.5">
-          {{ activeView === 'weekly' ? 'Absence occurrences grouped by standard working weeks.' : 'Monthly aggregated absenteeism across billing periods.' }}
+          {{ activeView === 'weekly' ? 'Absence occurrences by week (previous month through current week).' : 'Monthly aggregated absenteeism across the last 3 months.' }}
         </p>
       </div>
 
@@ -166,12 +170,16 @@ const hoveredItem = computed(() => {
           <!-- Label below bar -->
           <text
             :x="getX(i)"
-            :y="padding.top + chartHeight + 16"
+            :y="padding.top + chartHeight + 15"
             text-anchor="middle"
-            class="text-[10px] font-medium truncate"
+            class="text-[10px] font-medium"
             :class="hoveredIndex === i ? 'fill-primary font-bold' : 'fill-muted-foreground'"
           >
-            {{ p.label }}
+            <template v-if="p.label.includes(' (')">
+              <tspan :x="getX(i)" dy="0">{{ p.label.split(' (')[0] }}</tspan>
+              <tspan :x="getX(i)" dy="11" class="text-[8.5px] opacity-85">{{ p.label.split(' (')[1]?.replace(')', '') }}</tspan>
+            </template>
+            <template v-else>{{ p.label }}</template>
           </text>
         </template>
       </svg>
