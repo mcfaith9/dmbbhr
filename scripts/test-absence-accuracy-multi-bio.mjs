@@ -249,7 +249,7 @@ try {
 
   const { employeeRepository } = empRepoMod
   const { attendanceRepository } = attRepoMod
-  const { reportsService } = reportsMod
+  const { reportsService, isAbsenceCutoffReached, ABSENCE_CUTOFF_HOUR } = reportsMod
   const { payrollCalculationService } = payrollMod
 
   // Initial warm-up before clearing
@@ -671,8 +671,10 @@ try {
     manilaPunch('t11-r3', '50305', currWeekWorkdayStr, '08:00:00')
   ])
 
+  const test11AsOf = new Date(`${todayStr}T10:00:00+08:00`)
+
   // Even when report preset is 'today', weeklyTrend and monthlyTrend must span their fixed windows
-  const todayReport = await reportsService.getReportSummary({ preset: 'today' }, true)
+  const todayReport = await reportsService.getReportSummary({ preset: 'today', asOf: test11AsOf }, true)
 
   // Monthly view: exact 3 months [tm-2, tm-1, tm] including current month
   const expectedMonthKeys = [mMinus2Start, mMinus1Start, mCurrStart].map(
@@ -706,7 +708,7 @@ try {
 
   // Reynald (Operations) punched on secondary Bio ID 50305 on those days -> 0 absences for Reynald on those buckets
   const opsReport = await reportsService.getReportSummary(
-    { preset: 'today', department: 'Operations' },
+    { preset: 'today', department: 'Operations', asOf: test11AsOf },
     true
   )
   const opsPrevWeek = opsReport.weeklyTrend.find((w) => w.weekKey === isoWeekKey(prevMonthDay.dateObj))
@@ -715,7 +717,7 @@ try {
 
   // Finance (Elena, 0 punches) must show exact absence contribution on prevMonthDay & currWeekWorkday, plus twoMonthsAgoDay in Monthly[0]
   const finReport = await reportsService.getReportSummary(
-    { preset: 'today', department: 'Finance' },
+    { preset: 'today', department: 'Finance', asOf: test11AsOf },
     true
   )
   assert.ok(
@@ -766,11 +768,124 @@ try {
   assert.strictEqual(opsCurrWorkdayPoint?.absentCount, 0, 'Secondary Bio ID 50305 punch prevents absence on 7-day weekly line chart')
 
   // Last Week preset anchors selectedWeekStart to previous Sunday-Saturday week
-  const lastWeekReport = await reportsService.getReportSummary({ preset: 'last_week', department: 'Finance' }, true)
+  const lastWeekReport = await reportsService.getReportSummary({ preset: 'last_week', department: 'Finance', asOf: test11AsOf }, true)
   const expectedPrevSun = new Date(expectedSun)
   expectedPrevSun.setUTCDate(expectedPrevSun.getUTCDate() - 7)
   assert.strictEqual(lastWeekReport.selectedWeekStart, fmtUtc(expectedPrevSun), 'Last Week preset selects prior Sunday-Saturday week')
   ok('Additional Test 11: Weekly 7-day windows, selectedWeekStart, Monthly 3-month trends & filters verified accurately')
+
+  // ------------------------------------------------------------------
+  // ADDITIONAL TEST 12: 9:00 AM Absent Reporting Cutoff & Late Valid IN Rule
+  // ------------------------------------------------------------------
+  assert.strictEqual(ABSENCE_CUTOFF_HOUR, 9, 'Cutoff hour must be 9 (9:00 AM)')
+  assert.strictEqual(isAbsenceCutoffReached('2026-11-17', { hour: 8, minute: 59, dateStr: '2026-11-17' }), false, '08:59 AM on Today must be before cutoff')
+  assert.strictEqual(isAbsenceCutoffReached('2026-11-17', { hour: 9, minute: 0, dateStr: '2026-11-17' }), true, '09:00 AM on Today must reach cutoff')
+  assert.strictEqual(isAbsenceCutoffReached('2026-11-16', { hour: 8, minute: 30, dateStr: '2026-11-17' }), true, 'Yesterday must always be past cutoff even at 8:30 AM today')
+  assert.strictEqual(isAbsenceCutoffReached('2026-11-18', { hour: 10, minute: 0, dateStr: '2026-11-17' }), false, 'Future date must never reach cutoff')
+
+  await resetAll()
+  const SIM_YESTERDAY = '2026-11-16' // Monday
+  const SIM_TODAY = '2026-11-17'     // Tuesday
+
+  // Register test employees:
+  // - 90001: Early/on-time employee (punched IN 08:15 AM on SIM_TODAY, punched Yesterday)
+  // - 90002: Truly absent employee on both SIM_YESTERDAY & SIM_TODAY (0 punches)
+  // - 90003: Late employee punching IN at 09:15 AM on SIM_TODAY (single punch, no OUT yet)
+  // - 90004: Very late employee punching IN at 11:30 AM + 17:05 OUT on SIM_TODAY
+  // - 90005: Multi-Bio-ID employee (primary 90005, secondary 90505) punching IN at 09:45 AM via 90505 on SIM_TODAY
+  // - 90006: Active - NB (must remain excluded)
+  // - 90007: Resigned (must remain excluded)
+  await employeeRepository.registerFromPunch('90001', 'Early Arrival Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.registerFromPunch('90002', 'Unpunched Absent Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.registerFromPunch('90003', 'Late 915AM Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.registerFromPunch('90004', 'Late 1130AM Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.registerFromPunch('90005', 'Multi Bio Late Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.linkSecondaryBioId('90005', '90505', { confirmedByAdmin: true })
+  await employeeRepository.registerFromPunch('90006', 'No Bio Excluded Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.updateEmployee('90006', { exclude_from_biometric: true })
+  await employeeRepository.registerFromPunch('90007', 'Resigned Excluded Emp', 'DBB CEBU', 'wg-group-c')
+  await employeeRepository.updateEmployee('90007', { status: 'resigned', resignation_date: '2026-10-01' })
+
+  for (const bid of ['90001', '90002', '90003', '90004', '90005', '90006']) {
+    await employeeRepository.updateEmployee(bid, { hire_date: '2026-01-01', department: 'Operations' })
+  }
+
+  // Yesterday punches: 90001, 90003, 90004, 90005 punched; 90002 did not
+  await memTables.biometricPunches.bulkPut([
+    manilaPunch('c-y-1', '90001', SIM_YESTERDAY, '07:55:00'),
+    manilaPunch('c-y-3', '90003', SIM_YESTERDAY, '07:58:00'),
+    manilaPunch('c-y-4', '90004', SIM_YESTERDAY, '08:00:00'),
+    manilaPunch('c-y-5', '90005', SIM_YESTERDAY, '07:50:00')
+  ])
+
+  // Today punches before 9:00 AM: only 90001 has punched IN at 08:15 AM
+  await memTables.biometricPunches.put(manilaPunch('c-t-1', '90001', SIM_TODAY, '08:15:00'))
+
+  const asOf859 = new Date(`${SIM_TODAY}T08:59:00+08:00`)
+
+  // 12a. Today at 8:59 AM -> 0 Absent (90002, 90003, 90004, 90005 have not punched yet, before 9:00 AM)
+  const repToday859 = await reportsService.getReportSummary({ preset: 'today', asOf: asOf859 }, true)
+  assert.strictEqual(repToday859.kpis.absentCount, 0, 'Before 9:00 AM on Today: absentCount must be 0')
+  assert.strictEqual(repToday859.kpis.uniqueAbsentEmployees, 0, 'Before 9:00 AM on Today: uniqueAbsentEmployees must be 0')
+  assert.strictEqual(repToday859.absentRecords.length, 0, 'Before 9:00 AM on Today: absentRecords must be empty')
+  assert.strictEqual(repToday859.kpis.presentCount, 1, 'Before 9:00 AM on Today: punched employee 90001 must still be Present')
+  const today859Week = repToday859.weeklyDailyWindows.find((w) => w.weekStart === repToday859.selectedWeekStart)
+  const today859TrendPt = today859Week?.days.find((d) => d.date === SIM_TODAY)
+  assert.strictEqual(today859TrendPt?.absentCount, 0, 'Before 9:00 AM on Today: Weekly trend point for Today must be 0')
+
+  // 12b. Yesterday evaluated at Today 8:59 AM -> Yesterday IS past 9:00 AM cutoff, so 90002 IS counted Absent
+  const repYestAt859 = await reportsService.getReportSummary({ preset: 'yesterday', asOf: asOf859 }, true)
+  assert.strictEqual(repYestAt859.kpis.absentCount, 1, 'Yesterday at 8:59 AM Today: un-punched 90002 must be counted Absent')
+  assert.deepStrictEqual(repYestAt859.absentRecords.map((r) => r.bioId), ['90002'])
+  // Check Today bucket in weeklyDailyWindows even when preset is 'yesterday'
+  const yestWeekWindow = repYestAt859.weeklyDailyWindows.find((w) => w.days.some((d) => d.date === SIM_TODAY))
+  assert.strictEqual(yestWeekWindow?.days.find((d) => d.date === SIM_YESTERDAY)?.absentCount, 1, 'Yesterday point in Weekly trend shows 1 absent')
+  assert.strictEqual(yestWeekWindow?.days.find((d) => d.date === SIM_TODAY)?.absentCount, 0, 'Today point in Weekly trend still shows 0 before 9:00 AM when preset is yesterday')
+
+  // 12c. Custom Date Range [Yesterday, Today] at Today 8:59 AM -> only Yesterday absence counted
+  const repCustomSpan859 = await reportsService.getReportSummary(
+    { preset: 'custom', startDate: SIM_YESTERDAY, endDate: SIM_TODAY, asOf: asOf859 },
+    true
+  )
+  assert.strictEqual(repCustomSpan859.kpis.absentCount, 1, 'Custom range [Yesterday..Today] before 9:00 AM counts Yesterday absent only')
+  assert.strictEqual(repCustomSpan859.absentRecords[0].date, SIM_YESTERDAY)
+
+  // 12d. At 9:00 AM onwards with late punches at 9:15 AM, 11:30 AM, and secondary Bio ID 90505 at 9:45 AM
+  await memTables.biometricPunches.bulkPut([
+    manilaPunch('c-t-3', '90003', SIM_TODAY, '09:15:00'),
+    manilaPunch('c-t-4a', '90004', SIM_TODAY, '11:30:00'),
+    manilaPunch('c-t-4b', '90004', SIM_TODAY, '17:05:00'),
+    manilaPunch('c-t-5', '90505', SIM_TODAY, '09:45:00')
+  ])
+
+  const asOf900 = new Date(`${SIM_TODAY}T09:00:00+08:00`)
+  const repToday900 = await reportsService.getReportSummary({ preset: 'today', asOf: asOf900 }, true)
+  // 90001, 90003, 90004, 90005 all have valid IN punches -> Present/Late, NEVER Absent!
+  // Only 90002 has no valid IN punch (90006 is Active-NB, 90007 is Resigned)
+  assert.strictEqual(repToday900.kpis.presentCount, 4, 'At/after 9:00 AM: all 4 employees with valid IN punches (incl. 9:15, 11:30, and secondary ID 9:45) must be Present')
+  assert.strictEqual(repToday900.kpis.absentCount, 1, 'At 9:00 AM onwards: only eligible employee without valid IN punch (90002) is Absent')
+  assert.deepStrictEqual(repToday900.absentRecords.map((r) => r.bioId), ['90002'])
+  const today900Week = repToday900.weeklyDailyWindows.find((w) => w.weekStart === repToday900.selectedWeekStart)
+  assert.strictEqual(today900Week?.days.find((d) => d.date === SIM_TODAY)?.absentCount, 1, 'At 9:00 AM onwards: Weekly trend point for Today shows 1 absent')
+
+  // 12e. Custom Date Range for SIM_TODAY at 10:30 AM -> identical Absent classification & exclusions
+  const asOf1030 = new Date(`${SIM_TODAY}T10:30:00+08:00`)
+  const repCustomToday1030 = await reportsService.getReportSummary(
+    { preset: 'custom', startDate: SIM_TODAY, endDate: SIM_TODAY, asOf: asOf1030 },
+    true
+  )
+  assert.strictEqual(repCustomToday1030.kpis.absentCount, 1)
+  assert.deepStrictEqual(repCustomToday1030.absentRecords.map((r) => r.bioId), ['90002'])
+
+  // Custom Date Range [Yesterday, Today] at 10:30 AM -> 2 absent occurrences across 1 unique employee (90002)
+  const repCustomSpan1030 = await reportsService.getReportSummary(
+    { preset: 'custom', startDate: SIM_YESTERDAY, endDate: SIM_TODAY, asOf: asOf1030 },
+    true
+  )
+  assert.strictEqual(repCustomSpan1030.kpis.absentCount, 2, 'Custom range [Yesterday..Today] after 9:00 AM counts both days for un-punched 90002')
+  assert.strictEqual(repCustomSpan1030.kpis.uniqueAbsentEmployees, 1)
+
+  ok('Additional Test 12: 9:00 AM absent cutoff, late valid IN punches (never absent), Yesterday & Custom Date Range consistency verified')
 
   console.log('\n======================================================================')
   console.log(`ALL ${passed} ABSENCE ACCURACY & ELIGIBILITY TESTS PASSED SUCCESSFULLY!`)

@@ -13,6 +13,7 @@
 import type { AttendanceLog, AttendanceFilterParams, PaginationMeta } from '@/types'
 import {
   getManilaDateString,
+  getManilaCurrentTime,
   formatManilaTime,
   type DailyAttendanceRecord,
   type AttendanceEngineConfig
@@ -28,6 +29,7 @@ import { parseBiometricTimestamp, type ParsedBiometricTimestamp } from '@/utils/
 
 export {
   getManilaDateString,
+  getManilaCurrentTime,
   formatManilaTime,
   parseBiometricTimestamp,
   type ParsedBiometricTimestamp,

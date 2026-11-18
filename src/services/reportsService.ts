@@ -7,7 +7,7 @@
  * as well as canonical Bio ID & duplicate-person deduplication.
  */
 
-import { attendanceService, getManilaDateString, type DailyAttendanceRecord } from './attendance'
+import { attendanceService, getManilaDateString, getManilaCurrentTime, type DailyAttendanceRecord } from './attendance'
 import { employeeService } from './employees'
 import { parseDateValue } from '@/repositories/employeeRepository'
 import { holidayService } from './holidays/holidayService'
@@ -25,6 +25,7 @@ export interface ReportFilterOptions {
   workGroupId?: string // 'all' or specific
   employeeBioId?: string // 'all' or specific bioId
   department?: string // 'all' or specific
+  asOf?: Date // Optional reference timestamp (defaults to current time)
 }
 
 export interface DayTrendPoint {
@@ -248,11 +249,33 @@ export function getDatesInRange(startStr: string, endStr: string): string[] {
   return dates
 }
 
+export const ABSENCE_CUTOFF_HOUR = 9 // 9:00 AM Asia/Manila
+
+/**
+ * Determines whether the 9:00 AM absent reporting cutoff has been reached for date dStr.
+ * - Past dates (< todayStr): true (cutoff already passed)
+ * - Future dates (> todayStr): false
+ * - Today (=== todayStr): true only from 9:00 AM onwards (hour >= 9 in Asia/Manila)
+ */
+export function isAbsenceCutoffReached(
+  dStr: string,
+  manilaNow: { hour: number; minute: number; dateStr: string } = getManilaCurrentTime()
+): boolean {
+  if (dStr > manilaNow.dateStr) return false
+  if (dStr < manilaNow.dateStr) return true
+  return manilaNow.hour >= ABSENCE_CUTOFF_HOUR
+}
+
 /**
  * Resolves start and end dates for predefined range presets
  */
-export function resolveDateRange(preset: DateRangePreset, customStart?: string, customEnd?: string): { start: string; end: string; label: string } {
-  const todayStr = getManilaDateString(new Date())
+export function resolveDateRange(
+  preset: DateRangePreset,
+  customStart?: string,
+  customEnd?: string,
+  referenceDate: Date = new Date()
+): { start: string; end: string; label: string } {
+  const todayStr = getManilaDateString(referenceDate)
   const [y, m, d] = todayStr.split('-').map(Number)
   const now = new Date(Date.UTC(y, m - 1, d))
 
@@ -688,16 +711,19 @@ export const reportsService = {
    * Generates aggregated HR attendance report summary for the requested filter
    */
   async getReportSummary(filters: ReportFilterOptions, forceRefresh = false): Promise<ReportSummaryResult> {
-    const { preset, startDate, endDate, location = 'all', workGroupId = 'all', employeeBioId = 'all', department = 'all' } = filters
-    const { start, end, label } = resolveDateRange(preset, startDate, endDate)
+    const { preset, startDate, endDate, location = 'all', workGroupId = 'all', employeeBioId = 'all', department = 'all', asOf } = filters
+    const referenceDate = asOf ?? new Date()
+    const manilaNow = getManilaCurrentTime(referenceDate)
+    const todayStr = manilaNow.dateStr
+    const { start, end, label } = resolveDateRange(preset, startDate, endDate, referenceDate)
 
-    const todayStr = getManilaDateString(new Date())
     const isSingleToday = start === todayStr && end === todayStr
     const isVolatilePreset = preset === 'today' || preset === 'yesterday' || preset === 'custom'
     const effectiveTtl = isSingleToday ? 10_000 : CACHE_TTL_MS
+    const cutoffPhase = manilaNow.hour >= ABSENCE_CUTOFF_HOUR ? 'after9' : 'before9'
 
-    const cacheKey = `${start}_${end}_${location}_${workGroupId}_${employeeBioId}_${department}`
-    if (!forceRefresh && !isVolatilePreset && reportCache.has(cacheKey)) {
+    const cacheKey = `${start}_${end}_${location}_${workGroupId}_${employeeBioId}_${department}_${todayStr}_${cutoffPhase}`
+    if (!asOf && !forceRefresh && !isVolatilePreset && reportCache.has(cacheKey)) {
       const cached = reportCache.get(cacheKey)!
       if (Date.now() - cached.timestamp < effectiveTtl) {
         return cached.data
@@ -1053,6 +1079,7 @@ export const reportsService = {
 
       if (!isSunday && !isHoliday && !isFutureDate) {
         scheduledWorkdaysCount++
+        const absenceCutoffReached = isAbsenceCutoffReached(dStr, manilaNow)
         for (const ce of scopedCanonicalEmployees) {
           const eligibility = evaluateEmployeeEligibilityOnDate(ce, dStr, todayStr, employeeLeavesMap)
           if (!eligibility.eligible) {
@@ -1066,14 +1093,16 @@ export const reportsService = {
           totalEligibleWorkdays++
           uniqueEligibleKeys.add(ce.canonicalKey)
 
-          // Check if employee (or any of their alias Bio IDs) had attendance on dStr
+          // Check if employee (or any of their alias Bio IDs) had a valid attendance punch on dStr
           const emp = ce.primary
           const attended =
             attendedKeysOnDay.has(ce.canonicalKey) ||
             Array.from(ce.aliasBioIds).some(id => attendedKeysOnDay.has(id)) ||
             Array.from(ce.aliasCanonicalKeys).some(k => attendedKeysOnDay.has(k))
 
-          if (!attended) {
+          // 9:00 AM cutoff: before 9:00 AM on Today, do not classify un-punched employees as Absent.
+          // From 9:00 AM onwards (and on all past dates), count as Absent only if no valid IN punch exists.
+          if (!attended && absenceCutoffReached) {
             dayAbsent++
 
             const wg = workGroupMap.get(emp.work_group_id)
@@ -1243,11 +1272,12 @@ export const reportsService = {
       let dayElig = 0
 
       if (!isSun && !isHol && dStr <= todayStr) {
+        const absenceCutoffReached = isAbsenceCutoffReached(dStr, manilaNow)
         for (const ce of scopedCanonicalEmployees) {
           const elig = evaluateEmployeeEligibilityOnDate(ce, dStr, todayStr, employeeLeavesMap)
           if (!elig.eligible) continue
           dayElig++
-          if (!punchedOnDay || !punchedOnDay.has(ce.canonicalKey)) {
+          if (absenceCutoffReached && (!punchedOnDay || !punchedOnDay.has(ce.canonicalKey))) {
             dayAbs++
           }
         }
@@ -1508,11 +1538,17 @@ export const reportsService = {
 
     // Construct concise HR insights
     const insights: string[] = []
+    const todayCutoffReached = isAbsenceCutoffReached(todayStr, manilaNow)
+    if (isSingleToday && !todayCutoffReached) {
+      insights.push('Before 9:00 AM cutoff: employees without a biometric IN punch yet are not classified as Absent.')
+    }
     if (isSingleToday && inProgressCount > 0) {
       insights.push(`${inProgressCount} employee shift${inProgressCount > 1 ? 's are' : ' is'} currently in progress (clocked IN, awaiting OUT). Classified as Present.`)
     }
     if (totalAbsentOccurrences > 0) {
       insights.push(`${totalAbsentOccurrences} total absence occurrence${totalAbsentOccurrences > 1 ? 's' : ''} across ${uniqueAbsentEmployees} unique employee${uniqueAbsentEmployees > 1 ? 's' : ''} (${absenceRate}% absence rate across ${uniqueEligibleKeys.size} eligible staff).`)
+    } else if (isSingleToday && !todayCutoffReached) {
+      insights.push(`0 absences classified before the 9:00 AM cutoff (${uniquePresentKeys.size} of ${uniqueEligibleKeys.size} eligible staff clocked IN so far).`)
     } else {
       insights.push('100% active workforce presence recorded; zero unexcused absences detected across this reporting period.')
     }
@@ -1587,7 +1623,9 @@ export const reportsService = {
       diagnostics
     }
 
-    reportCache.set(cacheKey, { timestamp: Date.now(), data: result })
+    if (!asOf) {
+      reportCache.set(cacheKey, { timestamp: Date.now(), data: result })
+    }
     return result
   },
 

@@ -234,9 +234,9 @@ export function parseHHMMOr12hToMinutes(timeStr: string): number {
 /**
  * Gets the current hour and minute in Asia/Manila (0-23, 0-59)
  */
-export function getManilaCurrentTime(): { hour: number; minute: number; dateStr: string } {
+export function getManilaCurrentTime(referenceDate: Date = new Date()): { hour: number; minute: number; dateStr: string } {
   try {
-    const now = new Date()
+    const now = referenceDate
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Manila',
       hour12: false,
