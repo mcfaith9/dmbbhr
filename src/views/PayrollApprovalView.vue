@@ -521,6 +521,18 @@
                     <span class="font-mono tabular-nums text-foreground">{{ activeSnap.payableDays ?? '—' }} days</span>
                   </div>
                   <div class="flex justify-between items-center text-muted-foreground">
+                    <span>Absent Days</span>
+                    <span class="font-mono tabular-nums" :class="(activeSnap.absentDays || 0) > 0 ? 'text-destructive font-semibold' : 'text-foreground'">
+                      {{ activeSnap.absentDays ?? 0 }} days
+                    </span>
+                  </div>
+                  <div class="flex justify-between items-center text-muted-foreground">
+                    <span>On Rest Days (Unpaid)</span>
+                    <span class="font-mono tabular-nums" :class="(activeSnap.onRestDays || 0) > 0 ? 'text-sky-600 dark:text-sky-400 font-semibold' : 'text-foreground'">
+                      {{ activeSnap.onRestDays ?? 0 }} days
+                    </span>
+                  </div>
+                  <div class="flex justify-between items-center text-muted-foreground">
                     <span>Holiday Pay</span>
                     <span class="font-mono tabular-nums text-foreground">{{ formatPeso(activeSnap.holidayPay) }}</span>
                   </div>

@@ -631,7 +631,7 @@ async function triggerPrint() {
             </div>
 
             <!-- Attendance Days Metric Grid -->
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 text-xs">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
               <div class="p-2 rounded-lg border bg-muted/20">
                 <span class="text-[10px] text-muted-foreground block">Scheduled</span>
                 <span class="font-bold text-foreground font-mono text-sm">{{ currentRecord.scheduledDays }} days</span>
@@ -652,8 +652,19 @@ async function triggerPrint() {
                 <span class="font-bold text-amber-600 font-mono text-sm">{{ currentRecord.holidayDays }} days</span>
               </div>
               <div class="p-2 rounded-lg border bg-destructive/5 border-destructive/20">
-                <span class="text-[10px] text-destructive block font-medium">Absences</span>
+                <span class="text-[10px] text-destructive block font-medium">Absent Days</span>
                 <span class="font-bold text-destructive font-mono text-sm">{{ currentRecord.absentDays }} days</span>
+              </div>
+              <div
+                class="p-2 rounded-lg border"
+                :class="(currentRecord.onRestDays || 0) > 0 ? 'bg-sky-500/10 border-sky-500/30' : 'bg-muted/20'"
+                title="On Rest days are unpaid (no daily salary earned), not counted as Absent, and do not incur duplicate absence deductions."
+              >
+                <span class="text-[10px] block font-medium" :class="(currentRecord.onRestDays || 0) > 0 ? 'text-sky-700 dark:text-sky-300' : 'text-muted-foreground'">On Rest Days</span>
+                <span class="font-bold font-mono text-sm" :class="(currentRecord.onRestDays || 0) > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-foreground'">{{ currentRecord.onRestDays || 0 }} days</span>
+                <span v-if="(currentRecord.onRestDays || 0) > 0" class="block text-[9px] text-sky-600 dark:text-sky-400 font-medium mt-0.5">
+                  Unpaid • Not Absent
+                </span>
               </div>
               <div class="p-2 rounded-lg border bg-muted/20">
                 <span class="text-[10px] text-muted-foreground block">Late Tardy</span>
@@ -671,6 +682,17 @@ async function triggerPrint() {
                 <span>Base Working Pay ({{ currentRecord.payableDays }} payable days):</span>
                 <span class="font-mono font-medium text-foreground">
                   ₱{{ currentRecord.earningsBreakdown.basePay.toLocaleString('en-US', { minimumFractionDigits: 2 }) }}
+                </span>
+              </div>
+              <div
+                v-if="(currentRecord.onRestDays || 0) > 0"
+                class="flex justify-between items-center py-1 border-b text-sky-700 dark:text-sky-300"
+              >
+                <span>
+                  On Rest ({{ currentRecord.onRestDays }} unpaid day{{ currentRecord.onRestDays === 1 ? '' : 's' }} — no daily salary earned, no duplicate absence deduction):
+                </span>
+                <span class="font-mono font-medium">
+                  ₱0.00
                 </span>
               </div>
               <div v-if="currentRecord.earningsBreakdown.sundayDutyPay > 0" class="flex justify-between items-center py-1 border-b text-muted-foreground">

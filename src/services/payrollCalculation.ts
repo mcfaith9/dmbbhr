@@ -25,6 +25,7 @@ import { scheduleRepository } from '@/repositories/scheduleRepository'
 import { holidayService } from '@/services/holidays/holidayService'
 import { classifyOvertimeDay, collectApprovedOvertimeByDate, evaluateMultipleOvertimeRecordsForDay } from '@/services/overtimePolicy'
 import { collectEmployeeIdKeys, getEmployeePrimaryBioId, recordMatchesEmployee } from '@/lib/employeeIdentity'
+import { formatOnRestPeriodLabel, getActiveOnRestPeriodForDate, isEmployeeOnRestOnDate } from '@/lib/onRest'
 import {
   deduplicateEmployees,
   getEffectiveStartDate,
@@ -128,6 +129,7 @@ export interface EmployeePayrollRecord {
   specialNonWorkingDays: number
   specialWorkingDays: number
   absentDays: number
+  onRestDays: number
   payableDays: number
   lateMinutes: number
   undertimeMinutes: number
@@ -580,6 +582,7 @@ export const payrollCalculationService = {
     let futureScheduledDays = 0
     let unresolvedDays = 0
     let leaveDays = 0
+    let onRestDays = 0
 
     // Holiday and Overtime Accumulators
     let holidayPay = 0
@@ -619,6 +622,7 @@ export const payrollCalculationService = {
         }
 
         if (approvedLeaveDatesSet.has(prevDateStr)) return true
+        if (isEmployeeOnRestOnDate(employee, prevDateStr)) return true
 
         // Found preceding scheduled workday
         const prevAtt = empAttendanceMap.get(prevDateStr) || empAttendanceMap.get(normalizeDateStr(prevDateStr))
@@ -630,7 +634,15 @@ export const payrollCalculationService = {
         }
 
         const prevStatusLower = String(prevAtt.status || '').trim().toLowerCase()
-        if (prevStatusLower === 'on leave' || prevStatusLower === 'leave' || prevStatusLower.includes('leave')) return true
+        if (
+          prevStatusLower === 'on leave' ||
+          prevStatusLower === 'leave' ||
+          prevStatusLower.includes('leave') ||
+          prevStatusLower === 'on rest' ||
+          Boolean(prevAtt.is_on_rest)
+        ) {
+          return true
+        }
 
         const prevIn = prevAtt.actual_in?.trim() || ''
         const hasPrevIn = Boolean(
@@ -680,6 +692,11 @@ export const payrollCalculationService = {
         actualOut !== '-'
       )
       const attStatusLower = String(att?.status || '').trim().toLowerCase()
+      const activeOnRestPeriod = getActiveOnRestPeriodForDate(employee, normDStr)
+      const isOnRestDay =
+        Boolean(activeOnRestPeriod) ||
+        attStatusLower === 'on rest' ||
+        Boolean(att?.is_on_rest)
       const isLeaveRecord =
         attStatusLower === 'leave' ||
         attStatusLower === 'on leave' ||
@@ -689,6 +706,7 @@ export const payrollCalculationService = {
       const isAbsentRecord = attStatusLower.includes('absent')
       const statusWorked = att?.status === 'Present' || att?.status === 'Late' || att?.status === 'Overtime' || att?.status === 'Early Departure' || att?.status === 'Incomplete'
       const hasWorked =
+        !isOnRestDay &&
         !isLeaveRecord &&
         !isAbsentRecord &&
         (hasValidIn || (typeof att?.worked_minutes === 'number' && att.worked_minutes > 0) || (typeof att?.total_hours_decimal === 'number' && att.total_hours_decimal > 0) || statusWorked)
@@ -700,7 +718,7 @@ export const payrollCalculationService = {
         (!normStartDate || normStartDate <= normDStr) &&
         !isEmployeeResignedOnDate(employee.status, employee.resignation_date, normDStr, todayStr)
 
-      if (!isSunday && !isHoliday && isDateEligibleForAttendance) {
+      if (!isSunday && !isHoliday && isDateEligibleForAttendance && !isOnRestDay) {
         scheduledDays++
       }
 
@@ -744,6 +762,9 @@ export const payrollCalculationService = {
             regularWorkedDaysPay += payableFraction * dailyRate
             holidayPay += payableFraction * dailyRate * 0.30
           }
+        } else if (isOnRestDay && !isSunday) {
+          // Assigned On Rest period on a holiday: display as On Rest (unpaid, not Absent, no holiday salary earned)
+          onRestDays++
         } else {
           // Unworked Holiday
           if (isRegularHol) {
@@ -756,14 +777,14 @@ export const payrollCalculationService = {
               }
               // For Monthly: covered in monthly basic salary (0 deduction)
             } else {
-              // Ineligible: Unworked regular holiday without entitlement
-              if (salaryType === 'Monthly' && isDateEligibleForAttendance) {
+              // Ineligible: Unworked regular holiday without entitlement (never penalize On Rest days)
+              if (salaryType === 'Monthly' && isDateEligibleForAttendance && !isOnRestDay) {
                 absentDays++
               }
             }
           } else if (isSpecialWorking) {
-            // Unworked special working day: 0%
-            if (!isFuture && salaryType === 'Monthly' && isDateEligibleForAttendance) {
+            // Unworked special working day: 0% (never penalize On Rest days)
+            if (!isFuture && salaryType === 'Monthly' && isDateEligibleForAttendance && !isOnRestDay) {
               absentDays++
             }
           } else {
@@ -840,6 +861,9 @@ export const payrollCalculationService = {
             standardShiftsUndertimeMinutes += dayUndertime
             standardShiftsUndertimeDeduction += dayUndertimeDed
           }
+        } else if (isOnRestDay) {
+          // Assigned On Rest period: excluded from Absent, Present, Late, and Undertime; no payroll absence deduction
+          onRestDays++
         } else if (isLeaveRecord || att?.status === 'On Leave' || att?.status === 'Leave') {
           leaveDays++
         } else if (isFuture) {
@@ -854,7 +878,7 @@ export const payrollCalculationService = {
         }
       }
 
-      if (hasWorked && att?.late_minutes && att.late_minutes > 0) {
+      if (hasWorked && !isOnRestDay && att?.late_minutes && att.late_minutes > 0) {
         lateMinutes += att.late_minutes
       }
 
@@ -862,6 +886,12 @@ export const payrollCalculationService = {
         for (const rReason of att.review_reasons) {
           attendanceReviewNotes.push(`${normDStr}: ${rReason}`)
         }
+      } else if (
+        isOnRestDay &&
+        (hasValidIn || (att?.raw_punches_count || 0) > 0 || Boolean(att?.has_punches_during_on_rest))
+      ) {
+        const restLabel = activeOnRestPeriod ? formatOnRestPeriodLabel(activeOnRestPeriod) : 'assigned On Rest period'
+        attendanceReviewNotes.push(`${normDStr}: Biometric punch(es) recorded during On Rest (${restLabel}) — requires HR review`)
       }
 
       // --- D. AUTHORIZED OVERTIME (Requires Approved Physical Form) ---
@@ -916,10 +946,15 @@ export const payrollCalculationService = {
     } else if (salaryType === 'Monthly') {
       if (!isActiveStatus(employee.status)) {
         basePay = Math.round(regularWorkedDaysPay * 100) / 100
+      } else if (onRestDays > 0 && payableDays === 0 && unworkedHolidayDays === 0 && futureScheduledDays === 0) {
+        // Entire elapsed cutoff was unpaid On Rest / non-worked: no daily salary earned
+        basePay = 0
       } else {
         const semiMonthlyBasic = Math.round((basicSalary / 2) * 100) / 100
         const absenceDeduction = Math.round(absentDays * dailyRate * 100) / 100
-        basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction) * 100) / 100)
+        // On Rest days are unpaid (no daily salary earned), without counting them as Absent or deducting twice
+        const unpaidOnRestDeduction = Math.round(onRestDays * dailyRate * 100) / 100
+        basePay = Math.max(0, Math.round((semiMonthlyBasic - absenceDeduction - unpaidOnRestDeduction) * 100) / 100)
       }
     } else if (salaryType === 'Hourly') {
       basePay = Math.round(regularWorkedDaysPay * 100) / 100
@@ -996,7 +1031,7 @@ export const payrollCalculationService = {
       isActiveStatus(employee.status) &&
       scheduledDays > 0
 
-    if (empAttendanceMap.size === 0 && leaveDays === 0 && absentDays === 0 && requiresBiometricAttendanceCheck) {
+    if (empAttendanceMap.size === 0 && leaveDays === 0 && absentDays === 0 && onRestDays === 0 && requiresBiometricAttendanceCheck) {
       reviewReasons.push('No attendance records could be matched for this cutoff. Please check attendance logs before finalization.')
     } else if (unresolvedDays > 0) {
       reviewReasons.push(`${unresolvedDays} day(s) have unresolved attendance requiring HR audit`)
@@ -1043,6 +1078,7 @@ export const payrollCalculationService = {
       specialNonWorkingDays,
       specialWorkingDays,
       absentDays,
+      onRestDays,
       payableDays,
       lateMinutes,
       undertimeMinutes,
@@ -1331,6 +1367,10 @@ export const payrollCalculationService = {
         ? r.reviewReasons.map((reason: any) => String(reason).trim()).filter(Boolean)
         : []
 
+      const cleanAttendanceReviewNotes: string[] = Array.isArray(r.attendanceReviewNotes)
+        ? r.attendanceReviewNotes.map((note: any) => String(note).trim()).filter(Boolean)
+        : []
+
       const recordId = String(r.id || `${r.periodId}_${r.bioId}`)
 
       return {
@@ -1351,6 +1391,7 @@ export const payrollCalculationService = {
         dailyRate: Number(r.dailyRate) || 0,
         hourlyRate: Number(r.hourlyRate) || 0,
         payableDays: Number(r.payableDays) || 0,
+        scheduledDays: Number(r.scheduledDays) || 0,
         presentDays: Number(r.presentDays) || 0,
         sundayWorkDays: Number(r.sundayWorkDays) || 0,
         holidayDays: Number(r.holidayDays) || 0,
@@ -1358,6 +1399,10 @@ export const payrollCalculationService = {
         unworkedHolidayDays: Number(r.unworkedHolidayDays) || 0,
         specialNonWorkingDays: Number(r.specialNonWorkingDays) || 0,
         specialWorkingDays: Number(r.specialWorkingDays) || 0,
+        absentDays: Number(r.absentDays) || 0,
+        onRestDays: Number(r.onRestDays) || 0,
+        basePay: Number(r.earningsBreakdown?.basePay) || 0,
+        allowances: Number(r.earningsBreakdown?.allowances) || 0,
         holidayPay: Number(r.earningsBreakdown?.holidayPay) || 0,
         sundayDutyPay: Number(r.earningsBreakdown?.sundayDutyPay) || 0,
         overtimeHours: Number(r.overtimeHours) || 0,
@@ -1365,6 +1410,7 @@ export const payrollCalculationService = {
         lateMinutes: Number(r.lateMinutes) || 0,
         undertimeMinutes: Number(r.undertimeMinutes) || 0,
         undertimeDeduction: Number(r.undertimeDeduction) || 0,
+        attendanceReviewNotes: cleanAttendanceReviewNotes,
         initialEarnings: Number(r.initialEarnings) || 0,
         sss: Number(r.sss) || 0,
         philhealth: Number(r.philhealth) || 0,
@@ -1410,6 +1456,10 @@ export const payrollCalculationService = {
     const otPay = Number(snap.overtimePay) || 0
     const holPay = snap.holidayPay || 0
     const sunPay = (snap as any).sundayDutyPay || 0
+    const allowances = Number((snap as any).allowances) || 0
+    const persistedBasePay = typeof (snap as any).basePay === 'number'
+      ? (snap as any).basePay
+      : Math.max(0, Math.round((snap.initialEarnings - otPay - holPay - sunPay - allowances) * 100) / 100)
 
     return {
       id: snap.id,
@@ -1428,7 +1478,7 @@ export const payrollCalculationService = {
       basicSalary: snap.basicSalary,
       dailyRate: snap.dailyRate,
       hourlyRate: snap.hourlyRate,
-      scheduledDays: snap.payableDays,
+      scheduledDays: snap.scheduledDays ?? snap.payableDays,
       presentDays: snap.presentDays,
       sundayWorkDays: snap.sundayWorkDays,
       holidayDays: snap.holidayDays,
@@ -1436,7 +1486,8 @@ export const payrollCalculationService = {
       unworkedHolidayDays: snap.unworkedHolidayDays || 0,
       specialNonWorkingDays: snap.specialNonWorkingDays || 0,
       specialWorkingDays: snap.specialWorkingDays || 0,
-      absentDays: 0,
+      absentDays: snap.absentDays ?? 0,
+      onRestDays: snap.onRestDays ?? 0,
       payableDays: snap.payableDays,
       lateMinutes: snap.lateMinutes,
       undertimeMinutes: snap.undertimeMinutes || 0,
@@ -1445,11 +1496,11 @@ export const payrollCalculationService = {
       overtimePay: otPay,
       initialEarnings: snap.initialEarnings,
       earningsBreakdown: {
-        basePay: Math.max(0, Math.round((snap.initialEarnings - otPay - holPay - sunPay) * 100) / 100),
+        basePay: persistedBasePay,
         sundayDutyPay: sunPay,
         holidayPay: holPay,
         overtimePay: otPay,
-        allowances: 0
+        allowances
       },
       sss: snap.sss,
       philhealth: snap.philhealth,
@@ -1467,7 +1518,7 @@ export const payrollCalculationService = {
       netPay: snap.netPay,
       reviewStatus: snap.reviewStatus,
       reviewReasons: snap.reviewReasons || [],
-      attendanceReviewNotes: [],
+      attendanceReviewNotes: snap.attendanceReviewNotes || [],
       batchStatus: snap.batchStatus,
       updatedAt: snap.updatedAt
     }

@@ -39,7 +39,9 @@ import {
   ArrowRight,
   ChevronsUpDown,
   Check,
-  Camera
+  Camera,
+  Calendar,
+  Clock
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -66,10 +68,16 @@ import {
   getEmployeePrimaryBioId,
   getEmployeeAllBioIds
 } from '@/lib/employeeIdentity'
+import { getManilaDateString } from '@/services/attendance'
+import {
+  formatOnRestPeriodLabel,
+  getActiveOnRestPeriodForDate,
+  normalizeOnRestPeriods
+} from '@/lib/onRest'
 import { hrNoticeService, isNoticeActive } from '@/services/hrNotices'
 import { normalizeBioId } from '@/services/punchDisplay'
 import HrNoticeManagerDialog from '@/components/HrNoticeManagerDialog.vue'
-import type { BiometricIdEntry, Employee, EmployeeLocation, EmploymentStatus, WorkGroup } from '@/types'
+import type { BiometricIdEntry, Employee, EmployeeLocation, EmploymentStatus, OnRestPeriod, WorkGroup } from '@/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -226,6 +234,141 @@ const consolidationExecuting = ref(false)
 const consolidationErrorMsg = ref('')
 const consolidationSuccessMsg = ref('')
 const consolidationAudits = ref<EmployeeConsolidationAudit[]>([])
+
+// On Rest Attendance Exemption state
+const onRestStartDate = ref('')
+const onRestEndDate = ref('')
+const onRestOngoing = ref(false)
+const onRestRemarks = ref('')
+const onRestActionLoading = ref(false)
+const onRestErrorMsg = ref('')
+const onRestSuccessMsg = ref('')
+const editingOnRestEndPeriodId = ref<string | null>(null)
+const editingOnRestEndDateVal = ref('')
+
+function getActiveOnRest(emp?: Employee | null): OnRestPeriod | undefined {
+  if (!emp) return undefined
+  return getActiveOnRestPeriodForDate(emp, getManilaDateString(new Date()))
+}
+
+function getEmployeeOnRestPeriods(emp?: Employee | null): OnRestPeriod[] {
+  if (!emp) return []
+  return normalizeOnRestPeriods(emp.on_rest_periods)
+}
+
+function getOnRestPeriodBadgeState(period: OnRestPeriod): { label: string; tone: 'active' | 'scheduled' | 'ended' } {
+  const today = getManilaDateString(new Date())
+  if (today < period.startDate) {
+    return { label: 'Scheduled', tone: 'scheduled' }
+  }
+  if (!period.endDate || today <= period.endDate) {
+    return { label: 'Active On Rest', tone: 'active' }
+  }
+  return { label: 'Ended (Resumed)', tone: 'ended' }
+}
+
+function resetOnRestManagementState() {
+  onRestStartDate.value = getManilaDateString(new Date())
+  onRestEndDate.value = ''
+  onRestOngoing.value = false
+  onRestRemarks.value = ''
+  onRestActionLoading.value = false
+  onRestErrorMsg.value = ''
+  onRestSuccessMsg.value = ''
+  editingOnRestEndPeriodId.value = null
+  editingOnRestEndDateVal.value = ''
+}
+
+async function handleAssignOnRest() {
+  if (!selectedEmployee.value) return
+  const startDate = onRestStartDate.value.trim()
+  const endDate = onRestOngoing.value ? undefined : (onRestEndDate.value.trim() || undefined)
+
+  if (!startDate) {
+    onRestErrorMsg.value = 'Start date is required to assign On Rest status.'
+    return
+  }
+  if (endDate && endDate < startDate) {
+    onRestErrorMsg.value = 'End date cannot be earlier than start date.'
+    return
+  }
+
+  onRestActionLoading.value = true
+  onRestErrorMsg.value = ''
+  onRestSuccessMsg.value = ''
+  try {
+    const updated = await employeeService.assignOnRestPeriod(selectedEmployee.value.biometric_user_id, {
+      startDate,
+      endDate,
+      remarks: onRestRemarks.value.trim() || undefined
+    })
+    selectedEmployee.value = updated
+    onRestEndDate.value = ''
+    onRestOngoing.value = false
+    onRestRemarks.value = ''
+    onRestSuccessMsg.value = `On Rest period assigned (${formatOnRestPeriodLabel({ id: 'new', startDate, endDate, createdAt: '', updatedAt: '' })}). Employee status remains Active and attendance monitoring resumes automatically after the period ends.`
+    await executeLoadEmployees()
+  } catch (err: any) {
+    onRestErrorMsg.value = err?.message || 'Failed to assign On Rest period.'
+  } finally {
+    onRestActionLoading.value = false
+  }
+}
+
+function startSetOnRestEndDate(period: OnRestPeriod) {
+  editingOnRestEndPeriodId.value = period.id
+  editingOnRestEndDateVal.value = period.endDate || getManilaDateString(new Date())
+  onRestErrorMsg.value = ''
+  onRestSuccessMsg.value = ''
+}
+
+async function confirmSetOnRestEndDate(periodId: string) {
+  if (!selectedEmployee.value) return
+  if (!editingOnRestEndDateVal.value.trim()) {
+    onRestErrorMsg.value = 'Select a valid end date.'
+    return
+  }
+  onRestActionLoading.value = true
+  onRestErrorMsg.value = ''
+  onRestSuccessMsg.value = ''
+  try {
+    const updated = await employeeService.endOnRestPeriod(
+      selectedEmployee.value.biometric_user_id,
+      periodId,
+      editingOnRestEndDateVal.value.trim()
+    )
+    selectedEmployee.value = updated
+    editingOnRestEndPeriodId.value = null
+    editingOnRestEndDateVal.value = ''
+    onRestSuccessMsg.value = 'On Rest period end date updated. Normal attendance monitoring resumes automatically after the end date.'
+    await executeLoadEmployees()
+  } catch (err: any) {
+    onRestErrorMsg.value = err?.message || 'Failed to update On Rest end date.'
+  } finally {
+    onRestActionLoading.value = false
+  }
+}
+
+async function handleRemoveOnRestPeriod(periodId: string) {
+  if (!selectedEmployee.value) return
+  onRestActionLoading.value = true
+  onRestErrorMsg.value = ''
+  onRestSuccessMsg.value = ''
+  try {
+    const updated = await employeeService.removeOnRestPeriod(selectedEmployee.value.biometric_user_id, periodId)
+    selectedEmployee.value = updated
+    if (editingOnRestEndPeriodId.value === periodId) {
+      editingOnRestEndPeriodId.value = null
+      editingOnRestEndDateVal.value = ''
+    }
+    onRestSuccessMsg.value = 'On Rest period removed.'
+    await executeLoadEmployees()
+  } catch (err: any) {
+    onRestErrorMsg.value = err?.message || 'Failed to remove On Rest period.'
+  } finally {
+    onRestActionLoading.value = false
+  }
+}
 
 function resetBioIdManagementState() {
   bioIdActionLoading.value = false
@@ -904,7 +1047,12 @@ const filteredEmployees = computed(() => {
   }
 
   if (selectedStatus.value && selectedStatus.value !== 'all') {
-    list = list.filter(e => e.status === selectedStatus.value)
+    if (selectedStatus.value === 'on_rest') {
+      const todayStr = getManilaDateString(new Date())
+      list = list.filter(e => Boolean(getActiveOnRestPeriodForDate(e, todayStr)))
+    } else {
+      list = list.filter(e => e.status === selectedStatus.value)
+    }
   }
 
   if (searchQuery.value.trim()) {
@@ -990,6 +1138,7 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
   profileErrorMsg.value = ''
   clearPendingPhotoSelection()
   resetBioIdManagementState()
+  resetOnRestManagementState()
   showProfileModal.value = true
   loadConsolidationAuditsForEmployee(emp.biometric_user_id)
 
@@ -1004,6 +1153,7 @@ function closeProfileModal() {
   profileErrorMsg.value = ''
   clearPendingPhotoSelection()
   resetBioIdManagementState()
+  resetOnRestManagementState()
   resetEmployeeForm()
   if (route.query.returnTo === 'payroll-records') {
     router.push('/payroll/records')
@@ -1430,7 +1580,7 @@ onUnmounted(() => {
         <div class="rounded-md bg-emerald-500/5 border border-emerald-500/20 p-2.5">
           <div class="font-semibold text-emerald-700 dark:text-emerald-400 mb-1">Included in People Directory Excel</div>
           <p class="text-muted-foreground">
-            Canonical Bio ID, Primary Bio ID, Secondary &amp; Inactive Bio IDs, Merged-From Bio IDs, Consolidation Metadata &amp; Audit History, Full Name, Work Group, Department, Location, Position, Employment Status, Contract/Hire/Resignation Dates, Birthday, Mobile, Email, and Government ID numbers.
+            Canonical Bio ID, Primary Bio ID, Secondary &amp; Inactive Bio IDs, Merged-From Bio IDs, Consolidation Metadata &amp; Audit History, Full Name, Work Group, Department, Location, Position, Employment Status, On Rest Periods, Contract/Hire/Resignation Dates, Birthday, Mobile, Email, and Government ID numbers.
           </p>
         </div>
         <div class="rounded-md bg-muted/40 border p-2.5">
@@ -1517,6 +1667,7 @@ onUnmounted(() => {
             <SelectGroup>
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="on_rest">On Rest (Active)</SelectItem>
               <SelectItem value="resigned">Resigned</SelectItem>
               <SelectItem value="suspended">Suspension</SelectItem>
               <SelectItem value="csr">CSR</SelectItem>
@@ -1650,16 +1801,26 @@ onUnmounted(() => {
 
               <!-- Employment Status -->
               <TableCell>
-                <Badge
-                  :variant="getStatusBadgeVariant(emp.status, emp.exclude_from_biometric)"
-                  :class="[
-                    'text-[10px] uppercase font-mono',
-                    getStatusBadgeVariant(emp.status, emp.exclude_from_biometric) === 'destructive' ? 'text-white' : '',
-                    (emp.status === 'active' && emp.exclude_from_biometric) ? 'border-border bg-muted text-muted-foreground' : ''
-                  ]"
-                >
-                  {{ formatStatusDisplay(emp.status, emp.exclude_from_biometric) }}
-                </Badge>
+                <div class="flex items-center gap-1 flex-wrap">
+                  <Badge
+                    :variant="getStatusBadgeVariant(emp.status, emp.exclude_from_biometric)"
+                    :class="[
+                      'text-[10px] uppercase font-mono',
+                      getStatusBadgeVariant(emp.status, emp.exclude_from_biometric) === 'destructive' ? 'text-white' : '',
+                      (emp.status === 'active' && emp.exclude_from_biometric) ? 'border-border bg-muted text-muted-foreground' : ''
+                    ]"
+                  >
+                    {{ formatStatusDisplay(emp.status, emp.exclude_from_biometric) }}
+                  </Badge>
+                  <Badge
+                    v-if="getActiveOnRest(emp)"
+                    variant="outline"
+                    class="text-[10px] uppercase font-mono bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                    :title="`On Rest: ${formatOnRestPeriodLabel(getActiveOnRest(emp)!)}`"
+                  >
+                    On Rest
+                  </Badge>
+                </div>
               </TableCell>
 
               <!-- Actions -->
@@ -1741,6 +1902,13 @@ onUnmounted(() => {
                   ]"
                 >
                   {{ formatStatusDisplay(selectedEmployee.status, selectedEmployee.exclude_from_biometric) }}
+                </Badge>
+                <Badge
+                  v-if="getActiveOnRest(selectedEmployee)"
+                  variant="outline"
+                  class="text-[10px] uppercase font-mono px-2 py-0.5 bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                >
+                  On Rest
                 </Badge>
               </div>
 
@@ -1986,7 +2154,16 @@ onUnmounted(() => {
                   </div>
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Employment Status</span>
-                    <span class="font-medium text-foreground">{{ formatStatusDisplay(selectedEmployee.status) }}</span>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="font-medium text-foreground">{{ formatStatusDisplay(selectedEmployee.status) }}</span>
+                      <Badge
+                        v-if="getActiveOnRest(selectedEmployee)"
+                        variant="outline"
+                        class="text-[9px] uppercase font-mono px-1.5 py-0 bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                      >
+                        On Rest ({{ formatOnRestPeriodLabel(getActiveOnRest(selectedEmployee)!) }})
+                      </Badge>
+                    </div>
                   </div>
                   <div>
                     <span class="text-muted-foreground block text-[11px]">Date Regularized</span>
@@ -2601,6 +2778,206 @@ onUnmounted(() => {
                         placeholder="Pick resignation date"
                         class="w-full h-8 text-xs font-normal"
                       />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- On Rest Attendance Exemption Management -->
+                <div class="rounded-xl border border-sky-500/25 p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between gap-2 pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Clock class="size-3.5 text-sky-600 dark:text-sky-400" />
+                      <span>On Rest Attendance Exemption</span>
+                    </div>
+                    <Badge
+                      v-if="getActiveOnRest(selectedEmployee)"
+                      variant="outline"
+                      class="text-[10px] font-mono bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                    >
+                      Currently On Rest
+                    </Badge>
+                    <span v-else class="text-[10px] text-muted-foreground">Hospitalization / Illness</span>
+                  </div>
+
+                  <p class="text-[11px] text-muted-foreground leading-relaxed">
+                    Temporarily exempts this employee from Absent, Present, Late, Undertime, and payroll absence deductions without changing their <strong>Active</strong> employment status. Biometric punches recorded during an On Rest period remain preserved and flagged for HR review. Normal attendance monitoring resumes automatically after the End Date.
+                  </p>
+
+                  <div
+                    v-if="onRestErrorMsg"
+                    class="p-2.5 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-[11px] flex items-start gap-2"
+                  >
+                    <AlertCircle class="size-3.5 shrink-0 mt-0.5" />
+                    <span>{{ onRestErrorMsg }}</span>
+                  </div>
+                  <div
+                    v-if="onRestSuccessMsg"
+                    class="p-2.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-[11px] flex items-start gap-2"
+                  >
+                    <CheckCircle2 class="size-3.5 shrink-0 mt-0.5 text-emerald-600" />
+                    <span>{{ onRestSuccessMsg }}</span>
+                  </div>
+
+                  <!-- Assign On Rest Form -->
+                  <div class="rounded-lg border bg-muted/20 p-3 space-y-2.5">
+                    <div class="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                      <Calendar class="size-3.5 text-sky-600 dark:text-sky-400" />
+                      <span>Assign On Rest Period</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div class="space-y-1">
+                        <label class="text-[11px] font-semibold text-foreground">Start Date <span class="text-destructive">*</span></label>
+                        <DatePicker
+                          v-model="onRestStartDate"
+                          placeholder="Pick start date"
+                          class="w-full h-8 text-xs font-normal"
+                        />
+                      </div>
+
+                      <div class="space-y-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <label class="text-[11px] font-semibold text-foreground">End Date</label>
+                          <label class="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                            <input
+                              v-model="onRestOngoing"
+                              type="checkbox"
+                              class="rounded border-border accent-primary"
+                            />
+                            <span>Ongoing (No end date)</span>
+                          </label>
+                        </div>
+                        <DatePicker
+                          v-if="!onRestOngoing"
+                          v-model="onRestEndDate"
+                          placeholder="Optional end date"
+                          class="w-full h-8 text-xs font-normal"
+                        />
+                        <div
+                          v-else
+                          class="h-8 px-2.5 rounded-md border bg-muted/50 text-[11px] text-muted-foreground flex items-center"
+                        >
+                          Open-ended until updated by HR
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row sm:items-end gap-2">
+                      <div class="flex-1 space-y-1">
+                        <label class="text-[11px] font-semibold text-foreground">Remarks (Optional)</label>
+                        <Input
+                          v-model="onRestRemarks"
+                          type="text"
+                          placeholder="e.g. Hospitalization, medical recovery, doctor's rest order"
+                          class="h-8 text-xs bg-card"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        class="h-8 text-xs gap-1.5 shrink-0 cursor-pointer"
+                        :disabled="onRestActionLoading || !onRestStartDate"
+                        @click="handleAssignOnRest"
+                      >
+                        <RefreshCw v-if="onRestActionLoading" class="size-3 animate-spin" />
+                        <Clock v-else class="size-3" />
+                        <span>Assign On Rest</span>
+                      </Button>
+                    </div>
+                  </div>
+
+                  <!-- Assigned On Rest Periods List -->
+                  <div v-if="getEmployeeOnRestPeriods(selectedEmployee).length > 0" class="space-y-1.5">
+                    <div class="text-[11px] font-semibold text-foreground">
+                      Assigned On Rest Periods ({{ getEmployeeOnRestPeriods(selectedEmployee).length }})
+                    </div>
+
+                    <div
+                      v-for="period in getEmployeeOnRestPeriods(selectedEmployee)"
+                      :key="period.id"
+                      class="rounded-md border p-2.5 bg-muted/15 space-y-2 text-xs"
+                    >
+                      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div class="space-y-0.5">
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-mono font-semibold text-foreground">
+                              {{ formatOnRestPeriodLabel(period) }}
+                            </span>
+                            <Badge
+                              :variant="getOnRestPeriodBadgeState(period).tone === 'scheduled' ? 'secondary' : 'outline'"
+                              :class="[
+                                'text-[9px] uppercase font-mono px-1.5 py-0',
+                                getOnRestPeriodBadgeState(period).tone === 'active'
+                                  ? 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30'
+                                  : ''
+                              ]"
+                            >
+                              {{ getOnRestPeriodBadgeState(period).label }}
+                            </Badge>
+                          </div>
+                          <div v-if="period.remarks" class="text-[11px] text-muted-foreground">
+                            Remarks: {{ period.remarks }}
+                          </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+                          <Button
+                            v-if="editingOnRestEndPeriodId !== period.id"
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-6 px-2 text-[10px] gap-1 cursor-pointer"
+                            :disabled="onRestActionLoading"
+                            @click="startSetOnRestEndDate(period)"
+                          >
+                            <Calendar class="size-2.5" />
+                            <span>{{ period.endDate ? 'Update End Date' : 'Set End Date' }}</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="h-6 px-2 text-[10px] gap-1 text-destructive border-destructive/30 hover:bg-destructive/10 cursor-pointer"
+                            :disabled="onRestActionLoading"
+                            @click="handleRemoveOnRestPeriod(period.id)"
+                          >
+                            <Trash2 class="size-2.5" />
+                            <span>Remove</span>
+                          </Button>
+                        </div>
+                      </div>
+
+                      <!-- Inline End Date Editor -->
+                      <div
+                        v-if="editingOnRestEndPeriodId === period.id"
+                        class="flex flex-wrap items-center gap-2 pt-2 border-t"
+                      >
+                        <span class="text-[11px] text-muted-foreground">Set End Date:</span>
+                        <DatePicker
+                          v-model="editingOnRestEndDateVal"
+                          placeholder="Pick end date"
+                          class="h-7 w-44 text-xs font-normal"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          class="h-7 px-2.5 text-[11px] cursor-pointer"
+                          :disabled="onRestActionLoading || !editingOnRestEndDateVal"
+                          @click="confirmSetOnRestEndDate(period.id)"
+                        >
+                          Save End Date
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          class="h-7 px-2 text-[11px] cursor-pointer"
+                          :disabled="onRestActionLoading"
+                          @click="editingOnRestEndPeriodId = null"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>

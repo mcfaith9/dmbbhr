@@ -36,6 +36,7 @@ import {
   getEmployeePrimaryBioId,
   recordMatchesEmployee
 } from '@/lib/employeeIdentity'
+import { formatOnRestPeriodLabel, getActiveOnRestPeriodForDate } from '@/lib/onRest'
 import type { ManualAttendanceRecord, OvertimeAuthorizationRecord } from '@/db'
 import type { Employee, WorkGroup } from '@/types'
 import {
@@ -186,6 +187,12 @@ function selectOvertimeChoice(record: OvertimeAuthorizationRecord) {
 }
 
 function getCellTooltip(cell: DutyCellData): string {
+  if (cell.statusCategory === 'on_rest') {
+    if (cell.hasPunchesDuringOnRest && cell.timeIn) {
+      return `${cell.date} (${cell.dayOfWeek}): ON REST — Biometric punch recorded during On Rest (${cell.timeIn}${cell.timeOut ? ` → ${cell.timeOut}` : ''}). Flagged for HR review; excluded from Absent/Present/Late/Undertime.`
+    }
+    return `${cell.date} (${cell.dayOfWeek}): ON REST — ${cell.notes || 'Excused from attendance monitoring; excluded from Absent, Present, Late, and Undertime.'}`
+  }
   const hasIn = Boolean(cell.timeIn && !cell.timeIn.startsWith('Missing') && cell.timeIn !== '—' && cell.timeIn !== '-')
   const hasOut = Boolean(cell.timeOut && cell.timeOut !== '—' && cell.timeOut !== '-')
   if (hasIn && hasOut) {
@@ -350,9 +357,10 @@ export interface DutyCellData {
   isSunday: boolean
   isToday: boolean
   isFuture: boolean
-  statusCategory: 'present' | 'absent' | 'rest_day' | 'holiday' | 'unverified' | 'leave'
+  statusCategory: 'present' | 'absent' | 'rest_day' | 'holiday' | 'unverified' | 'leave' | 'on_rest'
   statusLabel: string
   statusBadgeVariant: 'success' | 'destructive' | 'secondary' | 'outline' | 'warning'
+  hasPunchesDuringOnRest?: boolean
   timeIn?: string
   timeOut?: string
   workHours?: string
@@ -397,11 +405,27 @@ const dutyCells = computed<DutyCellData[]>(() => {
     let statusBadgeVariant: DutyCellData['statusBadgeVariant'] = 'outline'
     let notes = ''
 
+    const activeOnRest = emp ? getActiveOnRestPeriodForDate(emp, dStr) : undefined
+    const isOnRestCell = Boolean(activeOnRest) || Boolean(record?.is_on_rest) || record?.status === 'On Rest'
+    const hasPunchesDuringOnRest = isOnRestCell && (
+      Boolean(record?.has_punches_during_on_rest) ||
+      hasValidIn ||
+      hasValidOut ||
+      (record?.raw_punches_count ?? 0) > 0
+    )
+
     if (record?.status === 'On Leave' || record?.status === 'Leave') {
       statusCategory = 'leave'
       statusLabel = 'On Leave'
       statusBadgeVariant = 'warning'
       notes = record.notes || 'Approved Leave'
+    } else if (isOnRestCell && (!isSunday || hasPunchesDuringOnRest)) {
+      statusCategory = 'on_rest'
+      statusLabel = hasPunchesDuringOnRest ? 'On Rest (Punch Flagged)' : 'On Rest'
+      statusBadgeVariant = hasPunchesDuringOnRest ? 'warning' : 'secondary'
+      notes = activeOnRest
+        ? `${formatOnRestPeriodLabel(activeOnRest)}${activeOnRest.remarks ? ` — ${activeOnRest.remarks}` : ''}`
+        : (record?.notes || 'On Rest (Exempted)')
     } else if (isSunday) {
       statusCategory = 'rest_day'
 
@@ -486,6 +510,7 @@ const dutyCells = computed<DutyCellData[]>(() => {
       statusCategory,
       statusLabel,
       statusBadgeVariant,
+      hasPunchesDuringOnRest,
       timeIn: hasValidIn ? record?.actual_in : undefined,
       timeOut: hasValidOut ? record?.actual_out : undefined,
       workHours: record?.total_hours,
@@ -507,10 +532,11 @@ const periodSummary = computed(() => {
   const restDays = cells.filter(c => c.statusCategory === 'rest_day').length
   const holidays = cells.filter(c => c.statusCategory === 'holiday').length
   const leaveDays = cells.filter(c => c.statusCategory === 'leave').length
+  const onRestDays = cells.filter(c => c.statusCategory === 'on_rest').length
   const unverifiedDays = cells.filter(c => c.statusCategory === 'unverified').length
 
   const totalDutyDays = presentDays
-  const requiredWorkingDays = cells.filter(c => !c.isSunday && c.statusCategory !== 'holiday').length
+  const requiredWorkingDays = cells.filter(c => !c.isSunday && c.statusCategory !== 'holiday' && c.statusCategory !== 'on_rest').length
 
   return {
     totalDays: cells.length,
@@ -520,6 +546,7 @@ const periodSummary = computed(() => {
     restDays,
     holidays,
     leaveDays,
+    onRestDays,
     unverifiedDays,
     totalDutyDays,
     requiredWorkingDays
@@ -889,6 +916,10 @@ onMounted(async () => {
             <Coffee class="size-3.5 text-muted-foreground" />
             <span>Rest: <strong>{{ periodSummary.restDays }}</strong></span>
           </div>
+          <div v-if="periodSummary.onRestDays > 0" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-sky-500/10 border-sky-500/30 text-sky-700 dark:text-sky-300 text-xs font-medium">
+            <Clock class="size-3.5 text-sky-600 dark:text-sky-400" />
+            <span>On Rest: <strong>{{ periodSummary.onRestDays }}</strong></span>
+          </div>
           <div v-if="periodSummary.holidays > 0" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-medium">
             <Sparkles class="size-3.5 text-amber-600" />
             <span>Holidays: <strong>{{ periodSummary.holidays }}</strong></span>
@@ -945,6 +976,7 @@ onMounted(async () => {
                 cell.statusCategory === 'present' ? 'bg-emerald-500/[0.03]' : '',
                 cell.statusCategory === 'absent' ? 'bg-rose-500/[0.04]' : '',
                 cell.statusCategory === 'rest_day' ? 'bg-muted/30' : '',
+                cell.statusCategory === 'on_rest' ? 'bg-sky-500/[0.05]' : '',
                 cell.statusCategory === 'holiday' ? 'bg-amber-500/[0.04]' : ''
               ]"
               :title="getCellTooltip(cell)"
@@ -962,7 +994,8 @@ onMounted(async () => {
                   :variant="cell.statusBadgeVariant"
                   :class="[
                     'text-[9px] px-1.5 py-0 uppercase tracking-tight font-bold shrink-0 truncate max-w-full',
-                    cell.statusBadgeVariant === 'destructive' ? 'text-white' : ''
+                    cell.statusBadgeVariant === 'destructive' ? 'text-white' : '',
+                    cell.statusCategory === 'on_rest' && !cell.hasPunchesDuringOnRest ? 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30' : ''
                   ]"
                   :title="cell.statusLabel"
                 >
@@ -979,6 +1012,7 @@ onMounted(async () => {
                     DUTY
                   </span>
                   <span v-else-if="cell.statusCategory === 'absent'">ABSENT</span>
+                  <span v-else-if="cell.statusCategory === 'on_rest'">ON REST</span>
                   <span v-else-if="cell.statusCategory === 'rest_day'">
                     {{ cell.timeIn ? 'RD' : 'REST' }}
                   </span>
@@ -1074,6 +1108,32 @@ onMounted(async () => {
                   </span>
                 </template>
 
+                <!-- On Rest (Exempted; Flag punches if any) -->
+                <template v-else-if="cell.statusCategory === 'on_rest'">
+                  <template v-if="cell.hasPunchesDuringOnRest && cell.timeIn">
+                    <div class="text-[9px] font-semibold text-amber-700 dark:text-amber-300 leading-tight">
+                      Punch Review
+                    </div>
+                    <div class="text-[10px] font-mono leading-tight">
+                      <span class="text-muted-foreground block text-[9px]">IN</span>
+                      <span class="font-bold text-foreground">{{ cell.timeIn }}</span>
+                    </div>
+                    <div v-if="cell.timeOut" class="text-[10px] font-mono leading-tight">
+                      <span class="text-muted-foreground block text-[9px]">OUT</span>
+                      <span class="font-bold text-foreground">{{ cell.timeOut }}</span>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <Clock class="size-4 text-sky-500 my-1" />
+                    <span class="text-[10px] text-sky-700 dark:text-sky-300 font-semibold">
+                      On Rest
+                    </span>
+                    <span class="text-[9px] text-muted-foreground leading-tight">
+                      Exempted
+                    </span>
+                  </template>
+                </template>
+
                 <!-- Absent -->
                 <template v-else-if="cell.statusCategory === 'absent'">
                   <XCircle class="size-4 text-rose-500/70 my-1" />
@@ -1154,6 +1214,10 @@ onMounted(async () => {
           <div class="flex items-center justify-between py-1 border-b">
             <span class="text-muted-foreground">Days Absent:</span>
             <span class="font-bold text-destructive">{{ periodSummary.absentDays }} days</span>
+          </div>
+          <div v-if="periodSummary.onRestDays > 0" class="flex items-center justify-between py-1 border-b">
+            <span class="text-muted-foreground">Days On Rest (Excluded):</span>
+            <span class="font-bold text-sky-600 dark:text-sky-400">{{ periodSummary.onRestDays }} days</span>
           </div>
           <div class="flex items-center justify-between py-1">
             <span class="text-muted-foreground">Rest Days / Holidays:</span>

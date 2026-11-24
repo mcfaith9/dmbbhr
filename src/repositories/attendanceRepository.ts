@@ -12,6 +12,7 @@ import { employeeRepository, findCachedEmployee } from './employeeRepository'
 import { workGroupRepository } from './workGroupRepository'
 import { manualAttendanceRepository } from './manualAttendanceRepository'
 import { collectEmployeeIdKeys, getEmployeeAllBioIds, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
+import { enumerateOnRestDates, getActiveOnRestPeriodForDate, normalizeOnRestPeriods } from '@/lib/onRest'
 
 import type { EmployeeRecord } from '@/db'
 
@@ -210,6 +211,8 @@ export const attendanceRepository = {
         }
       }
 
+      const activeOnRest = emp ? getActiveOnRestPeriodForDate(emp, selectedDate) : undefined
+
       const empContext: EmployeeScheduleContext = {
         bioId: emp?.bioId || bioId,
         primaryBioId: emp ? getEmployeePrimaryBioId(emp) : bioId,
@@ -227,7 +230,8 @@ export const attendanceRepository = {
         manualAdjustment: manualAdj,
         approvedLeave: leaveRec,
         employeeStatus: emp?.status || 'active',
-        resignationDate: emp?.resignationDate
+        resignationDate: emp?.resignationDate,
+        onRest: activeOnRest
       }
 
       const dailyRecord = processEmployeeDayPunches(empContext.bioId, punches, selectedDate, empContext, customConfig)
@@ -275,6 +279,8 @@ export const attendanceRepository = {
       processedBioIds.add(emp.bioId)
       if (resolvedCanon) processedCanonicalIds.add(resolvedCanon)
 
+      const activeOnRest = getActiveOnRestPeriodForDate(emp, selectedDate)
+
       const empContext: EmployeeScheduleContext = {
         bioId: emp.bioId,
         primaryBioId: getEmployeePrimaryBioId(emp),
@@ -291,7 +297,72 @@ export const attendanceRepository = {
         gracePeriodMinutes: wg?.gracePeriodMinutes || 0,
         approvedLeave: leaveRec,
         employeeStatus: emp.status,
-        resignationDate: emp.resignationDate
+        resignationDate: emp.resignationDate,
+        onRest: activeOnRest
+      }
+
+      const dailyRecord = processEmployeeDayPunches(emp.bioId, [], selectedDate, empContext, customConfig)
+      if (dailyRecord) {
+        records.push(dailyRecord)
+      }
+    }
+
+    // Process employees currently On Rest on selectedDate who had 0 punches
+    for (const emp of employeeMap.values()) {
+      const activeOnRest = getActiveOnRestPeriodForDate(emp, selectedDate)
+      if (!activeOnRest) continue
+
+      const resolvedCanon = normalizeCanonicalBioId(emp.bioId)
+      if (processedBioIds.has(emp.bioId) || (resolvedCanon && processedCanonicalIds.has(resolvedCanon))) continue
+
+      if (allowedFilterKeys) {
+        const empCandidateIds = [
+          emp.bioId,
+          ...getEmployeeAllBioIds(emp),
+          ...(Array.isArray(emp.mergedFromBioIds) ? emp.mergedFromBioIds : [])
+        ]
+        const matchesFilter = empCandidateIds.some(id => {
+          const l = String(id).trim().toLowerCase()
+          const n = normalizeCanonicalBioId(id)
+          return (l !== '' && allowedFilterKeys!.has(l)) || (n !== '' && allowedFilterKeys!.has(n))
+        })
+        if (!matchesFilter) continue
+      }
+
+      const isResignedOnSelectedDate =
+        (emp.status === 'resigned' || (emp.status as string).toLowerCase() === 'r') &&
+        (!emp.resignationDate || emp.resignationDate <= selectedDate)
+      if (isResignedOnSelectedDate) continue
+
+      const empLocation = emp.location || 'DBB CEBU'
+      const empWgId = emp.workGroupId || 'wg-group-c'
+      const wg = workGroupMap.get(empWgId) || workGroupMap.get('wg-group-c')
+
+      if (!matchesLocationFilter(empLocation, locationFilter)) continue
+      if (workGroupFilter && workGroupFilter !== 'all') {
+        if (empWgId !== workGroupFilter) continue
+      }
+
+      processedBioIds.add(emp.bioId)
+      if (resolvedCanon) processedCanonicalIds.add(resolvedCanon)
+
+      const empContext: EmployeeScheduleContext = {
+        bioId: emp.bioId,
+        primaryBioId: getEmployeePrimaryBioId(emp),
+        biometricIds: emp.biometricIds,
+        name: emp.fullName || `User ${emp.bioId}`,
+        department: emp.department || '',
+        location: empLocation,
+        workGroupId: empWgId,
+        workGroupName: wg?.name || 'GROUP C',
+        standardIn: wg?.standardIn || '08:00',
+        requiredWorkMinutes: wg?.requiredWorkMinutes || 480,
+        lunchStart: wg?.lunchStart || '12:00',
+        lunchEnd: wg?.lunchEnd || '13:00',
+        gracePeriodMinutes: wg?.gracePeriodMinutes || 0,
+        employeeStatus: emp.status,
+        resignationDate: emp.resignationDate,
+        onRest: activeOnRest
       }
 
       const dailyRecord = processEmployeeDayPunches(emp.bioId, [], selectedDate, empContext, customConfig)
@@ -326,7 +397,10 @@ export const attendanceRepository = {
     const activeRecords = records.filter(
       r => r.employee_status !== 'resigned' || (r.resignation_date && r.resignation_date > dateStr)
     )
-    const presentRecords = activeRecords.filter(r => r.status !== 'Leave' && r.status !== 'On Leave')
+    const onRestRecords = activeRecords.filter(r => r.is_on_rest || r.status === 'On Rest')
+    const presentRecords = activeRecords.filter(
+      r => r.status !== 'Leave' && r.status !== 'On Leave' && !r.is_on_rest && r.status !== 'On Rest'
+    )
     const presentCount = presentRecords.length
     const onTimeCount = presentRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
     const lateCount = presentRecords.filter(r => r.late_minutes > 0).length
@@ -334,6 +408,7 @@ export const attendanceRepository = {
     const awaitingOutCount = presentRecords.filter(r => r.status === 'Awaiting OUT').length
     const leaveCount = activeRecords.filter(r => r.status === 'Leave' || r.status === 'On Leave').length
     const holidayCount = presentRecords.filter(r => r.status === 'Holiday').length
+    const onRestCount = onRestRecords.length
 
     const summary: DailySummaryRecord = {
       date: dateStr,
@@ -344,6 +419,7 @@ export const attendanceRepository = {
       awaitingOutCount,
       leaveCount,
       holidayCount,
+      onRestCount,
       totalEmployees: (await employeeRepository.countActive()) || presentCount,
       updatedAt: new Date().toISOString()
     }
@@ -593,17 +669,26 @@ export const attendanceRepository = {
       dateMap.get(r.date)!.push(log)
     }
 
-    // Also include dates with manual adjustments or approved leaves
+    // Also include dates with manual adjustments, approved leaves, or On Rest periods (up to today)
     for (const d of adjustmentsByDate.keys()) {
       if (!dateMap.has(d)) dateMap.set(d, [])
     }
     for (const d of leavesByDate.keys()) {
       if (!dateMap.has(d)) dateMap.set(d, [])
     }
+    const manilaToday = getManilaDateString(new Date())
+    for (const period of normalizeOnRestPeriods(emp?.onRestPeriods)) {
+      for (const d of enumerateOnRestDates(period, manilaToday)) {
+        if (d <= manilaToday && !dateMap.has(d)) {
+          dateMap.set(d, [])
+        }
+      }
+    }
 
     const records: DailyAttendanceRecord[] = []
 
     for (const [dateStr, punches] of dateMap.entries()) {
+      const activeOnRest = emp ? getActiveOnRestPeriodForDate(emp, dateStr) : undefined
       const empContext: EmployeeScheduleContext = {
         bioId: canonicalId,
         primaryBioId: emp ? getEmployeePrimaryBioId(emp) : canonicalId,
@@ -621,7 +706,8 @@ export const attendanceRepository = {
         manualAdjustment: adjustmentsByDate.get(dateStr),
         approvedLeave: leavesByDate.get(dateStr),
         employeeStatus: emp?.status || 'active',
-        resignationDate: emp?.resignationDate
+        resignationDate: emp?.resignationDate,
+        onRest: activeOnRest
       }
 
       const rec = processEmployeeDayPunches(canonicalId, punches, dateStr, empContext, customConfig)

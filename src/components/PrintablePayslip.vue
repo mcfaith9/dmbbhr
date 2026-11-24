@@ -85,10 +85,22 @@ function formatCurrency(val?: number) {
     <!-- Attendance Breakdown -->
     <div class="border border-neutral-200 rounded p-2.5 mb-3 bg-neutral-50/50">
       <div class="text-[10px] font-bold uppercase text-neutral-500 tracking-wider mb-1.5">Attendance Summary</div>
-      <div class="grid grid-cols-4 gap-2 text-center text-[10px]">
+      <div class="grid grid-cols-3 gap-1.5 text-center text-[10px]">
         <div class="p-1 rounded bg-white border border-neutral-200">
           <div class="text-neutral-500">Days Paid</div>
           <div class="font-bold text-neutral-800">{{ record.payableDays }}</div>
+        </div>
+        <div class="p-1 rounded bg-white border border-neutral-200">
+          <div class="text-neutral-500">Absent Days</div>
+          <div class="font-bold" :class="(record.absentDays || 0) > 0 ? 'text-red-700' : 'text-neutral-800'">
+            {{ record.absentDays || 0 }}
+          </div>
+        </div>
+        <div class="p-1 rounded bg-white border border-neutral-200">
+          <div class="text-neutral-500">On Rest Days</div>
+          <div class="font-bold" :class="(record.onRestDays || 0) > 0 ? 'text-sky-700' : 'text-neutral-800'">
+            {{ record.onRestDays || 0 }}<span v-if="(record.onRestDays || 0) > 0" class="text-[9px] font-normal"> (Unpaid)</span>
+          </div>
         </div>
         <div class="p-1 rounded bg-white border border-neutral-200">
           <div class="text-neutral-500">OT (Hours)</div>
@@ -114,6 +126,10 @@ function formatCurrency(val?: number) {
           <div class="flex justify-between">
             <span class="text-neutral-600">Base Pay:</span>
             <span class="font-medium">{{ formatCurrency(record.earningsBreakdown?.basePay) }}</span>
+          </div>
+          <div v-if="(record.onRestDays || 0) > 0" class="flex justify-between text-[10px] text-sky-700">
+            <span>On Rest ({{ record.onRestDays }}d unpaid):</span>
+            <span class="font-medium">{{ formatCurrency(0) }}</span>
           </div>
           <div v-if="record.earningsBreakdown?.overtimePay > 0" class="flex justify-between">
             <span class="text-neutral-600">Overtime:</span>

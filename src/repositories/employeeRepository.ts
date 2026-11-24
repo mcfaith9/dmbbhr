@@ -6,7 +6,8 @@ import type {
   EmployeeConsolidationFieldResolution,
   EmployeeLocation,
   WorkGroup,
-  EmploymentStatus
+  EmploymentStatus,
+  OnRestPeriod
 } from '@/types'
 import { workGroupRepository } from './workGroupRepository'
 import { hrNoticeService } from '@/services/hrNotices'
@@ -19,6 +20,14 @@ import {
   normalizeBiometricIdToken,
   recordMatchesEmployee
 } from '@/lib/employeeIdentity'
+import {
+  enumerateOnRestDates,
+  getActiveOnRestPeriodForDate,
+  getOnRestPeriodsSignature,
+  mergeOnRestPeriods,
+  normalizeOnRestDate,
+  normalizeOnRestPeriods
+} from '@/lib/onRest'
 
 export const VALID_LOCATIONS: EmployeeLocation[] = [
   'DMBB CEBU',
@@ -1332,6 +1341,7 @@ export interface PeopleImportRowItem {
   hasConflict?: boolean
   warningReason?: string
   errorReason?: string
+  onRestPeriods?: OnRestPeriod[]
   targetRecord?: EmployeeRecord
 }
 
@@ -1728,6 +1738,9 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     ? JSON.parse(JSON.stringify(rawAudits))
     : undefined
 
+  const rawOnRestPeriods = input.onRestPeriods ?? input.on_rest_periods
+  const cleanOnRestPeriods = rawOnRestPeriods !== undefined ? normalizeOnRestPeriods(rawOnRestPeriods) : undefined
+
   // Construct a fresh, strictly plain object literal (Object.prototype, no Vue proxies, no functions)
   const plainRecord: EmployeeRecord = {
     bioId: cleanBioId,
@@ -1768,6 +1781,7 @@ export function toPersistableEmployeeRecord(input: any): EmployeeRecord {
     resignationDate: cleanResignationDate,
     status: cleanStatus,
     excludeFromBiometric: cleanExcludeFromBiometric,
+    ...(cleanOnRestPeriods && cleanOnRestPeriods.length > 0 ? { onRestPeriods: cleanOnRestPeriods } : {}),
     payrollStatus: cleanPayrollStatus,
     salaryType: cleanSalaryType,
     basicSalary: cleanBasicSalary,
@@ -1855,6 +1869,7 @@ export const employeeRepository = {
       resignation_date: rec.resignationDate,
       status: rec.status,
       exclude_from_biometric: Boolean(rec.excludeFromBiometric),
+      on_rest_periods: rec.onRestPeriods && rec.onRestPeriods.length > 0 ? normalizeOnRestPeriods(rec.onRestPeriods) : undefined,
       payroll_status: rec.payrollStatus,
       salary_type: rec.salaryType,
       basic_salary: rec.basicSalary,
@@ -2064,9 +2079,188 @@ export const employeeRepository = {
 
     await db.employees.put(record)
     indexEmployeeRecord(record)
+    if ('onRestPeriods' in updates || 'on_rest_periods' in updates) {
+      await this.invalidateAttendanceCacheForEmployee(record, [
+        ...(existing?.onRestPeriods || []),
+        ...(record.onRestPeriods || [])
+      ]).catch(() => {})
+    }
     this.notifyChange()
 
     return this.toEmployee(record)
+  },
+
+  /**
+   * Invalidates cached dailyAttendance and dailySummaries rows for an employee across given On Rest periods
+   * so Attendance Views, Reports, and Matrix immediately recompute using updated On Rest rules.
+   */
+  async invalidateAttendanceCacheForEmployee(
+    empRecord: EmployeeRecord,
+    periods: OnRestPeriod[] = []
+  ): Promise<void> {
+    const targetKeys = collectEmployeeIdKeys(empRecord)
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const affectedDates = new Set<string>()
+    for (const p of periods) {
+      for (const d of enumerateOnRestDates(p, todayStr)) {
+        affectedDates.add(d)
+      }
+    }
+
+    try {
+      const allDaily = await db.dailyAttendance.toArray()
+      const staleIds: string[] = []
+      for (const row of allDaily) {
+        if (recordMatchesEmployee(row.bioId, targetKeys)) {
+          staleIds.push(row.id)
+          if (row.date) affectedDates.add(row.date)
+        }
+      }
+      if (staleIds.length > 0) {
+        await db.dailyAttendance.bulkDelete(staleIds)
+      }
+    } catch {
+      // ignore if table unavailable in partial test environments
+    }
+
+    if (affectedDates.size > 0) {
+      try {
+        await db.dailySummaries.bulkDelete(Array.from(affectedDates))
+      } catch {
+        // ignore
+      }
+    }
+  },
+
+  /**
+   * Assigns or updates an On Rest period on a canonical employee WITHOUT changing their Active employment status.
+   */
+  async assignOnRestPeriod(
+    bioId: string,
+    input: {
+      id?: string
+      startDate: string
+      endDate?: string
+      remarks?: string
+    }
+  ): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(bioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${bioId}" was not found.`)
+    }
+    const existing = found.record
+    const startDate = normalizeOnRestDate(input.startDate)
+    if (!startDate) {
+      throw new Error('A valid On Rest start date (YYYY-MM-DD) is required.')
+    }
+    const endDateRaw = input.endDate ? String(input.endDate).trim() : ''
+    let endDate: string | undefined
+    if (endDateRaw) {
+      endDate = normalizeOnRestDate(endDateRaw)
+      if (!endDate) {
+        throw new Error('Invalid On Rest end date format.')
+      }
+      if (endDate < startDate) {
+        throw new Error('On Rest end date cannot be earlier than start date.')
+      }
+    }
+
+    const now = new Date().toISOString()
+    const currentPeriods = normalizeOnRestPeriods(existing.onRestPeriods)
+    const targetId = input.id?.trim() || `rest_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    const prev = currentPeriods.find(p => p.id === targetId)
+    const remarks = input.remarks?.trim() || undefined
+
+    const nextEntry: OnRestPeriod = {
+      id: targetId,
+      startDate,
+      ...(endDate ? { endDate } : {}),
+      ...(remarks ? { remarks } : {}),
+      createdAt: prev?.createdAt || now,
+      updatedAt: now
+    }
+
+    const nextPeriods = normalizeOnRestPeriods([
+      ...currentPeriods.filter(p => p.id !== targetId),
+      nextEntry
+    ])
+
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      onRestPeriods: nextPeriods,
+      updatedAt: now
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    await this.invalidateAttendanceCacheForEmployee(updatedRecord, [
+      ...currentPeriods,
+      nextEntry
+    ]).catch(() => {})
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
+  },
+
+  /**
+   * Ends an active/ongoing On Rest period by setting its endDate (e.g. yesterday or today)
+   * so normal attendance monitoring resumes automatically after endDate.
+   */
+  async endOnRestPeriod(
+    bioId: string,
+    periodId: string,
+    endDate?: string
+  ): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(bioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${bioId}" was not found.`)
+    }
+    const existing = found.record
+    const currentPeriods = normalizeOnRestPeriods(existing.onRestPeriods)
+    const target = currentPeriods.find(p => p.id === periodId)
+    if (!target) {
+      throw new Error(`On Rest record "${periodId}" was not found.`)
+    }
+
+    const resolvedEnd = normalizeOnRestDate(endDate) || new Date().toISOString().slice(0, 10)
+    const clampedEnd = resolvedEnd < target.startDate ? target.startDate : resolvedEnd
+
+    return this.assignOnRestPeriod(existing.bioId, {
+      id: target.id,
+      startDate: target.startDate,
+      endDate: clampedEnd,
+      remarks: target.remarks
+    })
+  },
+
+  /**
+   * Removes an On Rest period entry from the employee record.
+   */
+  async removeOnRestPeriod(bioId: string, periodId: string): Promise<Employee> {
+    await ensureInitialized()
+    const found = findCachedEmployee(bioId)
+    if (!found) {
+      throw new Error(`Employee with Bio ID "${bioId}" was not found.`)
+    }
+    const existing = found.record
+    const currentPeriods = normalizeOnRestPeriods(existing.onRestPeriods)
+    const removed = currentPeriods.find(p => p.id === periodId)
+    const nextPeriods = currentPeriods.filter(p => p.id !== periodId)
+
+    const updatedRecord = toPersistableEmployeeRecord({
+      ...existing,
+      onRestPeriods: nextPeriods,
+      updatedAt: new Date().toISOString()
+    })
+
+    await db.employees.put(updatedRecord)
+    indexEmployeeRecord(updatedRecord)
+    if (removed) {
+      await this.invalidateAttendanceCacheForEmployee(updatedRecord, [removed]).catch(() => {})
+    }
+    this.notifyChange()
+    return this.toEmployee(updatedRecord)
   },
 
   /**
@@ -2959,6 +3153,8 @@ export const employeeRepository = {
           ])
         ).filter(id => id && id !== canonicalRaw.bioId)
 
+        const mergedOnRestPeriods = mergeOnRestPeriods(canonicalRaw.onRestPeriods, sourceRaw.onRestPeriods)
+
         savedCanonical = toPersistableEmployeeRecord({
           ...canonicalRaw,
           ...resolvedPatch,
@@ -2967,6 +3163,7 @@ export const employeeRepository = {
           primaryBioId: canonicalPrimaryId,
           biometricIds: mergedBiometricIds,
           mergedFromBioIds: nextMergedFrom,
+          ...(mergedOnRestPeriods.length > 0 ? { onRestPeriods: mergedOnRestPeriods } : {}),
           consolidationAudits: [...(canonicalRaw.consolidationAudits || []), auditRecord],
           isMerged: false,
           mergedIntoBioId: undefined,
@@ -3173,6 +3370,11 @@ export const employeeRepository = {
     const HDMF_ALIASES = ['HDMF NO.', 'HDMF NO', 'HDMF_NO', 'HDMF #', 'HDMF NUMBER', 'HDMF Number', 'HDMF', 'PAGIBIG NO.', 'PAGIBIG NO', 'PAG-IBIG NO.', 'PAG-IBIG NO', 'PAGIBIG', 'PAG-IBIG', 'pagibig_number', 'pagibigNumber', 'pagibig', 'hdmf']
     const PHIC_ALIASES = ['PHIC NO.', 'PHIC NO', 'PHIC_NO', 'PHIC #', 'PHIC NUMBER', 'PHIC Number', 'PHIC', 'PHILHEALTH NO.', 'PHILHEALTH NO', 'PHILHEALTH', 'philhealth_number', 'philhealthNumber', 'philhealth', 'phic']
     const TIN_ALIASES = ['TIN NO.', 'TIN NO', 'TIN_NO', 'TIN #', 'TIN NUMBER', 'TIN Number', 'TIN', 'tin_number', 'tinNumber', 'tin']
+    const ON_REST_PERIODS_ALIASES = ['ON REST PERIODS', 'ON_REST_PERIODS', 'On Rest Periods', 'ON REST METADATA', 'ON_REST_METADATA', 'On Rest Metadata', 'on_rest_periods', 'onRestPeriods']
+    const ON_REST_START_ALIASES = ['ON REST START DATE', 'ON_REST_START_DATE', 'On Rest Start Date', 'ON REST START', 'onRestStartDate']
+    const ON_REST_END_ALIASES = ['ON REST END DATE', 'ON_REST_END_DATE', 'On Rest End Date', 'ON REST END', 'onRestEndDate']
+    const ON_REST_REMARKS_ALIASES = ['ON REST REMARKS', 'ON_REST_REMARKS', 'On Rest Remarks', 'onRestRemarks']
+    const ON_REST_STATUS_ALIASES = ['ON REST STATUS', 'ON_REST_STATUS', 'On Rest Status', 'onRestStatus']
 
     const matchesAlias = (header: string, aliases: string[]): boolean => {
       const cleanHeader = String(header || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -3241,6 +3443,7 @@ export const employeeRepository = {
       biometricIds?: BiometricIdEntry[]
       mergedFromBioIds?: string[]
       audits?: EmployeeConsolidationAudit[]
+      onRestPeriods?: OnRestPeriod[]
     }
 
     const parseConsolidationMetadataCell = (val: unknown): ParsedConsolidationMeta | null => {
@@ -3257,7 +3460,8 @@ export const employeeRepository = {
           mergedFromBioIds: Array.isArray(parsed.mergedFromBioIds)
             ? parsed.mergedFromBioIds.map((x: unknown) => normalizeBiometricIdToken(x)).filter(Boolean)
             : undefined,
-          audits: Array.isArray(parsed.audits) ? parsed.audits : undefined
+          audits: Array.isArray(parsed.audits) ? parsed.audits : undefined,
+          onRestPeriods: Array.isArray(parsed.onRestPeriods) ? normalizeOnRestPeriods(parsed.onRestPeriods) : undefined
         }
       } catch {
         return null
@@ -3293,6 +3497,11 @@ export const employeeRepository = {
       const hdmfCol = headers.findIndex(h => matchesAlias(h, HDMF_ALIASES))
       const phicCol = headers.findIndex(h => matchesAlias(h, PHIC_ALIASES))
       const tinCol = headers.findIndex(h => matchesAlias(h, TIN_ALIASES))
+      const onRestPeriodsCol = headers.findIndex(h => matchesAlias(h, ON_REST_PERIODS_ALIASES))
+      const onRestStartCol = headers.findIndex(h => matchesAlias(h, ON_REST_START_ALIASES))
+      const onRestEndCol = headers.findIndex(h => matchesAlias(h, ON_REST_END_ALIASES))
+      const onRestRemarksCol = headers.findIndex(h => matchesAlias(h, ON_REST_REMARKS_ALIASES))
+      const onRestStatusCol = headers.findIndex(h => matchesAlias(h, ON_REST_STATUS_ALIASES))
 
       parsedRows = []
       for (let r = 1; r < rows.length; r++) {
@@ -3325,6 +3534,11 @@ export const employeeRepository = {
         if (hireDateCol >= 0) objRow['DATE_HIRED'] = rowArr[hireDateCol]
         if (isMergedCol >= 0) objRow['IS MERGED'] = rowArr[isMergedCol]
         if (mergedIntoCol >= 0) objRow['MERGED INTO BIO ID'] = rowArr[mergedIntoCol]
+        if (onRestPeriodsCol >= 0) objRow['ON REST PERIODS'] = rowArr[onRestPeriodsCol]
+        if (onRestStartCol >= 0) objRow['ON REST START DATE'] = rowArr[onRestStartCol]
+        if (onRestEndCol >= 0) objRow['ON REST END DATE'] = rowArr[onRestEndCol]
+        if (onRestRemarksCol >= 0) objRow['ON REST REMARKS'] = rowArr[onRestRemarksCol]
+        if (onRestStatusCol >= 0) objRow['ON REST STATUS'] = rowArr[onRestStatusCol]
         parsedRows.push(objRow)
       }
     }
@@ -3725,6 +3939,84 @@ export const employeeRepository = {
       const rawMergedFromList = hasMergedFromCol
         ? parseBioIdListCell(getRowField(row, MERGED_FROM_BIO_IDS_ALIASES))
         : (consolidationMeta?.mergedFromBioIds || [])
+
+      // Extract On Rest attendance exemption periods (never alter Employment Status)
+      const hasOnRestPeriodsCol = hasRowFieldColumn(row, ON_REST_PERIODS_ALIASES)
+      const hasOnRestStartCol = hasRowFieldColumn(row, ON_REST_START_ALIASES)
+      const rawOnRestPeriodsCell = hasOnRestPeriodsCol ? getRowField(row, ON_REST_PERIODS_ALIASES) : undefined
+      const rawOnRestStartCell = hasOnRestStartCol ? getRowField(row, ON_REST_START_ALIASES) : undefined
+      const rawOnRestEndCell = hasRowFieldColumn(row, ON_REST_END_ALIASES) ? getRowField(row, ON_REST_END_ALIASES) : undefined
+      const rawOnRestRemarksCell = hasRowFieldColumn(row, ON_REST_REMARKS_ALIASES) ? getRowField(row, ON_REST_REMARKS_ALIASES) : undefined
+
+      let hasExplicitOnRestData = false
+      let parsedOnRestPeriods: OnRestPeriod[] = []
+
+      if (hasOnRestPeriodsCol) {
+        const rawJsonStr = rawOnRestPeriodsCell !== undefined && rawOnRestPeriodsCell !== null ? String(rawOnRestPeriodsCell).trim() : ''
+        if (rawJsonStr === '[]' || rawJsonStr.toLowerCase() === 'none' || rawJsonStr === '-' || rawJsonStr === '—') {
+          hasExplicitOnRestData = true
+          parsedOnRestPeriods = []
+        } else if (rawJsonStr !== '') {
+          try {
+            const parsedJson = JSON.parse(rawJsonStr)
+            if (Array.isArray(parsedJson)) {
+              hasExplicitOnRestData = true
+              parsedOnRestPeriods = normalizeOnRestPeriods(parsedJson)
+            } else {
+              warningsCount++
+              rowWarnings.push(`Invalid On Rest periods metadata format — kept existing On Rest records`)
+            }
+          } catch {
+            warningsCount++
+            rowWarnings.push(`Invalid On Rest periods JSON — kept existing On Rest records`)
+          }
+        }
+      }
+
+      const rawStartStr = rawOnRestStartCell !== undefined && rawOnRestStartCell !== null ? String(rawOnRestStartCell).trim() : ''
+      if ((!hasExplicitOnRestData || parsedOnRestPeriods.length === 0) && rawStartStr !== '' && rawStartStr !== '-' && rawStartStr !== '—') {
+        const parsedStart =
+          normalizeOnRestDate(rawStartStr) ||
+          (() => {
+            const d = parseDateValue(rawOnRestStartCell, 1950, 2100)
+            return d?.isValid ? d.formatted : undefined
+          })()
+        if (parsedStart) {
+          const rawEndStr = rawOnRestEndCell !== undefined && rawOnRestEndCell !== null ? String(rawOnRestEndCell).trim() : ''
+          let parsedEnd: string | undefined
+          if (rawEndStr && rawEndStr.toLowerCase() !== 'ongoing' && rawEndStr !== '-' && rawEndStr !== '—') {
+            parsedEnd =
+              normalizeOnRestDate(rawEndStr) ||
+              (() => {
+                const d = parseDateValue(rawOnRestEndCell, 1950, 2100)
+                return d?.isValid ? d.formatted : undefined
+              })()
+          }
+          parsedOnRestPeriods = normalizeOnRestPeriods([
+            {
+              startDate: parsedStart,
+              ...(parsedEnd ? { endDate: parsedEnd } : {}),
+              ...(cleanStringField(rawOnRestRemarksCell) ? { remarks: cleanStringField(rawOnRestRemarksCell) } : {})
+            }
+          ])
+          hasExplicitOnRestData = true
+        } else {
+          warningsCount++
+          rowWarnings.push(`Invalid On Rest Start Date "${rawStartStr}" — kept existing On Rest records`)
+        }
+      } else if (!hasExplicitOnRestData && hasOnRestPeriodsCol && rawStartStr === '') {
+        // Explicit empty ON REST PERIODS column with no manual start date means empty On Rest list
+        const rawJsonStr = rawOnRestPeriodsCell !== undefined && rawOnRestPeriodsCell !== null ? String(rawOnRestPeriodsCell).trim() : ''
+        if (rawJsonStr === '') {
+          hasExplicitOnRestData = true
+          parsedOnRestPeriods = []
+        }
+      }
+
+      if (!hasExplicitOnRestData && consolidationMeta?.onRestPeriods !== undefined) {
+        hasExplicitOnRestData = true
+        parsedOnRestPeriods = normalizeOnRestPeriods(consolidationMeta.onRestPeriods)
+      }
 
       // Guard against duplicate Bio IDs or stale secondary alias rows in the same import file
       if (seenBioIdsInImport.has(canonicalBioId.toLowerCase())) {
@@ -4183,6 +4475,12 @@ export const employeeRepository = {
           parsedResignationDate.formatted !== (existingRecord.resignationDate || '')
         )
 
+        const existingOnRestPeriods = normalizeOnRestPeriods(existingRecord.onRestPeriods)
+        const targetOnRestPeriods = hasExplicitOnRestData ? parsedOnRestPeriods : existingOnRestPeriods
+        const isOnRestUpdated =
+          hasExplicitOnRestData &&
+          getOnRestPeriodsSignature(targetOnRestPeriods) !== getOnRestPeriodsSignature(existingOnRestPeriods)
+
         const hasChanges =
           isNameUpdated ||
           isDeptUpdated ||
@@ -4202,7 +4500,8 @@ export const employeeRepository = {
           isTinUpdated ||
           bioResolution.bioIdsChanged ||
           isMergedFromUpdated ||
-          auditsAdded
+          auditsAdded ||
+          isOnRestUpdated
 
         if (targetStatus === 'active') statusActiveCount++
         else if (targetStatus === 'resigned') statusResignedCount++
@@ -4269,6 +4568,7 @@ export const employeeRepository = {
           pagibigNumber: targetHdmf,
           philhealthNumber: targetPhic,
           tin: targetTin,
+          onRestPeriods: targetOnRestPeriods,
           createdAt: existingRecord.createdAt,
           updatedAt: nowIso
         })
@@ -4304,6 +4604,7 @@ export const employeeRepository = {
           if (isPhicUpdated) changeNotes.push(`PHIC: ${targetPhic}`)
           if (isTinUpdated) changeNotes.push(`TIN: ${targetTin}`)
           if (bioResolution.bioIdsChanged || isMergedFromUpdated) changeNotes.push(`Bio IDs / Consolidation Updated`)
+          if (isOnRestUpdated) changeNotes.push(`On Rest Periods Updated (${targetOnRestPeriods.length})`)
           if (rowConflictReasons.length > 0) changeNotes.push(...rowConflictReasons)
 
           let statusText = changeNotes.join(' • ')
@@ -4351,6 +4652,7 @@ export const employeeRepository = {
             hasConflict: rowHasConflict,
             warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - kept current group` : undefined),
             errorReason: rowConflictReasons.length > 0 ? rowConflictReasons.join('; ') : undefined,
+            onRestPeriods: targetOnRestPeriods,
             targetRecord
           }
           allRows.push(rowItem)
@@ -4492,6 +4794,8 @@ export const employeeRepository = {
           }
         }
 
+        const targetOnRestPeriods = hasExplicitOnRestData ? parsedOnRestPeriods : []
+
         const targetRecord = toPersistableEmployeeRecord({
           bioId: canonicalBioId,
           employeeNumber: canonicalBioId,
@@ -4516,6 +4820,7 @@ export const employeeRepository = {
           pagibigNumber: cleanHdmf,
           philhealthNumber: cleanPhic,
           tin: cleanTin,
+          onRestPeriods: targetOnRestPeriods,
           createdAt: nowIso,
           updatedAt: nowIso
         })
@@ -4578,6 +4883,7 @@ export const employeeRepository = {
           hasConflict: rowHasConflict,
           warningReason: rowWarnings.length > 0 ? rowWarnings.join('; ') : (hasUnknownGroup ? `Unknown Group "${cleanGroupStr}" - assigned ${defaultGroup.name}` : undefined),
           errorReason: rowConflictReasons.length > 0 ? rowConflictReasons.join('; ') : undefined,
+          onRestPeriods: targetOnRestPeriods,
           targetRecord
         }
         allRows.push(rowItem)
@@ -4701,14 +5007,29 @@ export const employeeRepository = {
     // Step 3: Update local memory cache with the sanitized plain records
     let createdCount = 0
     let updatedCount = 0
+    const onRestInvalidations: Array<{ rec: EmployeeRecord; periods: OnRestPeriod[] }> = []
 
     for (const rec of sanitizedRecords) {
-      if (employeeCache!.has(rec.bioId)) {
+      const prevRec = employeeCache!.get(rec.bioId)
+      if (prevRec) {
         updatedCount++
       } else {
         createdCount++
       }
+      if (
+        getOnRestPeriodsSignature(prevRec?.onRestPeriods) !== getOnRestPeriodsSignature(rec.onRestPeriods) ||
+        (rec.onRestPeriods && rec.onRestPeriods.length > 0)
+      ) {
+        onRestInvalidations.push({
+          rec,
+          periods: [...(prevRec?.onRestPeriods || []), ...(rec.onRestPeriods || [])]
+        })
+      }
       indexEmployeeRecord(rec)
+    }
+
+    for (const item of onRestInvalidations) {
+      await this.invalidateAttendanceCacheForEmployee(item.rec, item.periods).catch(() => {})
     }
 
     // Step 4: Execute any conflict-resolved consolidations (archiving source & preserving punches/finalized snapshots)
@@ -4839,6 +5160,11 @@ export const employeeRepository = {
             })
       }
 
+      const onRestPeriods = normalizeOnRestPeriods(emp.on_rest_periods)
+      const manilaTodayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())
+      const activeRestToday = getActiveOnRestPeriodForDate(onRestPeriods, manilaTodayStr)
+      const displayRestPeriod = activeRestToday || onRestPeriods[0]
+
       return {
         'ID': primaryId,
         'CANONICAL BIO ID': canonicalId,
@@ -4862,7 +5188,12 @@ export const employeeRepository = {
         'SSS NO.': emp.sss_number || '',
         'HDMF NO.': emp.pagibig_number || '',
         'PHIC NO.': emp.philhealth_number || '',
-        'TIN NO.': emp.tin || ''
+        'TIN NO.': emp.tin || '',
+        'ON REST STATUS': activeRestToday ? 'On Rest' : (onRestPeriods.length > 0 ? 'Scheduled/Past' : ''),
+        'ON REST START DATE': displayRestPeriod?.startDate || '',
+        'ON REST END DATE': displayRestPeriod ? (displayRestPeriod.endDate || 'Ongoing') : '',
+        'ON REST REMARKS': displayRestPeriod?.remarks || '',
+        'ON REST PERIODS': onRestPeriods.length > 0 ? JSON.stringify(onRestPeriods) : '[]'
       }
     })
   },

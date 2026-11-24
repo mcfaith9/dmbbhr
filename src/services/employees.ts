@@ -171,6 +171,7 @@ export const employeeService = {
       otherDeductions?: number
       exclude_from_biometric?: boolean
       excludeFromBiometric?: boolean
+      onRestPeriods?: import('@/types').OnRestPeriod[]
     }
   ): Promise<Employee> {
     const hasResignationField =
@@ -183,11 +184,13 @@ export const employeeService = {
       'excludeFromBiometric' in updates
 
     const hasPhotoField = 'photo' in updates
+    const hasOnRestField = 'on_rest_periods' in updates || 'onRestPeriods' in updates
 
     return employeeRepository.updateEmployee(bioId, {
       fullName: updates.full_name ?? updates.fullName,
       preferredName: updates.preferred_name ?? updates.preferredName,
       ...(hasPhotoField ? { photo: updates.photo ?? undefined } : {}),
+      ...(hasOnRestField ? { onRestPeriods: updates.onRestPeriods ?? updates.on_rest_periods ?? [] } : {}),
       dateOfBirth: updates.date_of_birth ?? updates.dateOfBirth,
       gender: updates.gender,
       civilStatus: updates.civil_status ?? updates.civilStatus,
@@ -312,6 +315,21 @@ export const employeeService = {
 
   async getConsolidationAudits(bioId?: string): Promise<EmployeeConsolidationAudit[]> {
     return employeeRepository.getConsolidationAudits(bioId)
+  },
+
+  async assignOnRestPeriod(
+    bioId: string,
+    input: { id?: string; startDate: string; endDate?: string; remarks?: string }
+  ): Promise<Employee> {
+    return employeeRepository.assignOnRestPeriod(bioId, input)
+  },
+
+  async endOnRestPeriod(bioId: string, periodId: string, endDate?: string): Promise<Employee> {
+    return employeeRepository.endOnRestPeriod(bioId, periodId, endDate)
+  },
+
+  async removeOnRestPeriod(bioId: string, periodId: string): Promise<Employee> {
+    return employeeRepository.removeOnRestPeriod(bioId, periodId)
   },
 
   onEmployeesChanged(callback: () => void) {

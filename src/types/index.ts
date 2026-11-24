@@ -45,6 +45,15 @@ export interface WorkGroup {
 
 export type EmploymentStatus = 'active' | 'inactive' | 'on_leave' | 'resigned' | 'suspended' | 'csr'
 
+export interface OnRestPeriod {
+  id: string
+  startDate: string // YYYY-MM-DD (inclusive)
+  endDate?: string // YYYY-MM-DD (inclusive, optional for ongoing cases)
+  remarks?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type BiometricIdRole = 'primary' | 'secondary'
 export type BiometricIdStatus = 'active' | 'inactive'
 
@@ -139,6 +148,7 @@ export interface Employee {
   resignation_date?: string // Date Resigned / Effective Date
   status: EmploymentStatus
   exclude_from_biometric?: boolean // Excluded from biometric attendance monitoring & absence calculation
+  on_rest_periods?: OnRestPeriod[] // Temporary medical/recovery exemption periods (preserves Active status)
   // Payroll Profile Information
   payroll_status?: 'configured' | 'pending' | 'exempt'
   salary_type?: 'Monthly' | 'Daily' | 'Hourly'

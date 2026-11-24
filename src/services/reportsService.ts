@@ -12,6 +12,7 @@ import { employeeService } from './employees'
 import { parseDateValue } from '@/repositories/employeeRepository'
 import { holidayService } from './holidays/holidayService'
 import { formatDuration } from '@/lib/timeUtils'
+import { formatOnRestPeriodLabel, getActiveOnRestPeriodForDate, isEmployeeOnRestOnDate } from '@/lib/onRest'
 import { db } from '@/db'
 import type { Employee } from '@/types'
 
@@ -154,12 +155,25 @@ export interface ReportDiagnostics {
   excludedNotYetEmployed: number
   excludedRestDayOrHoliday: number
   excludedApprovedLeave: number
+  excludedOnRest: number
   employeesWithValidPunches: number
   dailyValidPunchRecords: number
   classifiedAbsentOccurrences: number
   classifiedAbsentUniqueEmployees: number
   unmatchedPunchBioIds: string[]
   mergedDuplicatePeople: Array<{ name: string; primaryBioId: string; aliasBioIds: string[] }>
+}
+
+export interface OnRestPunchReviewItem {
+  bioId: string
+  name: string
+  department: string
+  date: string
+  punchesCount: number
+  actualIn: string
+  actualOut: string
+  periodLabel: string
+  remarks?: string
 }
 
 export interface ReportSummaryResult {
@@ -171,6 +185,9 @@ export interface ReportSummaryResult {
     presentCount: number
     lateCount: number
     absentCount: number
+    onRestCount: number
+    uniqueOnRestEmployees: number
+    onRestPunchReviewCount: number
     missingOutCount: number
     totalRenderedHours: number
     avgDailyHours: number
@@ -197,6 +214,7 @@ export interface ReportSummaryResult {
   statusBreakdown: AttendanceStatusBreakdown[]
   topLateEmployees: TopLateEmployee[]
   missingOutItems: MissingOutItem[]
+  onRestPunchReviewItems: OnRestPunchReviewItem[]
   renderedHours: {
     total: number
     average: number
@@ -217,7 +235,7 @@ export interface CanonicalEmployee {
 
 export interface EligibilityEvaluationResult {
   eligible: boolean
-  reason: 'eligible' | 'future_date' | 'resigned' | 'inactive_status' | 'excluded_no_bio' | 'not_yet_employed' | 'approved_leave'
+  reason: 'eligible' | 'future_date' | 'resigned' | 'inactive_status' | 'excluded_no_bio' | 'not_yet_employed' | 'approved_leave' | 'on_rest'
 }
 
 // In-memory cache for fast tab-switching without re-computing
@@ -656,6 +674,14 @@ export function evaluateEmployeeEligibilityOnDate(
     return { eligible: false, reason: 'not_yet_employed' }
   }
 
+  // Exclude employees currently assigned "On Rest" for dStr (without changing Active employment status)
+  if (
+    isEmployeeOnRestOnDate(emp, dStr) ||
+    canonicalEmp.mergedRecords.some(r => isEmployeeOnRestOnDate(r, dStr))
+  ) {
+    return { eligible: false, reason: 'on_rest' }
+  }
+
   // Check approved leaves across all canonical / alias Bio IDs for this employee
   for (const key of [...canonicalEmp.aliasBioIds, ...canonicalEmp.aliasCanonicalKeys]) {
     const empLeaves = employeeLeavesMap.get(key)
@@ -668,10 +694,13 @@ export function evaluateEmployeeEligibilityOnDate(
 }
 
 /**
- * Determines whether a DailyAttendanceRecord reflects actual work presence (and NOT leave/absent/empty).
+ * Determines whether a DailyAttendanceRecord reflects actual work presence (and NOT leave/absent/on-rest/empty).
  */
 export function isValidAttendancePunchRecord(r: DailyAttendanceRecord): boolean {
   const lowerStatus = (r.status || '').trim().toLowerCase()
+  if (r.is_on_rest || lowerStatus === 'on rest') {
+    return false
+  }
   if (lowerStatus === 'leave' || lowerStatus === 'on leave' || lowerStatus.includes('leave')) {
     return false
   }
@@ -888,12 +917,14 @@ export const reportsService = {
     let diagExcludedNotYetEmployed = 0
     let diagExcludedRestDayOrHoliday = 0
     let diagExcludedApprovedLeave = 0
+    let diagExcludedOnRest = 0
     const unmatchedPunchBioIdsSet = new Set<string>()
 
     // 3. Process daily aggregations & individual absence records
     let totalPresentDays = 0
     let totalLateDays = 0
     let totalMissingOutDays = 0
+    let totalOnRestDays = 0
     let totalRenderedHours = 0
     let totalLateMinutes = 0
     let totalEligibleWorkdays = 0
@@ -904,10 +935,12 @@ export const reportsService = {
     const uniquePresentKeys = new Set<string>()
     const uniqueLateKeys = new Set<string>()
     const uniqueMissingOutKeys = new Set<string>()
+    const uniqueOnRestKeys = new Set<string>()
 
     const dayTrends: DayTrendPoint[] = []
     const lateByEmployee = new Map<string, { emp: DailyAttendanceRecord; lateCount: number; minutes: number; lastDate: string; lateRecords: LateAttendanceRecord[]; lateDates: string[] }>()
     const missingOutItems: MissingOutItem[] = []
+    const onRestPunchReviewItems: OnRestPunchReviewItem[] = []
     const allAbsentRecords: AbsentEmployeeRecord[] = []
     const absencesByEmployee = new Map<string, { emp: Employee; dates: string[] }>()
 
@@ -931,6 +964,7 @@ export const reportsService = {
       // Canonical keys & raw IDs of employees who attended on dStr
       const attendedKeysOnDay = new Set<string>()
       const countedPresentKeysOnDay = new Set<string>()
+      const countedOnRestKeysOnDay = new Set<string>()
 
       let dayPresent = 0
       let dayLate = 0
@@ -982,6 +1016,43 @@ export const reportsService = {
         // Apply department filter to record using canonical employee department
         const empDept = matchedCanonical?.primary.department || r.department || ''
         if (department !== 'all' && empDept !== department) {
+          continue
+        }
+
+        // Handle On Rest status separately — excluded from Present, Late, Missing OUT, Undertime, and Absent
+        const isRecordOnRest =
+          Boolean(r.is_on_rest) ||
+          (r.status || '').trim().toLowerCase() === 'on rest' ||
+          isEmployeeOnRestOnDate(matchedCanonical.primary, dStr)
+
+        if (isRecordOnRest) {
+          const personKey = matchedCanonical.canonicalKey || cleanKey
+          if (!countedOnRestKeysOnDay.has(personKey)) {
+            countedOnRestKeysOnDay.add(personKey)
+            uniqueOnRestKeys.add(personKey)
+            totalOnRestDays++
+
+            const hasPunchesDuringRest =
+              Boolean(r.has_punches_during_on_rest) ||
+              (r.raw_punches_count || 0) > 0 ||
+              (r.valid_punches_count || 0) > 0 ||
+              (r.actual_in !== undefined && r.actual_in !== '-' && r.actual_in !== '—' && !r.actual_in.startsWith('Missing'))
+
+            if (hasPunchesDuringRest) {
+              const restPeriod = r.on_rest_period || getActiveOnRestPeriodForDate(matchedCanonical.primary, dStr)
+              onRestPunchReviewItems.push({
+                bioId: matchedCanonical.primary.biometric_user_id || r.biometric_user_id,
+                name: matchedCanonical.primary.full_name || r.employee_name,
+                department: empDept || 'Operations',
+                date: dStr,
+                punchesCount: r.raw_punches_count || r.valid_punches_count || 1,
+                actualIn: r.actual_in || '-',
+                actualOut: r.actual_out || '-',
+                periodLabel: restPeriod ? formatOnRestPeriodLabel(restPeriod) : 'Assigned On Rest',
+                remarks: restPeriod?.remarks
+              })
+            }
+          }
           continue
         }
 
@@ -1086,6 +1157,14 @@ export const reportsService = {
             if (eligibility.reason === 'excluded_no_bio') diagExcludedNoBio++
             if (eligibility.reason === 'not_yet_employed') diagExcludedNotYetEmployed++
             if (eligibility.reason === 'approved_leave') diagExcludedApprovedLeave++
+            if (eligibility.reason === 'on_rest') {
+              diagExcludedOnRest++
+              if (!countedOnRestKeysOnDay.has(ce.canonicalKey)) {
+                countedOnRestKeysOnDay.add(ce.canonicalKey)
+                uniqueOnRestKeys.add(ce.canonicalKey)
+                totalOnRestDays++
+              }
+            }
             continue
           }
 
@@ -1290,6 +1369,7 @@ export const reportsService = {
           }
           if (isEmployeeResignedOnDate(emp.status, emp.resignation_date, dStr, todayStr)) continue
           if (!isActiveStatus(emp.status)) continue
+          if (isEmployeeOnRestOnDate(emp, dStr)) continue
           dayElig++
         }
       }
@@ -1453,7 +1533,16 @@ export const reportsService = {
       : (totalPotential > 0 ? Number(((totalAbsentOccurrences / totalPotential) * 100).toFixed(1)) : 0)
 
     const onTimeCount = Math.max(0, totalPresentDays - totalLateDays - inProgressCount)
-    const breakdownTotal = (onTimeCount + inProgressCount + totalLateDays + totalAbsentOccurrences) || 1
+    const breakdownTotal = (onTimeCount + inProgressCount + totalLateDays + totalAbsentOccurrences + (totalOnRestDays > 0 ? totalOnRestDays : 0)) || 1
+
+    const onRestBreakdownSlice: AttendanceStatusBreakdown[] = totalOnRestDays > 0
+      ? [{
+          label: 'On Rest',
+          count: totalOnRestDays,
+          percentage: Math.round((totalOnRestDays / breakdownTotal) * 100),
+          color: '#0ea5e9' // sky-500
+        }]
+      : []
 
     const statusBreakdown: AttendanceStatusBreakdown[] = isSingleToday && inProgressCount > 0
       ? [
@@ -1480,7 +1569,8 @@ export const reportsService = {
             count: totalAbsentOccurrences,
             percentage: Math.round((totalAbsentOccurrences / breakdownTotal) * 100),
             color: '#ef4444' // red-500
-          }
+          },
+          ...onRestBreakdownSlice
         ]
       : [
           {
@@ -1506,7 +1596,8 @@ export const reportsService = {
             count: totalAbsentOccurrences,
             percentage: Math.round((totalAbsentOccurrences / breakdownTotal) * 100),
             color: '#ef4444' // red-500
-          }
+          },
+          ...onRestBreakdownSlice
         ]
 
     // Diagnostics summary
@@ -1521,6 +1612,7 @@ export const reportsService = {
       excludedNotYetEmployed: diagExcludedNotYetEmployed,
       excludedRestDayOrHoliday: diagExcludedRestDayOrHoliday,
       excludedApprovedLeave: diagExcludedApprovedLeave,
+      excludedOnRest: diagExcludedOnRest,
       employeesWithValidPunches: uniquePresentKeys.size,
       dailyValidPunchRecords: totalPresentDays,
       classifiedAbsentOccurrences: totalAbsentOccurrences,
@@ -1551,6 +1643,13 @@ export const reportsService = {
       insights.push(`0 absences classified before the 9:00 AM cutoff (${uniquePresentKeys.size} of ${uniqueEligibleKeys.size} eligible staff clocked IN so far).`)
     } else {
       insights.push('100% active workforce presence recorded; zero unexcused absences detected across this reporting period.')
+    }
+
+    if (totalOnRestDays > 0) {
+      insights.push(`${totalOnRestDays} On Rest employee-day${totalOnRestDays > 1 ? 's' : ''} (${uniqueOnRestKeys.size} unique employee${uniqueOnRestKeys.size > 1 ? 's' : ''}) excluded from Absent, Present, Late, Undertime, and absence-rate calculations.`)
+    }
+    if (onRestPunchReviewItems.length > 0) {
+      insights.push(`${onRestPunchReviewItems.length} biometric punch record${onRestPunchReviewItems.length > 1 ? 's' : ''} occurred during assigned On Rest periods and ${onRestPunchReviewItems.length > 1 ? 'are' : 'is'} flagged for HR review.`)
     }
 
     if (repeatedAbsenceEmployeesCount > 0) {
@@ -1587,6 +1686,9 @@ export const reportsService = {
         presentCount: totalPresentDays,
         lateCount: totalLateDays,
         absentCount: totalAbsentOccurrences,
+        onRestCount: totalOnRestDays,
+        uniqueOnRestEmployees: uniqueOnRestKeys.size,
+        onRestPunchReviewCount: onRestPunchReviewItems.length,
         missingOutCount: totalMissingOutDays,
         totalRenderedHours: roundedTotalHours,
         avgDailyHours,
@@ -1613,6 +1715,7 @@ export const reportsService = {
       statusBreakdown,
       topLateEmployees,
       missingOutItems,
+      onRestPunchReviewItems,
       renderedHours: {
         total: roundedTotalHours,
         average: avgDailyHours,

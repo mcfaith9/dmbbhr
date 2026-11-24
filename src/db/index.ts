@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie'
-import type { BiometricIdEntry, EmployeeConsolidationAudit, EmployeeLocation, EmploymentStatus } from '@/types'
-export type { BiometricIdEntry, EmployeeConsolidationAudit, EmploymentStatus }
+import type { BiometricIdEntry, EmployeeConsolidationAudit, EmployeeLocation, EmploymentStatus, OnRestPeriod } from '@/types'
+export type { BiometricIdEntry, EmployeeConsolidationAudit, EmploymentStatus, OnRestPeriod }
 
 export interface WorkGroupRecord {
   id: string // "wg-group-a", "wg-group-b", "wg-group-c"
@@ -72,6 +72,7 @@ export interface EmployeeRecord {
   resignationDate?: string // Date Resigned / Effective Date
   status: EmploymentStatus
   excludeFromBiometric?: boolean
+  onRestPeriods?: OnRestPeriod[]
   payrollStatus?: 'configured' | 'pending' | 'exempt'
   salaryType?: 'Monthly' | 'Daily' | 'Hourly'
   basicSalary?: number
@@ -136,6 +137,7 @@ export interface DailySummaryRecord {
   singlePunchCount: number
   awaitingOutCount: number
   leaveCount: number
+  onRestCount?: number
   holidayCount: number
   totalEmployees: number
   updatedAt: string
@@ -283,6 +285,7 @@ export interface PayrollSnapshotRecord {
   dailyRate: number
   hourlyRate: number
   payableDays: number
+  scheduledDays?: number
   presentDays: number
   sundayWorkDays: number
   holidayDays: number
@@ -290,12 +293,18 @@ export interface PayrollSnapshotRecord {
   unworkedHolidayDays?: number
   specialNonWorkingDays?: number
   specialWorkingDays?: number
+  absentDays?: number
+  onRestDays?: number
+  basePay?: number
+  allowances?: number
+  sundayDutyPay?: number
   holidayPay?: number
   overtimeHours?: number
   overtimePay?: number
   lateMinutes: number
   undertimeMinutes?: number
   undertimeDeduction?: number
+  attendanceReviewNotes?: string[]
   initialEarnings: number
   sss: number
   philhealth: number

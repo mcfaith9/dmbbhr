@@ -925,6 +925,75 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
           </div>
         </div>
 
+        <!-- On Rest Status & HR Punch Review Banner (Separate from Absent/Present/Late) -->
+        <div
+          v-if="reportData.kpis.onRestCount > 0 || reportData.kpis.onRestPunchReviewCount > 0"
+          class="rounded-xl border border-sky-500/30 bg-sky-500/5 p-4 space-y-3 shadow-xs"
+        >
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="space-y-0.5">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-bold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+                  On Rest Attendance Exemption
+                </span>
+                <Badge variant="outline" class="text-[10px] font-mono border-sky-500/40 text-sky-700 dark:text-sky-300 bg-card">
+                  {{ reportData.kpis.onRestCount }} {{ reportData.kpis.onRestCount === 1 ? 'Day' : 'Days' }} • {{ reportData.kpis.uniqueOnRestEmployees }} {{ reportData.kpis.uniqueOnRestEmployees === 1 ? 'Employee' : 'Employees' }}
+                </Badge>
+                <Badge
+                  v-if="reportData.kpis.onRestPunchReviewCount > 0"
+                  variant="warning"
+                  class="text-[10px] font-mono"
+                >
+                  {{ reportData.kpis.onRestPunchReviewCount }} Punch Review Flag(s)
+                </Badge>
+              </div>
+              <p class="text-[11px] text-muted-foreground">
+                On Rest days are excluded from Absent, Present, Late, Undertime, and absence-rate calculations while preserving Active employment status and historical punches.
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="reportData.onRestPunchReviewItems.length > 0"
+            class="rounded-lg border border-amber-500/30 bg-card p-3 space-y-2"
+          >
+            <div class="flex items-center justify-between gap-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+              <span>Biometric Punches Recorded During On Rest (HR Review Required)</span>
+              <span class="text-[10px] font-mono text-muted-foreground">Excluded from attendance &amp; payroll deductions</span>
+            </div>
+            <div class="divide-y text-xs">
+              <div
+                v-for="item in reportData.onRestPunchReviewItems"
+                :key="`${item.bioId}-${item.date}`"
+                class="py-1.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+              >
+                <div class="space-y-0.5">
+                  <div class="font-medium text-foreground flex items-center gap-2 flex-wrap">
+                    <span>{{ item.name }}</span>
+                    <span class="text-[10px] font-mono text-muted-foreground">Bio ID {{ item.bioId }}</span>
+                    <span class="text-[10px] font-mono text-sky-700 dark:text-sky-300">{{ item.date }}</span>
+                  </div>
+                  <div class="text-[11px] text-muted-foreground">
+                    IN: <span class="font-mono text-foreground">{{ item.actualIn }}</span> ·
+                    OUT: <span class="font-mono text-foreground">{{ item.actualOut }}</span> ·
+                    {{ item.punchesCount }} scan(s)
+                    <template v-if="item.remarks"> · {{ item.remarks }}</template>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 text-[11px] gap-1 shrink-0 cursor-pointer"
+                  @click="navigateToDaily(undefined, item.bioId, item.date)"
+                >
+                  <span>Review Punch</span>
+                  <ArrowRight class="size-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 2. ATTENDANCE TREND CHART -->
         <div class="rounded-xl border bg-card p-5 shadow-xs">
           <AttendanceTrendChart
@@ -942,7 +1011,7 @@ function exportAbsentRecords(format: 'xlsx' | 'csv') {
                   Attendance Status Distribution
                 </h3>
                 <p class="text-[11px] text-muted-foreground">
-                  Proportion of on-time, late, missing OUT, and absent shifts.
+                  Proportion of on-time, late, missing OUT, absent, and on-rest records.
                 </p>
               </div>
               <Badge variant="outline" class="text-[11px] font-mono">

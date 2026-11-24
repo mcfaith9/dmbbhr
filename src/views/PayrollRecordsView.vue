@@ -89,6 +89,12 @@ function normalizeRecord(r: any): EmployeePayrollRecord {
     },
     payableDays: Number(r?.payableDays ?? r?.payDays ?? 0),
     scheduledDays: Number(r?.scheduledDays ?? r?.scheduled_days ?? 0),
+    presentDays: Number(r?.presentDays ?? r?.present_days ?? 0),
+    sundayWorkDays: Number(r?.sundayWorkDays ?? r?.sunday_work_days ?? 0),
+    holidayDays: Number(r?.holidayDays ?? r?.holiday_days ?? 0),
+    absentDays: Number(r?.absentDays ?? r?.absent_days ?? 0),
+    onRestDays: Number(r?.onRestDays ?? r?.on_rest_days ?? 0),
+    lateMinutes: Number(r?.lateMinutes ?? r?.late_minutes ?? 0),
     overtimePay: Number(r?.overtimePay ?? r?.earningsBreakdown?.overtimePay ?? 0),
     overtimeHours: Number(r?.overtimeHours ?? r?.overtime_hours ?? 0),
     initialEarnings: Number(r?.initialEarnings ?? r?.gross ?? r?.basePay ?? 0),
@@ -495,6 +501,8 @@ const totalHolidayPay = computed(() => {
               <TableHead class="font-semibold text-xs whitespace-nowrap min-w-[180px]">Employee Name</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Base Pay</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Payable Days</TableHead>
+              <TableHead class="font-semibold text-xs whitespace-nowrap text-center">Absent</TableHead>
+              <TableHead class="font-semibold text-xs whitespace-nowrap text-center">On Rest</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Holiday Pay</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Authorized OT</TableHead>
               <TableHead class="font-semibold text-xs whitespace-nowrap">Gross Pay</TableHead>
@@ -517,6 +525,8 @@ const totalHolidayPay = computed(() => {
                 </TableCell>
                 <TableCell><Skeleton class="h-4 w-16" /></TableCell>
                 <TableCell><Skeleton class="h-4 w-14" /></TableCell>
+                <TableCell class="text-center"><Skeleton class="h-4 w-8 mx-auto" /></TableCell>
+                <TableCell class="text-center"><Skeleton class="h-4 w-12 mx-auto" /></TableCell>
                 <TableCell><Skeleton class="h-4 w-14" /></TableCell>
                 <TableCell><Skeleton class="h-4 w-16" /></TableCell>
                 <TableCell><Skeleton class="h-4 w-16" /></TableCell>
@@ -529,7 +539,7 @@ const totalHolidayPay = computed(() => {
 
             <!-- 2. Search Yielded No Results -->
             <TableRow v-else-if="records.length > 0 && filteredRecords.length === 0">
-              <TableCell :colspan="11" class="h-32 text-center text-xs">
+              <TableCell :colspan="12" class="h-32 text-center text-xs">
                 <div class="flex flex-col items-center justify-center py-4 space-y-2">
                   <Search class="size-6 text-muted-foreground/60" />
                   <div class="font-medium text-foreground">
@@ -547,7 +557,7 @@ const totalHolidayPay = computed(() => {
 
             <!-- 3. Period Has No Records -->
             <TableRow v-else-if="records.length === 0">
-              <TableCell :colspan="11" class="h-28 text-center text-xs">
+              <TableCell :colspan="12" class="h-28 text-center text-xs">
                 <div class="flex flex-col items-center justify-center py-4 space-y-1.5 text-muted-foreground">
                   <Users class="size-6 text-muted-foreground/60" />
                   <div class="font-medium text-foreground">No active employees in this period.</div>
@@ -577,6 +587,22 @@ const totalHolidayPay = computed(() => {
               <TableCell class="text-xs whitespace-nowrap">
                 <span class="font-semibold">{{ r.payableDays }}</span>
                 <span class="text-muted-foreground text-[10px]"> / {{ r.scheduledDays }} days</span>
+              </TableCell>
+              <TableCell class="text-center whitespace-nowrap font-mono">
+                <span :class="(Number(r.absentDays) || 0) > 0 ? 'text-destructive font-semibold' : 'text-muted-foreground'">
+                  {{ Number(r.absentDays) || 0 }}d
+                </span>
+              </TableCell>
+              <TableCell class="text-center whitespace-nowrap">
+                <Badge
+                  v-if="(Number(r.onRestDays) || 0) > 0"
+                  variant="outline"
+                  class="text-[10px] font-mono bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30"
+                  title="Unpaid On Rest days (no daily salary earned; excluded from Absent)"
+                >
+                  {{ r.onRestDays }}d (Unpaid)
+                </Badge>
+                <span v-else class="text-muted-foreground font-mono text-[11px]">0d</span>
               </TableCell>
               <TableCell class="font-mono whitespace-nowrap">
                 <span :class="(Number(r.earningsBreakdown?.holidayPay) || 0) > 0 ? 'text-amber-600 dark:text-amber-400 font-semibold' : 'text-muted-foreground'">

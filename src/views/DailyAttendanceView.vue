@@ -88,7 +88,7 @@ const selectedDate = ref<string>(todayDateStr)
 const selectedLocation = ref<string>('all')
 const selectedWorkGroup = ref<string>('all')
 const selectedSort = ref<'newest' | 'earliest' | 'name' | 'late'>('newest')
-const activeStatusFilter = ref<'all' | 'on_time' | 'late' | 'discrepancy' | 'duplicates' | 'resigned'>('all')
+const activeStatusFilter = ref<'all' | 'on_time' | 'late' | 'discrepancy' | 'duplicates' | 'on_rest' | 'resigned'>('all')
 const includeResigned = ref<boolean>(false)
 const searchQuery = ref<string>('')
 const loading = ref<boolean>(false)
@@ -237,8 +237,11 @@ function setDateQuick(range: 'today' | 'yesterday') {
 }
 
 const stats = computed(() => {
-  // Exclude resigned employees from active attendance stats calculations
-  const list = dailyRecords.value.filter(r => r.employee_status !== 'resigned')
+  // Exclude resigned employees and On Rest employees from active working attendance stats calculations
+  const activeNonResigned = dailyRecords.value.filter(r => r.employee_status !== 'resigned')
+  const onRestRecords = activeNonResigned.filter(r => r.is_on_rest || r.status === 'On Rest')
+  const list = activeNonResigned.filter(r => !r.is_on_rest && r.status !== 'On Rest')
+
   const total = list.length
   const late = list.filter(r => r.late_minutes > 0 || r.status === 'Late').length
   const onTime = list.filter(r => (r.status === 'Regular Day' || (!r.status.includes('Missing') && r.has_valid_out)) && r.late_minutes === 0).length
@@ -246,8 +249,9 @@ const stats = computed(() => {
   const likelyOutMissingIn = list.filter(r => r.status === 'Likely OUT — Missing IN' || r.status === 'Incomplete / Review' || r.is_missing_in).length
   const singlePunchNoOut = list.filter(r => r.status === 'Single Punch — No OUT').length
   const duplicateScans = list.filter(r => (r.duplicate_punches_count || 0) > 0).length
+  const onRest = onRestRecords.length
   const resignedCount = dailyRecords.value.filter(r => r.employee_status === 'resigned').length
-  return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, duplicateScans, resignedCount }
+  return { total, late, onTime, awaitingOut, likelyOutMissingIn, singlePunchNoOut, duplicateScans, onRest, resignedCount }
 })
 
 const filteredRecords = computed(() => {
@@ -261,13 +265,15 @@ const filteredRecords = computed(() => {
 
   // Status Filter Pill
   if (activeStatusFilter.value === 'on_time') {
-    list = list.filter(r => r.late_minutes === 0 && r.has_valid_out && !r.is_missing_in && r.status !== 'Incomplete / Review')
+    list = list.filter(r => !r.is_on_rest && r.status !== 'On Rest' && r.late_minutes === 0 && r.has_valid_out && !r.is_missing_in && r.status !== 'Incomplete / Review')
   } else if (activeStatusFilter.value === 'late') {
-    list = list.filter(r => r.late_minutes > 0 || r.status === 'Late')
+    list = list.filter(r => !r.is_on_rest && r.status !== 'On Rest' && (r.late_minutes > 0 || r.status === 'Late'))
   } else if (activeStatusFilter.value === 'discrepancy') {
-    list = list.filter(r => r.is_missing_in || r.status === 'Likely OUT — Missing IN' || r.status === 'Single Punch — No OUT' || r.status === 'Incomplete / Review')
+    list = list.filter(r => !r.is_on_rest && r.status !== 'On Rest' && (r.is_missing_in || r.status === 'Likely OUT — Missing IN' || r.status === 'Single Punch — No OUT' || r.status === 'Incomplete / Review'))
   } else if (activeStatusFilter.value === 'duplicates') {
     list = list.filter(r => (r.duplicate_punches_count || 0) > 0)
+  } else if (activeStatusFilter.value === 'on_rest') {
+    list = list.filter(r => r.is_on_rest || r.status === 'On Rest')
   } else if (activeStatusFilter.value === 'resigned') {
     list = list.filter(r => r.employee_status === 'resigned')
   }
@@ -668,6 +674,9 @@ onUnmounted(() => {
             <Users class="size-4 text-primary" />
             <span>{{ stats.total }}</span>
           </div>
+          <span v-if="stats.onRest > 0" class="text-[10px] text-sky-600 dark:text-sky-400 font-medium mt-0.5">
+            + {{ stats.onRest }} On Rest (excluded)
+          </span>
         </div>
 
         <div class="rounded-xl border bg-card p-3 shadow-xs flex flex-col justify-center">
@@ -744,6 +753,16 @@ onUnmounted(() => {
           @click="activeStatusFilter = 'duplicates'"
         >
           Repeated Scans ({{ stats.duplicateScans }})
+        </button>
+
+        <button
+          v-if="stats.onRest > 0"
+          type="button"
+          class="px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap"
+          :class="activeStatusFilter === 'on_rest' ? 'bg-sky-600 text-white shadow-xs' : 'bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20'"
+          @click="activeStatusFilter = 'on_rest'"
+        >
+          On Rest ({{ stats.onRest }})
         </button>
 
         <button
@@ -1126,7 +1145,15 @@ onUnmounted(() => {
 
               <!-- 3. Actual IN & OUT Combined (Top & Bottom) -->
               <TableCell class="py-2.5">
-                <div class="flex flex-col gap-1 text-[11px]">
+                <div v-if="row.is_on_rest && !row.has_punches_during_on_rest" class="flex flex-col gap-0.5 text-[11px]">
+                  <span class="font-medium text-sky-600 dark:text-sky-400">
+                    On Rest (Exempted)
+                  </span>
+                  <span v-if="row.on_rest_period?.remarks" class="text-[10px] text-muted-foreground truncate max-w-[180px]" :title="row.on_rest_period.remarks">
+                    {{ row.on_rest_period.remarks }}
+                  </span>
+                </div>
+                <div v-else class="flex flex-col gap-1 text-[11px]">
                   <!-- Actual IN (Top) -->
                   <div class="flex items-center gap-1.5">
                     <span class="text-[10px] font-bold uppercase tracking-wider px-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">IN</span>
@@ -1228,7 +1255,9 @@ onUnmounted(() => {
                   <div
                     class="flex items-center justify-end text-[10px] font-semibold whitespace-nowrap text-right"
                     :class="
-                      row.status === 'Likely OUT — Missing IN' || row.status === 'Incomplete / Review'
+                      row.status === 'On Rest' || row.is_on_rest
+                        ? 'text-sky-600 dark:text-sky-400 font-bold'
+                        : row.status === 'Likely OUT — Missing IN' || row.status === 'Incomplete / Review'
                         ? 'text-rose-600 dark:text-rose-400'
                         : row.status === 'Late' || row.status === 'Early OUT'
                           ? 'text-amber-600 dark:text-amber-400'

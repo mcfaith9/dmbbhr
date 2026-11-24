@@ -17,10 +17,11 @@
  * - Seamless integration with approved Leave, Manual Time, and HR context
  */
 
-import type { AttendanceLog, BiometricIdEntry, EmploymentStatus } from '@/types'
+import type { AttendanceLog, BiometricIdEntry, EmploymentStatus, OnRestPeriod } from '@/types'
 import type { ManualAttendanceRecord } from '@/db'
 import { calculateExpectedOutMinutes, formatTime12h } from '@/repositories/workGroupRepository'
 import { normalizeBiometricIdKey, normalizeBiometricIdToken } from '@/lib/employeeIdentity'
+import { formatOnRestPeriodLabel } from '@/lib/onRest'
 export { parseBiometricTimestamp, type ParsedBiometricTimestamp } from '@/utils/attendanceTimestampParser'
 
 export interface AttendanceEngineConfig {
@@ -64,6 +65,7 @@ export interface EmployeeScheduleContext {
   resignationDate?: string
   primaryBioId?: string
   biometricIds?: BiometricIdEntry[]
+  onRest?: OnRestPeriod
 }
 
 export interface ScanItem {
@@ -134,6 +136,9 @@ export interface DailyAttendanceRecord {
   source_bio_ids?: string[]
   requires_admin_review?: boolean
   review_reasons?: string[]
+  is_on_rest?: boolean
+  has_punches_during_on_rest?: boolean
+  on_rest_period?: OnRestPeriod
   notes?: string
 }
 
@@ -424,6 +429,75 @@ export function processEmployeeDayPunches(
     }
   }
 
+  // CHECK A2: Assigned "On Rest" period with 0 biometric punches
+  if (employeeContext?.onRest && (!rawLogs || rawLogs.length === 0)) {
+    const rest = employeeContext.onRest
+    const primaryDisplayBio = employeeContext?.primaryBioId || bioId
+    const restSourceIds = Array.from(new Set([primaryDisplayBio, bioId].filter(Boolean)))
+    const restPeriodLabel = formatOnRestPeriodLabel(rest)
+    const formattedDisplayDate = (() => {
+      try {
+        return new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        }).format(new Date(`${selectedDate}T00:00:00+08:00`))
+      } catch {
+        return selectedDate
+      }
+    })()
+
+    return {
+      id: `daily-${bioId}-${selectedDate}`,
+      biometric_user_id: bioId,
+      primary_bio_id: primaryDisplayBio,
+      source_bio_ids: restSourceIds,
+      employee_name: employeeName,
+      department: employeeContext.department || '',
+      location: employeeLocation,
+      work_group_id: workGroupId,
+      work_group_name: workGroupName,
+      date: formattedDisplayDate,
+      raw_date: selectedDate,
+      expected_in: expectedInFormatted,
+      actual_in: '-',
+      expected_out: expectedOutFormatted,
+      actual_out: '-',
+      break_out: '-',
+      break_in: '-',
+      total_hours: '-',
+      total_hours_decimal: 0,
+      worked_minutes: 0,
+      late_minutes: 0,
+      early_out_minutes: 0,
+      undertime_minutes: 0,
+      employee_status: employeeContext.employeeStatus || 'active',
+      resignation_date: employeeContext.resignationDate,
+      status: 'On Rest',
+      status_variant: 'secondary',
+      raw_punches_count: 0,
+      valid_punches_count: 0,
+      duplicate_punches_count: 0,
+      total_punches: 0,
+      punches_summary: '0',
+      has_valid_out: false,
+      is_awaiting_out: false,
+      is_on_rest: true,
+      has_punches_during_on_rest: false,
+      on_rest_period: rest,
+      first_punch_time_ms: 0,
+      latest_punch_time_ms: 0,
+      latest_punch_time: '-',
+      raw_punches: [],
+      valid_punches: [],
+      scan_breakdown: [],
+      requires_admin_review: false,
+      review_reasons: [],
+      notes: rest.remarks ? `On Rest (${restPeriodLabel}): ${rest.remarks}` : `On Rest (${restPeriodLabel})`
+    }
+  }
+
   // CHECK B: Approved Field Work / OB with 0 biometric punches
   const manual = employeeContext?.manualAdjustment
   const isFieldWorkContext = employeeContext?.isFieldWorkApproved ||
@@ -608,6 +682,106 @@ export function processEmployeeDayPunches(
   const morningArrivalCutoffMins = lunchStartMins - 15
   // Afternoon Departure window: at least lunchEndMins + 35 (e.g. >= 1:35 PM) AND >= expectedInMinutes + 210
   const afternoonDepartureMinMins = Math.max(lunchEndMins + 35, expectedInMinutes + 210)
+
+  // CHECK A3: Assigned "On Rest" period WITH biometric punches recorded — preserve all raw punches & flag for HR review!
+  if (employeeContext?.onRest) {
+    const rest = employeeContext.onRest
+    const restPeriodLabel = formatOnRestPeriodLabel(rest)
+    const reviewReason = `Biometric punch(es) recorded during assigned On Rest period (${restPeriodLabel}) — requires HR review`
+    reviewReasonsSet.add(reviewReason)
+
+    for (const scan of scanBreakdown) {
+      const scanMins = getManilaMinutesFromMidnight(scan.timestampMs)
+      const st = Number(scan.state ?? 0)
+      if (st === 2) {
+        scan.windowRole = 'BREAK_OUT'
+        scan.windowRoleLabel = 'This is for Lunch (Break OUT)'
+      } else if (st === 3) {
+        scan.windowRole = 'BREAK_IN'
+        scan.windowRoleLabel = 'This is for Lunch (Break IN / Return)'
+      } else if (scanMins < morningArrivalCutoffMins) {
+        scan.windowRole = 'IN'
+        scan.windowRoleLabel = 'This is for IN (Shift Arrival Window)'
+      } else if (scanMins >= afternoonDepartureMinMins) {
+        scan.windowRole = 'OUT'
+        scan.windowRoleLabel = 'This is for OUT (Shift Departure Window)'
+      } else if (scanMins >= lunchStartMins - 30 && scanMins <= lunchStartMins + 30) {
+        scan.windowRole = 'BREAK_OUT'
+        scan.windowRoleLabel = 'This is for Lunch (Break OUT)'
+      } else if (scanMins > lunchStartMins + 30 && scanMins <= lunchEndMins + 35) {
+        scan.windowRole = 'BREAK_IN'
+        scan.windowRoleLabel = 'This is for Lunch (Break IN / Return)'
+      } else {
+        scan.windowRole = 'EXTRA'
+        scan.windowRoleLabel = 'Midday Scan'
+      }
+    }
+
+    const lastValidPunch = validPunches[validCount - 1] || firstPunch
+    const latestPunchMs = new Date(lastValidPunch.attendance_time).getTime()
+    const latestPunchTimeStr = formatManilaTime(lastValidPunch.attendance_time)
+    const formattedDisplayDate = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    }).format(new Date(firstPunch.attendance_time))
+
+    const restInStr = firstPunch ? formatManilaTime(firstPunch.attendance_time) : '-'
+    const restOutStr = validCount > 1 ? formatManilaTime(lastValidPunch.attendance_time) : '-'
+    const restReasons = Array.from(reviewReasonsSet)
+
+    return {
+      id: `daily-${bioId}-${selectedDate}`,
+      biometric_user_id: bioId,
+      primary_bio_id: employeeContext?.primaryBioId || bioId,
+      source_bio_ids: Array.from(sourceBioIdSet),
+      employee_name: employeeName,
+      department: employeeContext?.department || '',
+      location: employeeLocation,
+      work_group_id: workGroupId,
+      work_group_name: workGroupName,
+      date: formattedDisplayDate,
+      raw_date: selectedDate,
+      expected_in: expectedInFormatted,
+      actual_in: restInStr,
+      expected_out: expectedOutFormatted,
+      actual_out: restOutStr,
+      break_out: '-',
+      break_in: '-',
+      total_hours: '-',
+      total_hours_decimal: 0,
+      worked_minutes: 0,
+      late_minutes: 0,
+      early_out_minutes: 0,
+      undertime_minutes: 0,
+      employee_status: employeeContext?.employeeStatus || 'active',
+      resignation_date: employeeContext?.resignationDate,
+      status: 'On Rest',
+      status_variant: 'secondary',
+      raw_punches_count: rawCount,
+      valid_punches_count: validCount,
+      duplicate_punches_count: duplicateCount,
+      total_punches: rawCount,
+      punches_summary: punchesSummary,
+      has_valid_out: false,
+      is_awaiting_out: false,
+      is_on_rest: true,
+      has_punches_during_on_rest: true,
+      on_rest_period: rest,
+      first_punch_time_ms: firstPunchMs,
+      latest_punch_time_ms: latestPunchMs,
+      latest_punch_time: latestPunchTimeStr,
+      raw_punches: sortedLogs,
+      valid_punches: validPunches,
+      scan_breakdown: scanBreakdown,
+      requires_admin_review: true,
+      review_reasons: restReasons,
+      notes: rest.remarks
+        ? `On Rest (${restPeriodLabel}): ${rest.remarks} • ${reviewReason}`
+        : `On Rest (${restPeriodLabel}) • ${reviewReason}`
+    }
+  }
 
   // Check Approved HR Context and Duty Hours
   const approvedRequiredHours = resolveApprovedDutyHours({
