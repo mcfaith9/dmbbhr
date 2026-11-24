@@ -1,8 +1,9 @@
 /**
- * Shared Node.js Employee Photo Storage & Validation Helper
+ * Shared Node.js Employee Photo Storage & JPG Conversion Helper
  *
- * Stores employee profile photos inside `<projectRoot>/public/employee-photos/`
- * using the employee's sanitized Bio ID as the filename (e.g. `25065.jpg`).
+ * Converts all supported uploaded employee photos to standard JPEG/JPG format
+ * (flattening any transparency onto a solid white background) via `sharp`,
+ * and stores them inside `<projectRoot>/public/employee-photos/{BioID}.jpg`.
  *
  * Used by both:
  * - server/biometric-agent/src/bridge/devSocketBridge.js (port 5174)
@@ -11,18 +12,65 @@
 
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp');
 
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB raw image limit
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB raw upload limit
 const MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024; // 8 MB JSON/base64 envelope limit
+const MAX_INPUT_PIXELS = 25_000_000; // Guard against decompression-bomb images
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/jpg',
   'image/png',
-  'image/webp'
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/heic',
+  'image/heif',
+  'image/tiff'
 ]);
 
-const ALLOWED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+const ALLOWED_EXTENSIONS = new Set([
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'avif',
+  'heic',
+  'heif',
+  'tif',
+  'tiff'
+]);
+
+const SHARP_RASTER_FORMATS = new Set([
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'tiff',
+  'heif'
+]);
+
+const LEGACY_CLEANUP_EXTENSIONS = [
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'avif',
+  'heic',
+  'heif',
+  'tif',
+  'tiff'
+];
+
+class PhotoValidationError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.name = 'PhotoValidationError';
+    this.statusCode = statusCode;
+  }
+}
 
 /**
  * Resolves and verifies the confined employee-photos directory inside `<projectRoot>/public/employee-photos`.
@@ -59,19 +107,7 @@ function sanitizeBioId(rawBioId) {
   return cleaned;
 }
 
-class PhotoValidationError extends Error {
-  constructor(message, statusCode = 400) {
-    super(message);
-    this.name = 'PhotoValidationError';
-    this.statusCode = statusCode;
-  }
-}
-
-/**
- * Inspects buffer magic bytes + optional declared MIME/extension to guarantee the file
- * is a genuine JPG, JPEG, PNG, or WebP image.
- */
-function detectAndValidateImageFormat(buffer, declaredMimeType = '', originalFileName = '') {
+function validateDeclaredFormat(buffer, declaredMimeType = '', originalFileName = '') {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new PhotoValidationError('Uploaded image is empty.', 400);
   }
@@ -82,47 +118,68 @@ function detectAndValidateImageFormat(buffer, declaredMimeType = '', originalFil
   if (declaredMimeType) {
     const mime = String(declaredMimeType).trim().toLowerCase();
     if (!ALLOWED_MIME_TYPES.has(mime)) {
-      throw new PhotoValidationError('Unsupported image type. Please upload a JPG, JPEG, PNG, or WebP image.', 415);
+      throw new PhotoValidationError('Unsupported image type. Please upload a JPG, PNG, WebP, GIF, or AVIF image.', 415);
     }
   }
 
   if (originalFileName) {
     const ext = path.extname(String(originalFileName).trim()).toLowerCase().replace(/^\./, '');
     if (ext && !ALLOWED_EXTENSIONS.has(ext)) {
-      throw new PhotoValidationError('Unsupported file extension. Allowed formats: JPG, JPEG, PNG, WebP.', 415);
+      throw new PhotoValidationError('Unsupported file extension. Allowed formats: JPG, JPEG, PNG, WebP, GIF, AVIF.', 415);
     }
   }
+}
 
-  // JPEG magic bytes: FF D8 FF
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
-    return { ext: 'jpg', mimeType: 'image/jpeg' };
+function isValidJpegBuffer(buffer) {
+  return (
+    Buffer.isBuffer(buffer) &&
+    buffer.length >= 4 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  );
+}
+
+/**
+ * Validates raster image input using `sharp`, applies a solid white background
+ * to any transparent regions, honors EXIF orientation, and converts to JPEG.
+ */
+async function convertImageToJpeg(buffer, declaredMimeType = '', originalFileName = '') {
+  validateDeclaredFormat(buffer, declaredMimeType, originalFileName);
+
+  let metadata;
+  try {
+    metadata = await sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: MAX_INPUT_PIXELS
+    }).metadata();
+  } catch {
+    throw new PhotoValidationError('Invalid or corrupted image file. Only valid raster images (JPG, PNG, WebP, GIF, AVIF) are accepted.', 415);
   }
 
-  // PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
-  if (
-    buffer.length >= 8 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47 &&
-    buffer[4] === 0x0d &&
-    buffer[5] === 0x0a &&
-    buffer[6] === 0x1a &&
-    buffer[7] === 0x0a
-  ) {
-    return { ext: 'png', mimeType: 'image/png' };
+  if (!metadata || !metadata.format || !SHARP_RASTER_FORMATS.has(metadata.format)) {
+    throw new PhotoValidationError('Unsupported image format. Please upload a valid JPG, PNG, WebP, GIF, or AVIF image.', 415);
   }
 
-  // WebP magic bytes: RIFF....WEBP
-  if (
-    buffer.length >= 12 &&
-    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
-  ) {
-    return { ext: 'webp', mimeType: 'image/webp' };
+  let jpegBuffer;
+  try {
+    jpegBuffer = await sharp(buffer, {
+      failOn: 'error',
+      limitInputPixels: MAX_INPUT_PIXELS
+    })
+      .rotate()
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+  } catch {
+    throw new PhotoValidationError('Failed to process and convert the uploaded image to JPG format.', 415);
   }
 
-  throw new PhotoValidationError('Invalid image file content. Only valid JPG, JPEG, PNG, or WebP images are accepted.', 415);
+  if (!isValidJpegBuffer(jpegBuffer)) {
+    throw new Error('Converted output did not produce a valid JPEG image.');
+  }
+
+  return jpegBuffer;
 }
 
 /**
@@ -151,46 +208,47 @@ function decodeBase64Image(rawData) {
 }
 
 /**
- * Validates and saves an employee photo into `<projectRoot>/public/employee-photos/<sanitizedBioId>.<ext>`,
- * creating the directory automatically and removing older format duplicates for the same Bio ID.
+ * Validates, converts to JPEG/JPG (with white background for transparency), and writes to
+ * `<projectRoot>/public/employee-photos/<sanitizedBioId>.jpg`, auto-creating the folder
+ * and removing any legacy non-.jpg extensions for the same Bio ID.
  * Returns only safe public web paths (no OS/filesystem paths).
  */
-function saveEmployeePhoto({ projectRoot, bioId, buffer, mimeType = '', fileName = '' }) {
+async function saveEmployeePhoto({ projectRoot, bioId, buffer, mimeType = '', fileName = '' }) {
   const sanitizedBioId = sanitizeBioId(bioId);
-  const { ext, mimeType: canonicalMime } = detectAndValidateImageFormat(buffer, mimeType, fileName);
+  const jpegBuffer = await convertImageToJpeg(buffer, mimeType, fileName);
 
   const photosDir = getPhotosDirectory(projectRoot);
   fs.mkdirSync(photosDir, { recursive: true });
 
-  const targetFilename = `${sanitizedBioId}.${ext}`;
+  const targetFilename = `${sanitizedBioId}.jpg`;
   const targetPath = path.resolve(photosDir, targetFilename);
   if (!targetPath.startsWith(photosDir + path.sep)) {
     throw new PhotoValidationError('Invalid target photo location.', 400);
   }
 
-  // Overwrite / remove any existing photo files for this Bio ID across other extensions to prevent duplicates
-  for (const existingExt of ALLOWED_EXTENSIONS) {
-    const candidateName = `${sanitizedBioId}.${existingExt}`;
-    const candidatePath = path.resolve(photosDir, candidateName);
+  // Remove any legacy non-.jpg files for this Bio ID so {BioID}.jpg remains the single file
+  for (const legacyExt of LEGACY_CLEANUP_EXTENSIONS) {
+    const candidatePath = path.resolve(photosDir, `${sanitizedBioId}.${legacyExt}`);
     if (!candidatePath.startsWith(photosDir + path.sep)) continue;
     if (candidatePath !== targetPath && fs.existsSync(candidatePath)) {
       try {
         fs.unlinkSync(candidatePath);
       } catch {
-        // Best-effort cleanup of previous extension before writing replacement
+        // Best-effort cleanup of legacy extensions
       }
     }
   }
 
-  fs.writeFileSync(targetPath, buffer);
+  // Overwrite {BioID}.jpg directly
+  fs.writeFileSync(targetPath, jpegBuffer);
 
   return {
     status: 'ok',
     bioId: sanitizedBioId,
     filename: targetFilename,
     photoPath: `/employee-photos/${targetFilename}`,
-    mimeType: canonicalMime,
-    size: buffer.length
+    mimeType: 'image/jpeg',
+    size: jpegBuffer.length
   };
 }
 
@@ -238,7 +296,7 @@ function handleEmployeePhotoUploadRequest(req, res, projectRoot) {
     }
   });
 
-  req.on('end', () => {
+  req.on('end', async () => {
     if (aborted) return;
     try {
       const rawBody = Buffer.concat(chunks).toString('utf8');
@@ -248,7 +306,7 @@ function handleEmployeePhotoUploadRequest(req, res, projectRoot) {
       const { buffer, embeddedMime } = decodeBase64Image(dataBase64);
       const effectiveMime = mimeType || embeddedMime;
 
-      const result = saveEmployeePhoto({
+      const result = await saveEmployeePhoto({
         projectRoot,
         bioId,
         buffer,
@@ -279,7 +337,9 @@ module.exports = {
   PhotoValidationError,
   getPhotosDirectory,
   sanitizeBioId,
-  detectAndValidateImageFormat,
+  validateDeclaredFormat,
+  isValidJpegBuffer,
+  convertImageToJpeg,
   decodeBase64Image,
   saveEmployeePhoto,
   handleEmployeePhotoUploadRequest

@@ -1,14 +1,14 @@
 /**
- * DMBBHR Employee Profile Photo Upload & Storage Verification Suite
+ * DMBBHR Employee Profile Photo Upload & JPG Conversion Verification Suite
  *
  * Verifies:
  * 1. server/photoStorage.cjs auto-creates `<root>/public/employee-photos/`
- * 2. Sanitizes Bio IDs and blocks path traversal tokens (`..`, `/`, `\`, null bytes)
- * 3. Validates JPG, JPEG, PNG, WebP magic bytes + MIME/extension allowlists and 5 MB limit
- * 4. Overwrites existing photo & cleans up stale extensions for the same Bio ID (zero duplicates)
- * 5. Never exposes OS/filesystem paths in HTTP responses
- * 6. HTTP upload route works via Node.js HTTP server (`handleEmployeePhotoUploadRequest`)
- * 7. `employeeService.updateEmployee` persists `photo` cleanly without affecting existing data
+ * 2. Converts JPG, PNG (with transparency -> white background), WebP, GIF, AVIF to JPEG (`{BioID}.jpg`) via sharp
+ * 3. Overwrites `{BioID}.jpg` cleanly and removes any legacy non-.jpg files for that Bio ID
+ * 4. Sanitizes Bio IDs and blocks path traversal tokens (`..`, `/`, `\`, null bytes)
+ * 5. Rejects SVG, HTML/disguised scripts, corrupted payloads, and >5 MB uploads
+ * 6. HTTP POST /api/employee-photos converts to JPG, returns `/employee-photos/{BioID}.jpg` + `image/jpeg`, and never leaks OS paths
+ * 7. `employeeService.updateEmployee` & `buildEmployeePhotoCandidates` resolve to `/employee-photos/{BioID}.jpg`
  *
  * Run: node scripts/test-employee-photo-upload.mjs
  */
@@ -22,20 +22,67 @@ import { createRequire } from 'node:module'
 import { createServer as createViteServer } from 'vite'
 
 const require = createRequire(import.meta.url)
+const sharp = require('sharp')
 const photoStorage = require('../server/photoStorage.cjs')
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dmbbhr-photo-test-'))
 
-// Minimal valid magic-byte image buffers
-const VALID_JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01])
-const VALID_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d])
-const VALID_WEBP = Buffer.concat([
-  Buffer.from('RIFF', 'ascii'),
-  Buffer.from([0x24, 0x00, 0x00, 0x00]),
-  Buffer.from('WEBP', 'ascii'),
-  Buffer.from('VP8 ', 'ascii')
-])
+// Generate real test images via sharp
+// 1) Transparent 16x16 PNG: transparent outer pixels (alpha=0), solid blue center pixel
+async function makeTransparentPngBuffer() {
+  const width = 16
+  const height = 16
+  const raw = Buffer.alloc(width * height * 4, 0) // all RGBA = 0,0,0,0 (fully transparent)
+  // Paint center 4x4 square solid blue (0, 102, 204, 255)
+  for (let y = 6; y < 10; y++) {
+    for (let x = 6; x < 10; x++) {
+      const idx = (y * width + x) * 4
+      raw[idx] = 0
+      raw[idx + 1] = 102
+      raw[idx + 2] = 204
+      raw[idx + 3] = 255
+    }
+  }
+  return await sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer()
+}
+
+// 2) Transparent 16x16 WebP: transparent outer pixels, solid green center
+async function makeTransparentWebpBuffer() {
+  const width = 16
+  const height = 16
+  const raw = Buffer.alloc(width * height * 4, 0)
+  for (let y = 6; y < 10; y++) {
+    for (let x = 6; x < 10; x++) {
+      const idx = (y * width + x) * 4
+      raw[idx] = 34
+      raw[idx + 1] = 197
+      raw[idx + 2] = 94
+      raw[idx + 3] = 255
+    }
+  }
+  return await sharp(raw, { raw: { width, height, channels: 4 } }).webp({ lossless: true }).toBuffer()
+}
+
+// 3) Standard 16x16 JPEG
+async function makeJpgBuffer() {
+  return await sharp({
+    create: { width: 16, height: 16, channels: 3, background: { r: 220, g: 38, b: 38 } }
+  })
+    .jpeg()
+    .toBuffer()
+}
+
+// 4) GIF 16x16
+async function makeGifBuffer() {
+  return await sharp({
+    create: { width: 16, height: 16, channels: 4, background: { r: 10, g: 20, b: 30, alpha: 0 } }
+  })
+    .gif()
+    .toBuffer()
+}
+
 const FAKE_HTML_DISGUISED = Buffer.from('<html><script>alert(1)</script></html>', 'utf8')
+const SVG_WITH_SCRIPT = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'utf8')
 
 let passed = 0
 const ok = (msg) => {
@@ -57,50 +104,81 @@ let httpServer = null
 let viteServer = null
 
 try {
-  // 1. Directory auto-creation + JPG save using Bio ID filename
+  const validPng = await makeTransparentPngBuffer()
+  const validWebp = await makeTransparentWebpBuffer()
+  const validJpg = await makeJpgBuffer()
+  const validGif = await makeGifBuffer()
+
+  // 1. Directory auto-creation + transparent PNG -> JPG with white background
   const photosDir = path.join(tempRoot, 'public', 'employee-photos')
   assert.strictEqual(fs.existsSync(photosDir), false, 'employee-photos dir should not exist before first upload')
 
-  const resJpg = photoStorage.saveEmployeePhoto({
+  // Seed a legacy non-.jpg file manually after creating dir? First check auto-creation without dir:
+  const resPng = await photoStorage.saveEmployeePhoto({
     projectRoot: tempRoot,
     bioId: '25065',
-    buffer: VALID_JPG,
-    mimeType: 'image/jpeg',
-    fileName: 'reynald_headshot.jpeg'
+    buffer: validPng,
+    mimeType: 'image/png',
+    fileName: 'transparent_headshot.png'
   })
   assert.strictEqual(fs.existsSync(photosDir), true, 'employee-photos dir must be created automatically')
-  assert.strictEqual(resJpg.filename, '25065.jpg')
-  assert.strictEqual(resJpg.photoPath, '/employee-photos/25065.jpg')
-  assert.strictEqual(fs.existsSync(path.join(photosDir, '25065.jpg')), true)
-  ok('Test 1: Auto-created public/employee-photos/ and saved 25065.jpg')
+  assert.strictEqual(resPng.filename, '25065.jpg')
+  assert.strictEqual(resPng.photoPath, '/employee-photos/25065.jpg')
+  assert.strictEqual(resPng.mimeType, 'image/jpeg')
 
-  // 2. Replace existing JPG with PNG -> overwrites cleanly with zero duplicate files for 25065
-  const resPng = photoStorage.saveEmployeePhoto({
+  const savedJpgPath = path.join(photosDir, '25065.jpg')
+  assert.strictEqual(fs.existsSync(savedJpgPath), true)
+  const savedBytesFromPng = fs.readFileSync(savedJpgPath)
+  assert.strictEqual(photoStorage.isValidJpegBuffer(savedBytesFromPng), true, 'Saved file must have JPEG magic bytes')
+  const pngConvMeta = await sharp(savedBytesFromPng).metadata()
+  assert.strictEqual(pngConvMeta.format, 'jpeg')
+  assert.strictEqual(pngConvMeta.hasAlpha, false)
+
+  // Verify corner pixel (formerly alpha=0 transparent) is now solid white (#ffffff)
+  const { data: rgbPixels } = await sharp(savedBytesFromPng).raw().toBuffer({ resolveWithObject: true })
+  assert.ok(rgbPixels[0] >= 250 && rgbPixels[1] >= 250 && rgbPixels[2] >= 250, `Expected white background at transparent pixel, got rgb(${rgbPixels[0]},${rgbPixels[1]},${rgbPixels[2]})`)
+  ok('Test 1: Transparent PNG converted to 25065.jpg with solid white background & auto-created directory')
+
+  // 2. Replace with transparent WebP -> overwrites 25065.jpg cleanly (and removes any legacy .webp/.png)
+  fs.writeFileSync(path.join(photosDir, '25065.webp'), validWebp) // simulate pre-existing legacy file
+  const resWebp = await photoStorage.saveEmployeePhoto({
     projectRoot: tempRoot,
     bioId: '25065',
-    buffer: VALID_PNG,
-    mimeType: 'image/png',
-    fileName: 'portrait.png'
-  })
-  assert.strictEqual(resPng.filename, '25065.png')
-  assert.strictEqual(resPng.photoPath, '/employee-photos/25065.png')
-  assert.strictEqual(fs.existsSync(path.join(photosDir, '25065.png')), true)
-  assert.strictEqual(fs.existsSync(path.join(photosDir, '25065.jpg')), false, 'Old 25065.jpg must be removed on replacement')
-  ok('Test 2: Replacing 25065.jpg with 25065.png removed previous extension without duplicates')
-
-  // 3. Replace with WebP
-  const resWebp = photoStorage.saveEmployeePhoto({
-    projectRoot: tempRoot,
-    bioId: '25065',
-    buffer: VALID_WEBP,
+    buffer: validWebp,
     mimeType: 'image/webp',
     fileName: 'avatar.webp'
   })
-  assert.strictEqual(resWebp.filename, '25065.webp')
-  assert.strictEqual(resWebp.photoPath, '/employee-photos/25065.webp')
-  assert.strictEqual(fs.existsSync(path.join(photosDir, '25065.png')), false, 'Old 25065.png must be removed when replaced by WebP')
-  assert.strictEqual(fs.existsSync(path.join(photosDir, '25065.webp')), true)
-  ok('Test 3: WebP upload verified and older extension cleaned up')
+  assert.strictEqual(resWebp.filename, '25065.jpg')
+  assert.strictEqual(resWebp.photoPath, '/employee-photos/25065.jpg')
+  assert.strictEqual(resWebp.mimeType, 'image/jpeg')
+  assert.deepStrictEqual(fs.readdirSync(photosDir), ['25065.jpg'], 'Only 25065.jpg must exist (zero duplicate formats)')
+  const webpConvMeta = await sharp(fs.readFileSync(savedJpgPath)).metadata()
+  assert.strictEqual(webpConvMeta.format, 'jpeg')
+  ok('Test 2: Transparent WebP converted to 25065.jpg, overwrote previous JPG, and removed legacy extensions')
+
+  // 3. GIF & JPEG formats also save as {BioID}.jpg cleanly
+  const resGif = await photoStorage.saveEmployeePhoto({
+    projectRoot: tempRoot,
+    bioId: '25065',
+    buffer: validGif,
+    mimeType: 'image/gif',
+    fileName: 'animated_avatar.gif'
+  })
+  assert.strictEqual(resGif.filename, '25065.jpg')
+  assert.strictEqual(resGif.mimeType, 'image/jpeg')
+  assert.strictEqual((await sharp(fs.readFileSync(savedJpgPath)).metadata()).format, 'jpeg')
+
+  const resJpg = await photoStorage.saveEmployeePhoto({
+    projectRoot: tempRoot,
+    bioId: '25065',
+    buffer: validJpg,
+    mimeType: 'image/jpeg',
+    fileName: 'photo.jpeg'
+  })
+  assert.strictEqual(resJpg.filename, '25065.jpg')
+  assert.strictEqual(resJpg.photoPath, '/employee-photos/25065.jpg')
+  assert.strictEqual((await sharp(fs.readFileSync(savedJpgPath)).metadata()).format, 'jpeg')
+  ok('Test 3: GIF and JPEG inputs both convert and save strictly as 25065.jpg')
 
   // 4. Bio ID sanitization & path traversal protection
   for (const badId of ['', '   ', '../secret', '25065/evil', '25065\\evil', 'a..b', 'id\0evil', 'bad id!@#']) {
@@ -114,8 +192,8 @@ try {
   assert.strictEqual(photoStorage.sanitizeBioId(' 50305 '), '50305')
   ok('Test 4: Bio ID sanitization rejects path traversal and invalid characters')
 
-  // 5. File type & size validations
-  assert.throws(
+  // 5. Reject disguised HTML, SVG scripts, and > 5 MB payloads
+  await assert.rejects(
     () =>
       photoStorage.saveEmployeePhoto({
         projectRoot: tempRoot,
@@ -126,22 +204,34 @@ try {
       }),
     (err) => err instanceof photoStorage.PhotoValidationError && err.statusCode === 415
   )
-  assert.throws(
+  await assert.rejects(
     () =>
       photoStorage.saveEmployeePhoto({
         projectRoot: tempRoot,
         bioId: '25065',
-        buffer: VALID_JPG,
+        buffer: SVG_WITH_SCRIPT,
         mimeType: 'image/svg+xml',
         fileName: 'bad.svg'
       }),
     (err) => err instanceof photoStorage.PhotoValidationError && err.statusCode === 415
   )
+  await assert.rejects(
+    () =>
+      photoStorage.saveEmployeePhoto({
+        projectRoot: tempRoot,
+        bioId: '25065',
+        buffer: SVG_WITH_SCRIPT,
+        mimeType: 'image/png',
+        fileName: 'disguised_svg.png'
+      }),
+    (err) => err instanceof photoStorage.PhotoValidationError && err.statusCode === 415
+  )
+
   const oversized = Buffer.alloc(photoStorage.MAX_PHOTO_BYTES + 1, 0xff)
   oversized[0] = 0xff
   oversized[1] = 0xd8
   oversized[2] = 0xff
-  assert.throws(
+  await assert.rejects(
     () =>
       photoStorage.saveEmployeePhoto({
         projectRoot: tempRoot,
@@ -152,9 +242,9 @@ try {
       }),
     (err) => err instanceof photoStorage.PhotoValidationError && err.statusCode === 413
   )
-  ok('Test 5: Magic-byte verification, extension/MIME checks, and 5 MB limit enforced')
+  ok('Test 5: Rejects disguised HTML/SVG payloads and enforces 5 MB size limit')
 
-  // 6. Node.js HTTP server route test (ensures no filesystem paths leaked in JSON)
+  // 6. Node.js HTTP server route test (PNG upload -> saved as /employee-photos/50305.jpg)
   httpServer = http.createServer((req, res) => {
     if (req.url === '/api/employee-photos' && req.method === 'POST') {
       photoStorage.handleEmployeePhotoUploadRequest(req, res, tempRoot)
@@ -169,15 +259,18 @@ try {
 
   const httpOk = await runHttpUpload(baseUrl, {
     bioId: '50305',
-    fileName: '50305.jpg',
-    mimeType: 'image/jpeg',
-    dataBase64: `data:image/jpeg;base64,${VALID_JPG.toString('base64')}`
+    fileName: 'headshot.png',
+    mimeType: 'image/png',
+    dataBase64: `data:image/png;base64,${validPng.toString('base64')}`
   })
   assert.strictEqual(httpOk.status, 200)
   assert.strictEqual(httpOk.json.photoPath, '/employee-photos/50305.jpg')
   assert.strictEqual(httpOk.json.filename, '50305.jpg')
+  assert.strictEqual(httpOk.json.mimeType, 'image/jpeg')
   assert.strictEqual(JSON.stringify(httpOk.json).includes(tempRoot), false, 'Response must never expose OS filesystem paths')
-  assert.strictEqual(fs.existsSync(path.join(photosDir, '50305.jpg')), true)
+  const saved50305 = path.join(photosDir, '50305.jpg')
+  assert.strictEqual(fs.existsSync(saved50305), true)
+  assert.strictEqual((await sharp(fs.readFileSync(saved50305)).metadata()).format, 'jpeg')
 
   const httpBadType = await runHttpUpload(baseUrl, {
     bioId: '50305',
@@ -186,9 +279,9 @@ try {
     dataBase64: FAKE_HTML_DISGUISED.toString('base64')
   })
   assert.strictEqual(httpBadType.status, 415)
-  ok('Test 6: HTTP POST /api/employee-photos uploads cleanly and never exposes filesystem paths')
+  ok('Test 6: HTTP POST /api/employee-photos converts PNG to 50305.jpg and never exposes filesystem paths')
 
-  // 7. Verify employeeService.updateEmployee persists photo without altering unrelated employee fields
+  // 7. Verify employeeService.updateEmployee & buildEmployeePhotoCandidates follow `/employee-photos/{BioID}.jpg`
   const localStore = new Map()
   const sessionStore = new Map()
   if (typeof globalThis.localStorage === 'undefined') {
@@ -347,26 +440,23 @@ try {
   await employeeRepository.linkSecondaryBioId('25065', '50305', { confirmedByAdmin: true })
 
   const afterPhotoUpdate = await employeeService.updateEmployee('25065', {
-    photo: '/employee-photos/25065.png'
+    photo: '/employee-photos/25065.jpg'
   })
-  assert.strictEqual(afterPhotoUpdate.photo, '/employee-photos/25065.png')
+  assert.strictEqual(afterPhotoUpdate.photo, '/employee-photos/25065.jpg')
   assert.strictEqual(afterPhotoUpdate.biometric_user_id, '25065')
   assert.deepStrictEqual(afterPhotoUpdate.linked_bio_ids, ['25065', '50305'], 'Linked Bio IDs must remain untouched')
 
-  // Updating another profile field without passing photo preserves existing photo
   const afterNameUpdate = await employeeService.updateEmployee('25065', {
     preferred_name: 'Marc'
   })
-  assert.strictEqual(afterNameUpdate.photo, '/employee-photos/25065.png', 'Existing photo must be preserved on unrelated updates')
+  assert.strictEqual(afterNameUpdate.photo, '/employee-photos/25065.jpg', 'Existing photo must be preserved on unrelated updates')
 
   const candidates = buildEmployeePhotoCandidates(afterNameUpdate)
-  assert.strictEqual(candidates[0], '/employee-photos/25065.png')
-  assert.ok(candidates.includes('/employee-photos/25065.jpg'))
-  assert.ok(candidates.includes('/employee-photos/25065.webp'))
-  ok('Test 7: employeeService.updateEmployee persists & preserves photo path without altering Bio IDs or profile fields')
+  assert.deepStrictEqual(candidates, ['/employee-photos/25065.jpg'])
+  ok('Test 7: employeeService.updateEmployee & buildEmployeePhotoCandidates resolve to /employee-photos/{BioID}.jpg')
 
   console.log('\n======================================================================')
-  console.log(`ALL ${passed} EMPLOYEE PHOTO UPLOAD TESTS PASSED SUCCESSFULLY!`)
+  console.log(`ALL ${passed} JPG-ONLY EMPLOYEE PHOTO CONVERSION TESTS PASSED!`)
   console.log('======================================================================')
 } finally {
   if (viteServer) await viteServer.close()

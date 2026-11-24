@@ -2,21 +2,43 @@ import { ref } from 'vue'
 import type { Employee } from '@/types'
 
 export const MAX_EMPLOYEE_PHOTO_BYTES = 5 * 1024 * 1024 // 5 MB
-export const ALLOWED_PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'] as const
-export const ALLOWED_PHOTO_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] as const
-export const EMPLOYEE_PHOTO_ACCEPT = '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp'
+export const ALLOWED_PHOTO_EXTENSIONS = [
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'avif',
+  'heic',
+  'heif',
+  'tif',
+  'tiff'
+] as const
+export const ALLOWED_PHOTO_MIME_TYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/heic',
+  'image/heif',
+  'image/tiff'
+] as const
+export const EMPLOYEE_PHOTO_ACCEPT =
+  '.jpg,.jpeg,.png,.webp,.gif,.avif,.heic,.heif,.tif,.tiff,image/jpeg,image/png,image/webp,image/gif,image/avif,image/tiff'
 
 export interface UploadedEmployeePhotoResult {
   status: 'ok'
   bioId: string
   filename: string
   photoPath: string
-  mimeType: string
+  mimeType: 'image/jpeg'
   size: number
 }
 
-// In-memory cache-busting versions per Bio ID so overwritten files (e.g. /employee-photos/25065.jpg)
-// refresh immediately in the browser while keeping clean public URLs in IndexedDB.
+// In-memory cache-busting versions per Bio ID so overwritten /employee-photos/{BioID}.jpg
+// refreshes immediately in the browser while keeping clean public URLs in IndexedDB.
 export const photoCacheVersions = ref<Record<string, number>>({})
 
 export function normalizePhotoBioIdKey(bioId?: string | null): string {
@@ -24,6 +46,11 @@ export function normalizePhotoBioIdKey(bioId?: string | null): string {
     .trim()
     .replace(/^emp[-_]/i, '')
     .trim()
+}
+
+export function getCanonicalEmployeePhotoPath(bioId?: string | null): string | null {
+  const cleanId = normalizePhotoBioIdKey(bioId)
+  return cleanId ? `/employee-photos/${cleanId}.jpg` : null
 }
 
 export function bumpEmployeePhotoVersion(bioId?: string | null): void {
@@ -62,13 +89,13 @@ export function validateEmployeePhotoFile(file: File): string | null {
   const mimeAllowed = mime ? ALLOWED_PHOTO_MIME_TYPES.includes(mime as any) : false
 
   if (!extAllowed && !mimeAllowed) {
-    return 'Unsupported file type. Please choose a JPG, JPEG, PNG, or WebP image.'
+    return 'Unsupported file type. Please choose a JPG, PNG, WebP, GIF, or AVIF image.'
   }
   if (mime && !mimeAllowed) {
-    return 'Unsupported file type. Please choose a JPG, JPEG, PNG, or WebP image.'
+    return 'Unsupported file type. Please choose a JPG, PNG, WebP, GIF, or AVIF image.'
   }
   if (ext && !extAllowed) {
-    return 'Unsupported file extension. Allowed formats: JPG, JPEG, PNG, WebP.'
+    return 'Unsupported file extension. Allowed formats: JPG, JPEG, PNG, WebP, GIF, AVIF.'
   }
 
   return null
@@ -113,7 +140,7 @@ function getBiometricAgentPhotoEndpoint(): string | null {
 
 /**
  * Uploads an employee photo to the Node.js biometric agent (with same-origin Vite Node.js fallback),
- * saving it into `public/employee-photos/<sanitizedBioId>.<ext>`.
+ * which converts any supported image format to JPG and saves it as `public/employee-photos/{BioID}.jpg`.
  */
 export async function uploadEmployeePhoto(bioId: string, file: File): Promise<UploadedEmployeePhotoResult> {
   const validationError = validateEmployeePhotoFile(file)
@@ -189,27 +216,19 @@ export async function uploadEmployeePhoto(bioId: string, file: File): Promise<Up
 }
 
 /**
- * Builds an ordered list of candidate public photo URLs for an employee.
+ * Returns the canonical public `.jpg` photo URL (`/employee-photos/{BioID}.jpg`) for an employee.
  */
 export function buildEmployeePhotoCandidates(emp?: Employee | null): string[] {
   if (!emp) return []
-  const bioId = normalizePhotoBioIdKey(emp.biometric_user_id || emp.employee_number)
-  if (!bioId) return []
+  const canonicalUrl = getCanonicalEmployeePhotoPath(emp.biometric_user_id || emp.employee_number)
+  if (!canonicalUrl) return []
 
-  const candidates: string[] = []
-  const addUnique = (url?: string | null) => {
-    const clean = String(url || '').trim()
-    if (!clean || candidates.includes(clean)) return
-    candidates.push(clean)
+  if (emp.photo && typeof emp.photo === 'string') {
+    const trimmed = emp.photo.trim()
+    if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+      return [trimmed, canonicalUrl]
+    }
   }
 
-  if (emp.photo && typeof emp.photo === 'string' && emp.photo.trim()) {
-    addUnique(emp.photo.trim())
-  }
-  addUnique(`/employee-photos/${bioId}.jpg`)
-  addUnique(`/employee-photos/${bioId}.png`)
-  addUnique(`/employee-photos/${bioId}.webp`)
-  addUnique(`/employee-photos/${bioId}.jpeg`)
-
-  return candidates
+  return [canonicalUrl]
 }

@@ -2306,14 +2306,14 @@ onUnmounted(() => {
                         <div class="font-medium text-foreground truncate">
                           <span v-if="pendingPhotoFile">Selected: {{ pendingPhotoFile.name }}</span>
                           <span v-else-if="activeDetailsPhotoUrl" class="font-mono text-[11px]">
-                            {{ selectedEmployee.photo || `/employee-photos/${formBioId}.jpg` }}
+                            {{ `/employee-photos/${normalizePhotoBioIdKey(formBioId) || formBioId}.jpg` }}
                           </span>
                           <span v-else class="text-muted-foreground">
                             No photo uploaded yet
                           </span>
                         </div>
                         <p class="text-[11px] text-muted-foreground">
-                          Accepted formats: JPG, JPEG, PNG, or WebP (max 5 MB). Saved to <span class="font-mono">/employee-photos/</span> using Bio ID <span class="font-mono font-semibold text-foreground">{{ formBioId }}</span>.
+                          Accepted formats: JPG, PNG, WebP, GIF, or AVIF (max 5 MB). Converted to JPG and saved to <span class="font-mono">/employee-photos/{{ normalizePhotoBioIdKey(formBioId) || formBioId }}.jpg</span>.
                         </p>
                       </div>
 
