@@ -38,7 +38,8 @@ import {
   Link2,
   ArrowRight,
   ChevronsUpDown,
-  Check
+  Check,
+  Camera
 } from '@lucide/vue'
 import * as XLSX from 'xlsx'
 import {
@@ -52,6 +53,14 @@ import {
   type EmployeeConsolidationAudit
 } from '@/services/employees'
 import { authService } from '@/services/auth'
+import {
+  EMPLOYEE_PHOTO_ACCEPT,
+  validateEmployeePhotoFile,
+  uploadEmployeePhoto,
+  buildEmployeePhotoCandidates,
+  appendPhotoCacheVersion,
+  normalizePhotoBioIdKey
+} from '@/services/employeePhotoService'
 import {
   getEmployeeBiometricEntries,
   getEmployeePrimaryBioId,
@@ -489,45 +498,107 @@ async function confirmRemoveBioId(targetBioId: string) {
   }
 }
 
-// Profile Photo Resolution with graceful error fallback to UserRound icon
-const failedImageBioIds = ref<Set<string>>(new Set())
-const photoAttemptPng = ref<Set<string>>(new Set())
+// Profile Photo Resolution with multi-extension fallback (.jpg -> .png -> .webp -> .jpeg) and UserRound placeholder
+const photoCandidateIndex = ref<Record<string, number>>({})
+
+function resetEmployeePhotoErrorState(bioId?: string | null) {
+  const cleanId = normalizePhotoBioIdKey(bioId)
+  if (!cleanId) return
+  if (cleanId in photoCandidateIndex.value) {
+    const next = { ...photoCandidateIndex.value }
+    delete next[cleanId]
+    photoCandidateIndex.value = next
+  }
+}
 
 function handleImageError(bioId?: string) {
-  if (!bioId) return
-  const cleanId = String(bioId).trim()
-  if (!photoAttemptPng.value.has(cleanId)) {
-    // Try .png format for this employee photo before falling back
-    const nextPng = new Set(photoAttemptPng.value)
-    nextPng.add(cleanId)
-    photoAttemptPng.value = nextPng
-  } else {
-    // Both .jpg and .png (or custom photo) failed: permanently switch to UserRound icon fallback
-    const nextFailed = new Set(failedImageBioIds.value)
-    nextFailed.add(cleanId)
-    failedImageBioIds.value = nextFailed
+  const cleanId = normalizePhotoBioIdKey(bioId)
+  if (!cleanId) return
+  const currentIdx = photoCandidateIndex.value[cleanId] ?? 0
+  photoCandidateIndex.value = {
+    ...photoCandidateIndex.value,
+    [cleanId]: currentIdx + 1
   }
 }
 
 function getEmployeePhotoUrl(emp?: Employee | null): string | null {
   if (!emp) return null
-  const bioId = emp.biometric_user_id || emp.employee_number
-  if (!bioId) return null
-  const cleanId = String(bioId).trim()
-  if (failedImageBioIds.value.has(cleanId)) {
+  const cleanId = normalizePhotoBioIdKey(emp.biometric_user_id || emp.employee_number)
+  if (!cleanId) return null
+  const candidates = buildEmployeePhotoCandidates(emp)
+  const idx = photoCandidateIndex.value[cleanId] ?? 0
+  if (idx >= candidates.length) {
     return null
   }
-  if (emp.photo && typeof emp.photo === 'string' && emp.photo.trim()) {
-    if (photoAttemptPng.value.has(cleanId)) {
-      // Custom photo URL failed
-      return null
+  return appendPhotoCacheVersion(candidates[idx], cleanId)
+}
+
+// Edit Modal Employee Photo Upload & Preview state
+const photoFileInputRef = ref<HTMLInputElement | null>(null)
+const pendingPhotoFile = ref<File | null>(null)
+const photoPreviewUrl = ref('')
+const photoUploadError = ref('')
+const photoUploading = ref(false)
+
+const activeDetailsPhotoUrl = computed(() => {
+  if (photoPreviewUrl.value) return photoPreviewUrl.value
+  return getEmployeePhotoUrl(selectedEmployee.value)
+})
+
+function clearPendingPhotoSelection() {
+  if (photoPreviewUrl.value && photoPreviewUrl.value.startsWith('blob:')) {
+    try {
+      URL.revokeObjectURL(photoPreviewUrl.value)
+    } catch {
+      // ignore revoke failures
     }
-    return emp.photo.trim()
   }
-  if (photoAttemptPng.value.has(cleanId)) {
-    return `/employee-photos/${cleanId}.png`
+  pendingPhotoFile.value = null
+  photoPreviewUrl.value = ''
+  photoUploadError.value = ''
+  if (photoFileInputRef.value) {
+    photoFileInputRef.value.value = ''
   }
-  return `/employee-photos/${cleanId}.jpg`
+}
+
+function triggerPhotoPicker() {
+  photoUploadError.value = ''
+  if (photoFileInputRef.value) {
+    photoFileInputRef.value.value = ''
+    photoFileInputRef.value.click()
+  }
+}
+
+function handlePhotoFileChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  const errMsg = validateEmployeePhotoFile(file)
+  if (errMsg) {
+    photoUploadError.value = errMsg
+    pendingPhotoFile.value = null
+    if (photoPreviewUrl.value && photoPreviewUrl.value.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(photoPreviewUrl.value)
+      } catch {}
+    }
+    photoPreviewUrl.value = ''
+    return
+  }
+
+  clearPendingPhotoSelection()
+  pendingPhotoFile.value = file
+  photoPreviewUrl.value = URL.createObjectURL(file)
+}
+
+function onDetailsPhotoError() {
+  if (photoPreviewUrl.value) {
+    photoUploadError.value = 'Unable to preview the selected image file.'
+    clearPendingPhotoSelection()
+    return
+  }
+  handleImageError(selectedEmployee.value?.biometric_user_id)
 }
 
 // Complete Payroll Profile Form fields
@@ -917,6 +988,7 @@ function openProfile(emp: Employee, tab: 'overview' | 'edit' = 'overview', initi
 
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
+  clearPendingPhotoSelection()
   resetBioIdManagementState()
   showProfileModal.value = true
   loadConsolidationAuditsForEmployee(emp.biometric_user_id)
@@ -930,6 +1002,7 @@ function closeProfileModal() {
   showProfileModal.value = false
   profileSuccessMsg.value = ''
   profileErrorMsg.value = ''
+  clearPendingPhotoSelection()
   resetBioIdManagementState()
   resetEmployeeForm()
   if (route.query.returnTo === 'payroll-records') {
@@ -949,8 +1022,26 @@ async function saveProfile() {
   profileSaving.value = true
   profileErrorMsg.value = ''
   profileSuccessMsg.value = ''
+  photoUploadError.value = ''
 
   try {
+    let uploadedPhotoPath: string | undefined
+    if (pendingPhotoFile.value) {
+      photoUploading.value = true
+      try {
+        const uploadResult = await uploadEmployeePhoto(formBioId.value, pendingPhotoFile.value)
+        uploadedPhotoPath = uploadResult.photoPath
+        resetEmployeePhotoErrorState(formBioId.value)
+        resetEmployeePhotoErrorState(uploadResult.bioId)
+      } catch (uploadErr: any) {
+        photoUploadError.value = uploadErr?.message || 'Failed to upload employee photo.'
+        activeEditSection.value = 'people'
+        throw uploadErr
+      } finally {
+        photoUploading.value = false
+      }
+    }
+
     const cleanGender = formGender.value && formGender.value !== 'not_specified' && formGender.value !== 'none'
       ? formGender.value.trim()
       : undefined
@@ -962,6 +1053,7 @@ async function saveProfile() {
     const updated = await employeeService.updateEmployee(formBioId.value, {
       full_name: formName.value.trim(),
       preferred_name: formPreferredName.value.trim() || undefined,
+      ...(uploadedPhotoPath ? { photo: uploadedPhotoPath } : {}),
       date_of_birth: formDateOfBirth.value.trim() || undefined,
       gender: (cleanGender as any) || undefined,
       civil_status: (cleanCivilStatus as any) || undefined,
@@ -1002,6 +1094,11 @@ async function saveProfile() {
       philhealth_deduction: parseOptionalNumber(formPhilhealthDeduction.value),
       pagibig_deduction: parseOptionalNumber(formPagibigDeduction.value)
     })
+
+    if (uploadedPhotoPath) {
+      clearPendingPhotoSelection()
+      resetEmployeePhotoErrorState(formBioId.value)
+    }
 
     selectedEmployee.value = updated
     profileSuccessMsg.value = `Employee profile for Bio ID ${formBioId.value} (${updated.full_name}) saved successfully.`
@@ -1228,6 +1325,7 @@ watch(
 )
 
 onUnmounted(() => {
+  clearPendingPhotoSelection()
   if (reloadTimer) {
     clearTimeout(reloadTimer)
     reloadTimer = null
@@ -1503,6 +1601,7 @@ onUnmounted(() => {
                   <Avatar class="size-9 rounded-full border bg-muted shrink-0 overflow-hidden">
                     <AvatarImage
                       v-if="getEmployeePhotoUrl(emp)"
+                      :key="getEmployeePhotoUrl(emp)!"
                       :src="getEmployeePhotoUrl(emp)!"
                       :alt="emp.full_name"
                       class="object-cover size-full"
@@ -1618,6 +1717,7 @@ onUnmounted(() => {
             <Avatar class="size-12 rounded-xl border bg-muted shadow-sm shrink-0 overflow-hidden">
               <AvatarImage
                 v-if="getEmployeePhotoUrl(selectedEmployee)"
+                :key="getEmployeePhotoUrl(selectedEmployee)!"
                 :src="getEmployeePhotoUrl(selectedEmployee)!"
                 :alt="selectedEmployee.full_name"
                 class="object-cover size-full rounded-xl"
@@ -2164,6 +2264,100 @@ onUnmounted(() => {
                   <div class="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-muted font-mono text-xs font-bold text-foreground">
                     <span>{{ formBioId }}</span>
                     <span class="text-muted-foreground font-normal text-[11px]">— Matches Biometric Device User ID</span>
+                  </div>
+                </div>
+
+                <!-- Employee Photo Upload & Preview -->
+                <div class="rounded-xl border p-3.5 space-y-3 bg-card">
+                  <div class="flex items-center justify-between pb-1 border-b">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                      <Camera class="size-3.5 text-primary" />
+                      <span>Employee Photo</span>
+                    </div>
+                    <Badge
+                      v-if="photoPreviewUrl"
+                      variant="secondary"
+                      class="text-[10px] font-mono"
+                    >
+                      Preview (Unsaved)
+                    </Badge>
+                    <span v-else class="text-[10px] text-muted-foreground">
+                      Saved as Bio ID ({{ formBioId }})
+                    </span>
+                  </div>
+
+                  <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <Avatar class="size-20 rounded-xl border bg-muted shadow-xs shrink-0 overflow-hidden">
+                      <AvatarImage
+                        v-if="activeDetailsPhotoUrl"
+                        :key="activeDetailsPhotoUrl"
+                        :src="activeDetailsPhotoUrl"
+                        :alt="formName || selectedEmployee.full_name"
+                        class="object-cover size-full rounded-xl"
+                        @error="onDetailsPhotoError"
+                      />
+                      <AvatarFallback class="bg-primary/10 text-primary flex items-center justify-center size-full rounded-xl">
+                        <UserRound class="size-8 text-primary/70" />
+                      </AvatarFallback>
+                    </Avatar>
+
+                    <div class="flex-1 min-w-0 space-y-2">
+                      <div class="space-y-0.5 text-xs">
+                        <div class="font-medium text-foreground truncate">
+                          <span v-if="pendingPhotoFile">Selected: {{ pendingPhotoFile.name }}</span>
+                          <span v-else-if="activeDetailsPhotoUrl" class="font-mono text-[11px]">
+                            {{ selectedEmployee.photo || `/employee-photos/${formBioId}.jpg` }}
+                          </span>
+                          <span v-else class="text-muted-foreground">
+                            No photo uploaded yet
+                          </span>
+                        </div>
+                        <p class="text-[11px] text-muted-foreground">
+                          Accepted formats: JPG, JPEG, PNG, or WebP (max 5 MB). Saved to <span class="font-mono">/employee-photos/</span> using Bio ID <span class="font-mono font-semibold text-foreground">{{ formBioId }}</span>.
+                        </p>
+                      </div>
+
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <input
+                          ref="photoFileInputRef"
+                          type="file"
+                          :accept="EMPLOYEE_PHOTO_ACCEPT"
+                          class="hidden"
+                          @change="handlePhotoFileChange"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          class="h-7 text-xs gap-1.5 cursor-pointer"
+                          :disabled="profileSaving || photoUploading"
+                          @click="triggerPhotoPicker"
+                        >
+                          <Upload class="size-3.5 text-primary" />
+                          <span>{{ activeDetailsPhotoUrl ? 'Replace Photo' : 'Upload Photo' }}</span>
+                        </Button>
+                        <Button
+                          v-if="pendingPhotoFile"
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          class="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                          :disabled="profileSaving || photoUploading"
+                          @click="clearPendingPhotoSelection"
+                        >
+                          <X class="size-3.5" />
+                          <span>Discard Selection</span>
+                        </Button>
+                      </div>
+
+                      <div
+                        v-if="photoUploadError"
+                        class="text-[11px] text-destructive flex items-center gap-1.5"
+                      >
+                        <AlertCircle class="size-3.5 shrink-0" />
+                        <span>{{ photoUploadError }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 

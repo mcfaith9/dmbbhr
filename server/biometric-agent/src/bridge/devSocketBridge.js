@@ -6,7 +6,10 @@
  */
 
 const http = require('http');
+const path = require('path');
 const { loadLocalStore } = require('../device/attendanceSync');
+const { handleEmployeePhotoUploadRequest } = require('../../../photoStorage.cjs');
+const PROJECT_ROOT = path.resolve(__dirname, '../../../..');
 
 class DevSocketBridge {
   constructor(port = 5174) {
@@ -213,6 +216,12 @@ class DevSocketBridge {
             res.end(JSON.stringify({ status: 'error', message: err.message }));
           }
         });
+        return;
+      }
+
+      // POST /api/employee-photos: Upload & save employee profile photo into public/employee-photos/
+      if ((req.url === '/api/employee-photos' || req.url.startsWith('/api/employee-photos?')) && req.method === 'POST') {
+        handleEmployeePhotoUploadRequest(req, res, PROJECT_ROOT);
         return;
       }
 

@@ -182,9 +182,12 @@ export const employeeService = {
       'exclude_from_biometric' in updates ||
       'excludeFromBiometric' in updates
 
+    const hasPhotoField = 'photo' in updates
+
     return employeeRepository.updateEmployee(bioId, {
       fullName: updates.full_name ?? updates.fullName,
       preferredName: updates.preferred_name ?? updates.preferredName,
+      ...(hasPhotoField ? { photo: updates.photo ?? undefined } : {}),
       dateOfBirth: updates.date_of_birth ?? updates.dateOfBirth,
       gender: updates.gender,
       civilStatus: updates.civil_status ?? updates.civilStatus,
