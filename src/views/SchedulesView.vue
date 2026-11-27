@@ -34,13 +34,19 @@ import { employeeRepository } from '@/repositories/employeeRepository'
 import { db, type DailySummaryRecord, type HolidayRecord, type LeaveRecord } from '@/db'
 import type { WorkGroup } from '@/types'
 import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
-import { getManilaDateString } from '@/services/attendanceEngine'
+import { getManilaCurrentTime, getManilaDateString } from '@/services/attendanceEngine'
 import { liveAttendanceService } from '@/services/liveAttendance'
 import { employeeService } from '@/services/employees'
+import { holidayService } from '@/services/holidays/holidayService'
 import { collectEmployeeIdKeys, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
-import { isEmployeeOnRestOnDate } from '@/lib/onRest'
-import { getEffectiveStartDate, normalizeEmployeeDate } from '@/services/reportsService'
-import type { Employee } from '@/types'
+import {
+  deduplicateEmployees,
+  evaluateEmployeeEligibilityOnDate,
+  isAbsenceCutoffReached,
+  isValidAttendancePunchRecord,
+  normalizeBioIdKey,
+  type CanonicalEmployee
+} from '@/services/reportsService'
 
 const router = useRouter()
 
@@ -119,57 +125,89 @@ function getCalendarGridBounds(year: number, month: number): { startDate: string
   }
 }
 
-function buildEmployeeKeyMap(employees: Employee[]): Map<string, Employee> {
-  const empByKey = new Map<string, Employee>()
-  for (const emp of employees) {
-    if (emp.is_merged || emp.merged_into_bio_id) continue
-    for (const k of collectEmployeeIdKeys(emp)) {
-      if (!empByKey.has(k)) empByKey.set(k, emp)
+function buildApprovedLeavesMap(
+  leaves: LeaveRecord[]
+): Map<string, Array<{ startDate: string; endDate: string }>> {
+  const employeeLeavesMap = new Map<string, Array<{ startDate: string; endDate: string }>>()
+  for (const l of leaves) {
+    if (l.status !== 'Approved') continue
+    const keys = new Set<string>([
+      l.bioId,
+      normalizeBioIdKey(l.bioId),
+      ...Array.from(collectEmployeeIdKeys(l.bioId))
+    ].filter(Boolean))
+    for (const k of keys) {
+      if (!employeeLeavesMap.has(k)) {
+        employeeLeavesMap.set(k, [])
+      }
+      employeeLeavesMap.get(k)!.push({ startDate: l.startDate, endDate: l.endDate })
     }
   }
-  return empByKey
+  return employeeLeavesMap
+}
+
+function addIdToActivitySet(set: Set<string>, rawId?: string | null) {
+  if (!rawId) return
+  const trimmed = String(rawId).trim()
+  if (!trimmed) return
+  set.add(trimmed)
+  const norm = normalizeBioIdKey(trimmed)
+  if (norm) set.add(norm)
+  for (const k of collectEmployeeIdKeys(trimmed)) {
+    set.add(k)
+  }
 }
 
 function computeAbsentEmployeesForDate(params: {
   dateStr: string
-  isWeekend: boolean
-  hasHoliday: boolean
-  todayStr: string
-  employees: Employee[]
+  isSunday: boolean
+  isNonWorkingHoliday: boolean
+  manilaNow: { hour: number; minute: number; dateStr: string }
+  canonicalEmployees: CanonicalEmployee[]
+  employeeLeavesMap: Map<string, Array<{ startDate: string; endDate: string }>>
   wgMap: Map<string, WorkGroup>
-  presentBioKeys: Set<string>
-  onLeaveBioKeys: Set<string>
+  attendedKeys: Set<string>
 }): AbsentEmployeeEntry[] {
-  const { dateStr, isWeekend, hasHoliday, todayStr, employees, wgMap, presentBioKeys, onLeaveBioKeys } = params
-  if (isWeekend || hasHoliday || dateStr > todayStr) {
+  const {
+    dateStr,
+    isSunday,
+    isNonWorkingHoliday,
+    manilaNow,
+    canonicalEmployees,
+    employeeLeavesMap,
+    wgMap,
+    attendedKeys
+  } = params
+
+  if (isSunday || isNonWorkingHoliday || !isAbsenceCutoffReached(dateStr, manilaNow)) {
     return []
   }
 
   const absents: AbsentEmployeeEntry[] = []
-  const seenAbsentKeys = new Set<string>()
+  const seenCanonicalKeys = new Set<string>()
 
-  for (const emp of employees) {
-    if (emp.is_merged || emp.merged_into_bio_id) continue
-    if (emp.status !== 'active' || emp.exclude_from_biometric) continue
-    const resDate = normalizeEmployeeDate(emp.resignation_date)
-    if (resDate && resDate <= dateStr) continue
-    const startDate = getEffectiveStartDate(emp)
-    if (startDate && startDate > dateStr) continue
-    if (isEmployeeOnRestOnDate(emp, dateStr)) continue
+  for (const ce of canonicalEmployees) {
+    if (seenCanonicalKeys.has(ce.canonicalKey)) continue
 
-    const empKeys = collectEmployeeIdKeys(emp)
-    if (Array.from(empKeys).some(k => seenAbsentKeys.has(k))) continue
-    for (const k of empKeys) seenAbsentKeys.add(k)
+    const eligibility = evaluateEmployeeEligibilityOnDate(ce, dateStr, manilaNow.dateStr, employeeLeavesMap)
+    if (!eligibility.eligible) continue
 
-    const primaryId = getEmployeePrimaryBioId(emp) || emp.biometric_user_id
-    const isPresent = Array.from(empKeys).some(k => presentBioKeys.has(k))
-    const isOnLeave = Array.from(empKeys).some(k => onLeaveBioKeys.has(k))
-    if (!isPresent && !isOnLeave) {
+    seenCanonicalKeys.add(ce.canonicalKey)
+
+    const attended =
+      attendedKeys.has(ce.canonicalKey) ||
+      Array.from(ce.aliasBioIds).some(id => attendedKeys.has(id)) ||
+      Array.from(ce.aliasCanonicalKeys).some(k => attendedKeys.has(k))
+
+    if (!attended) {
+      const emp = ce.primary
+      const primaryId = getEmployeePrimaryBioId(emp) || emp.biometric_user_id
+      const allBioIds = Array.from(new Set([...ce.aliasBioIds, ...collectEmployeeIdKeys(emp)].filter(Boolean)))
       const wg = wgMap.get(emp.work_group_id || 'wg-group-c')
       const sched = wg ? `${wg.standard_in} – ${wg.expected_out}` : '08:00 – 17:00'
       absents.push({
         bioId: primaryId,
-        allBioIds: Array.from(empKeys),
+        allBioIds,
         name: emp.full_name,
         department: emp.department || '',
         workGroupId: emp.work_group_id || 'wg-group-c',
@@ -217,9 +255,17 @@ async function loadCalendarData() {
   calendarError.value = null
 
   try {
-    const [summaries, holidayList, wgList, employees, leaves, punchesInGrid, manualAdjustmentsInGrid] = await Promise.all([
+    const yearsInGrid = Array.from(
+      new Set(gridBounds.dates.map(d => parseInt(d.slice(0, 4), 10)).filter(Boolean))
+    )
+    const [summaries, dbHolidays, holidayServiceResults, wgList, employees, leaves, punchesInGrid, manualAdjustmentsInGrid] = await Promise.all([
       attendanceRepository.getMonthSummaries(targetYear, targetMonth),
       scheduleRepository.getHolidays(),
+      Promise.all(
+        yearsInGrid.map(yr =>
+          holidayService.getHolidays(yr).catch(() => ({ holidays: [] as any[], activeSource: 'local' as const, isFallback: false }))
+        )
+      ),
       workGroupRepository.getAll(),
       employeeRepository.getEmployees(),
       scheduleRepository.getLeaves(),
@@ -232,16 +278,38 @@ async function loadCalendarData() {
       return
     }
 
-    const empByKey = buildEmployeeKeyMap(employees)
+    const { canonicalEmployees, lookupByAnyKey } = deduplicateEmployees(employees)
     const wgMap = new Map<string, WorkGroup>()
     for (const wg of wgList) {
       wgMap.set(wg.id, wg)
     }
 
-    const holidayMap = new Map<string, HolidayRecord>()
-    for (const h of holidayList) {
-      holidayMap.set(h.date, h)
+    // Merge holidays from db.holidays and holidayService (preserving non-working holiday rule)
+    const mergedHolidayMap = new Map<string, HolidayRecord>()
+    const nonWorkingHolidayDates = new Set<string>()
+    for (const h of dbHolidays) {
+      mergedHolidayMap.set(h.date, h)
+      if ((h as any).type !== 'Special Working') {
+        nonWorkingHolidayDates.add(h.date)
+      }
     }
+    for (const res of holidayServiceResults) {
+      for (const h of res.holidays) {
+        if (!mergedHolidayMap.has(h.date)) {
+          mergedHolidayMap.set(h.date, {
+            id: h.id,
+            name: h.name,
+            date: h.date,
+            type: h.type,
+            isNationwide: h.scope === 'Nationwide'
+          })
+        }
+        if (h.type !== 'Special Working') {
+          nonWorkingHolidayDates.add(h.date)
+        }
+      }
+    }
+    const combinedHolidays = Array.from(mergedHolidayMap.values())
 
     const activityBioKeysByDate = new Map<string, Set<string>>()
     const addActivityId = (dateStr: string, rawId?: string | null) => {
@@ -251,11 +319,13 @@ async function loadCalendarData() {
         set = new Set<string>()
         activityBioKeysByDate.set(dateStr, set)
       }
-      const rawKeys = Array.from(collectEmployeeIdKeys(rawId))
-      for (const k of rawKeys) set.add(k)
-      const matchedEmp = rawKeys.map(k => empByKey.get(k)).find(Boolean)
-      if (matchedEmp) {
-        for (const k of collectEmployeeIdKeys(matchedEmp)) set.add(k)
+      addIdToActivitySet(set, rawId)
+      const norm = normalizeBioIdKey(rawId)
+      const matchedCanonical = lookupByAnyKey.get(rawId) || (norm ? lookupByAnyKey.get(norm) : undefined)
+      if (matchedCanonical) {
+        set.add(matchedCanonical.canonicalKey)
+        for (const alias of matchedCanonical.aliasBioIds) set.add(alias)
+        for (const aliasNorm of matchedCanonical.aliasCanonicalKeys) set.add(aliasNorm)
       }
     }
 
@@ -268,48 +338,31 @@ async function loadCalendarData() {
       }
     }
 
-    const approvedLeaves = leaves.filter(l => l.status === 'Approved')
-    const leaveBioKeysByDate = new Map<string, Set<string>>()
-    for (const dStr of gridBounds.dates) {
-      const leaveKeys = new Set<string>()
-      for (const l of approvedLeaves) {
-        if (l.startDate <= dStr && l.endDate >= dStr) {
-          const lKeys = Array.from(collectEmployeeIdKeys(l.bioId))
-          for (const k of lKeys) leaveKeys.add(k)
-          const matchedEmp = lKeys.map(k => empByKey.get(k)).find(Boolean)
-          if (matchedEmp) {
-            for (const k of collectEmployeeIdKeys(matchedEmp)) leaveKeys.add(k)
-          }
-        }
-      }
-      if (leaveKeys.size > 0) {
-        leaveBioKeysByDate.set(dStr, leaveKeys)
-      }
-    }
-
-    const todayStr = getManilaDateString(new Date())
+    const employeeLeavesMap = buildApprovedLeavesMap(leaves)
+    const manilaNow = getManilaCurrentTime()
     const absentMap = new Map<string, AbsentEmployeeEntry[]>()
+
     for (const dStr of gridBounds.dates) {
       const [y, m, d] = dStr.split('-').map(Number)
       const dow = new Date(y, m - 1, d).getDay()
-      const isWeekend = dow === 0 || dow === 6
-      const hasHoliday = holidayMap.has(dStr)
+      const isSunday = dow === 0
+      const isNonWorkingHoliday = nonWorkingHolidayDates.has(dStr)
       const absents = computeAbsentEmployeesForDate({
         dateStr: dStr,
-        isWeekend,
-        hasHoliday,
-        todayStr,
-        employees,
+        isSunday,
+        isNonWorkingHoliday,
+        manilaNow,
+        canonicalEmployees,
+        employeeLeavesMap,
         wgMap,
-        presentBioKeys: activityBioKeysByDate.get(dStr) || new Set<string>(),
-        onLeaveBioKeys: leaveBioKeysByDate.get(dStr) || new Set<string>()
+        attendedKeys: activityBioKeysByDate.get(dStr) || new Set<string>()
       })
       absentMap.set(dStr, absents)
     }
 
     monthSummaries.value = new Map(summaries)
     monthAbsents.value = absentMap
-    holidays.value = [...holidayList]
+    holidays.value = combinedHolidays
     workGroups.value = [...wgList]
   } catch (err: any) {
     if (reqId === currentRequestId) {
@@ -354,6 +407,7 @@ interface CalendarDay {
   dateStr: string
   isCurrentMonth: boolean
   isToday: boolean
+  isSunday: boolean
   isWeekend: boolean
   summary?: DailySummaryRecord
   holiday?: HolidayRecord
@@ -370,7 +424,7 @@ function buildCalendarDay(
   dayNumber: number,
   isCurrentMonth: boolean,
   todayStr: string,
-  isWeekend: boolean,
+  dow: number,
   summary: DailySummaryRecord | undefined,
   holiday: HolidayRecord | undefined
 ): CalendarDay {
@@ -388,7 +442,8 @@ function buildCalendarDay(
     dateStr: dStr,
     isCurrentMonth,
     isToday: dStr === todayStr,
-    isWeekend,
+    isSunday: dow === 0,
+    isWeekend: dow === 0 || dow === 6,
     summary,
     holiday,
     presentCount,
@@ -432,7 +487,7 @@ const calendarGrid = computed(() => {
         dNum,
         false,
         todayStr,
-        dow === 0 || dow === 6,
+        dow,
         monthSummaries.value.get(dStr),
         holidayMap.get(dStr)
       )
@@ -449,7 +504,7 @@ const calendarGrid = computed(() => {
         d,
         true,
         todayStr,
-        dayOfWeek === 0 || dayOfWeek === 6,
+        dayOfWeek,
         monthSummaries.value.get(dStr),
         holidayMap.get(dStr)
       )
@@ -472,7 +527,7 @@ const calendarGrid = computed(() => {
           d,
           false,
           todayStr,
-          dow === 0 || dow === 6,
+          dow,
           monthSummaries.value.get(dStr),
           holidayMap.get(dStr)
         )
@@ -488,6 +543,7 @@ const monthStats = computed(() => {
   let totalPresent = 0
   let totalLate = 0
   let totalOnTime = 0
+  let totalAbsent = 0
   let activeDays = 0
 
   for (const [date, s] of monthSummaries.value.entries()) {
@@ -505,8 +561,16 @@ const monthStats = computed(() => {
     }
   }
 
+  for (const [date, absents] of monthAbsents.value.entries()) {
+    const m = parseInt(date.split('-')[1], 10)
+    const y = parseInt(date.split('-')[0], 10)
+    if (m === currentMonth.value && y === currentYear.value) {
+      totalAbsent += absents.length
+    }
+  }
+
   const punctualityRate = totalPresent > 0 ? Math.round((totalOnTime / totalPresent) * 100) : 100
-  return { totalPresent, totalLate, totalOnTime, activeDays, punctualityRate }
+  return { totalPresent, totalLate, totalOnTime, totalAbsent, activeDays, punctualityRate }
 })
 
 // Daily Attendance Dialog state
@@ -514,7 +578,7 @@ const showDayDialog = ref(false)
 const dialogLoading = ref(false)
 const selectedDayDate = ref('')
 const selectedDayHoliday = ref<HolidayRecord | null>(null)
-const selectedDayIsWeekend = ref(false)
+const selectedDayIsSunday = ref(false)
 const selectedDayRecords = ref<DailyAttendanceRecord[]>([])
 const selectedDayLeaves = ref<LeaveRecord[]>([])
 const selectedDayAbsents = ref<AbsentEmployeeEntry[]>([])
@@ -637,73 +701,94 @@ const filteredAbsents = computed(() => {
 async function openDayDetails(cell: CalendarDay, initialTab: DetailTab = 'all') {
   selectedDayDate.value = cell.dateStr
   selectedDayHoliday.value = cell.holiday || null
-  selectedDayIsWeekend.value = cell.isWeekend
+  selectedDayIsSunday.value = cell.isSunday
   activeDetailTab.value = initialTab
   dialogSearch.value = ''
   showDayDialog.value = true
   dialogLoading.value = true
 
   try {
-    const [records, employees, leaves, workGroupsList] = await Promise.all([
+    const [records, employees, leaves, workGroupsList, manualAdjustmentsOnDate] = await Promise.all([
       attendanceRepository.getDailyAttendance(cell.dateStr),
       employeeRepository.getEmployees(),
       scheduleRepository.getLeaves(),
-      workGroupRepository.getAll()
+      workGroupRepository.getAll(),
+      db.manualAdjustments.where('date').equals(cell.dateStr).toArray().catch(() => [])
     ])
 
     selectedDayRecords.value = records
 
-    // Leaves on this date (resolve bioId across canonical/linked Bio IDs)
-    const empByKey = buildEmployeeKeyMap(employees)
+    const { canonicalEmployees, lookupByAnyKey } = deduplicateEmployees(employees)
 
+    // Leaves on this date (resolve bioId across canonical/linked Bio IDs)
     const rawLeavesOnDate = leaves.filter(
       l => l.startDate <= cell.dateStr && l.endDate >= cell.dateStr && l.status === 'Approved'
     )
     const leavesOnDate: typeof rawLeavesOnDate = []
     const seenLeaveEmpKeys = new Set<string>()
     for (const l of rawLeavesOnDate) {
-      const leaveKeys = Array.from(collectEmployeeIdKeys(l.bioId))
-      const matchedEmp = leaveKeys.map(k => empByKey.get(k)).find(Boolean)
-      const dedupeKey = matchedEmp ? (matchedEmp.canonical_bio_id || matchedEmp.biometric_user_id) : (leaveKeys[0] || l.bioId)
+      const norm = normalizeBioIdKey(l.bioId)
+      const matchedCanonical = lookupByAnyKey.get(l.bioId) || (norm ? lookupByAnyKey.get(norm) : undefined)
+      const dedupeKey = matchedCanonical ? matchedCanonical.canonicalKey : (norm || l.bioId)
       if (seenLeaveEmpKeys.has(dedupeKey)) continue
       seenLeaveEmpKeys.add(dedupeKey)
       leavesOnDate.push(
-        matchedEmp
-          ? { ...l, bioId: getEmployeePrimaryBioId(matchedEmp) || matchedEmp.biometric_user_id, employeeName: matchedEmp.full_name }
+        matchedCanonical
+          ? {
+              ...l,
+              bioId: getEmployeePrimaryBioId(matchedCanonical.primary) || matchedCanonical.primary.biometric_user_id,
+              employeeName: matchedCanonical.primary.full_name
+            }
           : l
       )
     }
     selectedDayLeaves.value = leavesOnDate
 
-    // Absent employees (resolve across all linked Biometric IDs)
-    const presentBioKeys = new Set<string>()
-    for (const r of records) {
-      for (const k of collectEmployeeIdKeys(r.biometric_user_id, r.primary_bio_id, r.source_bio_ids)) {
-        presentBioKeys.add(k)
-      }
-    }
-    const onLeaveBioKeys = new Set<string>()
-    for (const l of leavesOnDate) {
-      for (const k of collectEmployeeIdKeys(l.bioId)) {
-        onLeaveBioKeys.add(k)
+    // Attended keys across all valid attendance records, linked Bio IDs, and approved manual adjustments
+    const attendedKeys = new Set<string>()
+    const registerAttendedId = (rawId?: string | null) => {
+      if (!rawId) return
+      addIdToActivitySet(attendedKeys, rawId)
+      const norm = normalizeBioIdKey(rawId)
+      const matchedCanonical = lookupByAnyKey.get(rawId) || (norm ? lookupByAnyKey.get(norm) : undefined)
+      if (matchedCanonical) {
+        attendedKeys.add(matchedCanonical.canonicalKey)
+        for (const alias of matchedCanonical.aliasBioIds) attendedKeys.add(alias)
+        for (const aliasNorm of matchedCanonical.aliasCanonicalKeys) attendedKeys.add(aliasNorm)
       }
     }
 
+    for (const r of records) {
+      if (!isValidAttendancePunchRecord(r)) continue
+      registerAttendedId(r.biometric_user_id)
+      if (r.primary_bio_id) registerAttendedId(r.primary_bio_id)
+      if (Array.isArray(r.source_bio_ids)) {
+        for (const sid of r.source_bio_ids) registerAttendedId(sid)
+      }
+    }
+    for (const adj of manualAdjustmentsOnDate) {
+      if (adj.status === 'Approved') {
+        registerAttendedId(adj.bioId)
+      }
+    }
+
+    const employeeLeavesMap = buildApprovedLeavesMap(leaves)
     const wgMap = new Map<string, WorkGroup>()
     for (const wg of workGroupsList) {
       wgMap.set(wg.id, wg)
     }
 
-    const todayStr = getManilaDateString(new Date())
+    const manilaNow = getManilaCurrentTime()
+    const isNonWorkingHoliday = Boolean(cell.holiday && cell.holiday.type !== 'Special Working')
     const absents = computeAbsentEmployeesForDate({
       dateStr: cell.dateStr,
-      isWeekend: cell.isWeekend,
-      hasHoliday: Boolean(cell.holiday),
-      todayStr,
-      employees,
+      isSunday: cell.isSunday,
+      isNonWorkingHoliday,
+      manilaNow,
+      canonicalEmployees,
+      employeeLeavesMap,
       wgMap,
-      presentBioKeys,
-      onLeaveBioKeys
+      attendedKeys
     })
     selectedDayAbsents.value = absents
     monthAbsents.value.set(cell.dateStr, absents)
@@ -929,7 +1014,7 @@ onUnmounted(() => {
                   'text-xs font-bold size-6 flex items-center justify-center rounded-full',
                   cell.isToday
                     ? 'bg-primary text-primary-foreground'
-                    : (cell.isWeekend ? 'text-muted-foreground' : 'text-foreground')
+                    : (cell.isSunday ? 'text-muted-foreground' : 'text-foreground')
                 ]"
               >
                 {{ cell.dayNumber }}
@@ -951,7 +1036,7 @@ onUnmounted(() => {
                 <!-- Present -->
                 <div
                   v-if="cell.presentCount > 0"
-                  class="flex items-center justify-between text-[11px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium font-mono hover:bg-emerald-500/20 transition-colors"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium font-mono hover:bg-emerald-500/20 transition-colors"
                   @click.stop="openDayDetails(cell, 'present')"
                 >
                   <span>Present:</span>
@@ -961,7 +1046,7 @@ onUnmounted(() => {
                 <!-- Late if any -->
                 <div
                   v-if="cell.lateCount > 0"
-                  class="flex items-center justify-between text-[11px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium font-mono hover:bg-amber-500/20 transition-colors"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium font-mono hover:bg-amber-500/20 transition-colors"
                   @click.stop="openDayDetails(cell, 'late')"
                 >
                   <span>Late:</span>
@@ -971,7 +1056,7 @@ onUnmounted(() => {
                 <!-- Single Punch / Awaiting OUT -->
                 <div
                   v-if="cell.pendingCount > 0"
-                  class="flex items-center justify-between text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 font-medium font-mono hover:bg-sky-500/20 transition-colors"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 font-medium font-mono hover:bg-sky-500/20 transition-colors"
                   @click.stop="openDayDetails(cell, 'pending')"
                 >
                   <span>Pending:</span>
@@ -981,7 +1066,7 @@ onUnmounted(() => {
                 <!-- Absent if any -->
                 <div
                   v-if="cell.absentCount > 0"
-                  class="flex items-center justify-between text-[11px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300 font-medium font-mono hover:bg-rose-500/20 transition-colors"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300 font-medium font-mono hover:bg-rose-500/20 transition-colors"
                   :title="cell.absentTooltip"
                   @click.stop="openDayDetails(cell, 'absent')"
                 >
@@ -990,7 +1075,7 @@ onUnmounted(() => {
                 </div>
               </template>
 
-              <template v-else-if="cell.isCurrentMonth && !cell.isWeekend">
+              <template v-else-if="cell.isCurrentMonth && !cell.isSunday">
                 <div class="text-[10px] text-muted-foreground italic py-1 text-center">
                   No records
                 </div>
@@ -1020,8 +1105,8 @@ onUnmounted(() => {
                 <Badge v-if="selectedDayHoliday" variant="destructive" class="text-[11px] font-normal text-white">
                   {{ selectedDayHoliday.name }} ({{ selectedDayHoliday.type }})
                 </Badge>
-                <Badge v-else-if="selectedDayIsWeekend" variant="secondary" class="text-[11px] font-normal">
-                  Weekend / Rest Day
+                <Badge v-else-if="selectedDayIsSunday" variant="secondary" class="text-[11px] font-normal">
+                  Sunday / Rest Day
                 </Badge>
               </DialogTitle>
               <DialogDescription class="text-xs text-muted-foreground mt-1">
@@ -1219,7 +1304,7 @@ onUnmounted(() => {
                 No attendance punches recorded for this date.
               </div>
               <p class="text-[11px] text-muted-foreground max-w-sm mx-auto">
-                {{ selectedDayIsWeekend ? 'Weekend / scheduled rest day for general employees.' : (selectedDayHoliday ? `${selectedDayHoliday.name} - official Philippine holiday.` : 'No biometric punch logs or device sync recorded on this day.') }}
+                {{ selectedDayIsSunday ? 'Sunday / scheduled rest day for general employees.' : (selectedDayHoliday ? `${selectedDayHoliday.name} - official Philippine holiday.` : 'No biometric punch logs or device sync recorded on this day.') }}
               </p>
               <div class="flex items-center justify-center gap-2 text-[11px] font-mono text-muted-foreground pt-1">
                 <span>Present: 0</span>
