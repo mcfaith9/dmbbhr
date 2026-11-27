@@ -92,7 +92,6 @@ const navSections: NavItem[] = [
     title: "Time Management",
     icon: CalendarDays,
     children: [
-      { title: "Schedules", url: "/schedules", description: "Shift assignments & grace periods" },
       { title: "Leave", url: "/leave", description: "Leave requests and approval" },
       { title: "Overtime", url: "/overtime", description: "OT pre-approvals and calculations" },
       { title: "Manual Time", url: "/attendance/manual", description: "Attendance adjustments & approval requests" },
@@ -137,7 +136,6 @@ const activeItem = computed(() => {
   if (
     currentPath.startsWith('/attendance/manual') ||
     currentPath.startsWith('/time-management/manual') ||
-    currentPath.startsWith('/schedules') ||
     currentPath.startsWith('/leave') ||
     currentPath.startsWith('/overtime') ||
     currentPath.startsWith('/holidays')

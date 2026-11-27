@@ -8,7 +8,6 @@ const DailyAttendanceView = () => import('@/views/DailyAttendanceView.vue')
 const ManualTimeView = () => import('@/views/ManualTimeView.vue')
 const EmployeesView = () => import('@/views/EmployeesView.vue')
 const DevicesView = () => import('@/views/DevicesView.vue')
-const SchedulesView = () => import('@/views/SchedulesView.vue')
 const LeaveView = () => import('@/views/LeaveView.vue')
 const OvertimeView = () => import('@/views/OvertimeView.vue')
 const HolidaysView = () => import('@/views/HolidaysView.vue')
@@ -92,9 +91,7 @@ export const router = createRouter({
         },
         {
           path: 'schedules',
-          name: 'schedules',
-          component: SchedulesView,
-          meta: { title: 'Schedules', breadcrumb: ['Schedules', 'Shift Schedules'] }
+          redirect: '/dashboard'
         },
         {
           path: 'leave',

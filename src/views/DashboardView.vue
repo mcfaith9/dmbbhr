@@ -1,285 +1,1605 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import {
-  Users,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ArrowRight,
   Clock,
-  Fingerprint,
-  RefreshCw,
-  Radio,
+  CheckCircle2,
+  Users,
+  Search,
+  ExternalLink,
+  AlertCircle,
+  RefreshCw
 } from '@lucide/vue'
-import { attendanceService } from '@/services/attendance'
-import { liveAttendanceService } from '@/services/liveAttendance'
-import { getManilaDateString } from '@/services/attendanceEngine'
-import { punchRepository } from '@/repositories/punchRepository'
-import { employeeRepository } from '@/repositories/employeeRepository'
-import type { AttendanceLog } from '@/types'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose
+} from '@/components/ui/dialog'
+import { attendanceRepository } from '@/repositories/attendanceRepository'
+import { scheduleRepository } from '@/repositories/scheduleRepository'
+import { workGroupRepository } from '@/repositories/workGroupRepository'
+import { employeeRepository } from '@/repositories/employeeRepository'
+import { db, type DailySummaryRecord, type HolidayRecord, type LeaveRecord } from '@/db'
+import type { WorkGroup } from '@/types'
+import type { DailyAttendanceRecord } from '@/services/attendanceEngine'
+import { getManilaCurrentTime, getManilaDateString } from '@/services/attendanceEngine'
+import { liveAttendanceService } from '@/services/liveAttendance'
+import { employeeService } from '@/services/employees'
+import { holidayService } from '@/services/holidays/holidayService'
+import { collectEmployeeIdKeys, getEmployeePrimaryBioId } from '@/lib/employeeIdentity'
+import {
+  deduplicateEmployees,
+  evaluateEmployeeEligibilityOnDate,
+  isAbsenceCutoffReached,
+  isValidAttendancePunchRecord,
+  normalizeBioIdKey,
+  type CanonicalEmployee
+} from '@/services/reportsService'
 
-const recentLogs = ref<AttendanceLog[]>([])
-const loading = ref(false)
+const router = useRouter()
 
-// Real hardware status from Node agent
-const deviceStatus = liveAttendanceService.deviceStatus
+type DetailTab = 'all' | 'present' | 'late' | 'pending' | 'leave' | 'absent'
 
-const totalLogsToday = ref(0)
-const uniqueUsersToday = ref(0)
+interface AbsentEmployeeEntry {
+  bioId: string
+  allBioIds?: string[]
+  name: string
+  department?: string
+  workGroupId: string
+  workGroupName: string
+  schedule: string
+}
 
-let reloadTimer: any = null
-let isExecutingReload = false
-let hasPendingReload = false
-
-async function executeLoadDashboard() {
-  if (isExecutingReload) {
-    hasPendingReload = true
-    return
+function isPendingOrSinglePunchRecord(r: DailyAttendanceRecord): boolean {
+  const st = (r.status || '').trim()
+  if (
+    st === 'Leave' ||
+    st === 'On Leave' ||
+    r.is_on_rest ||
+    st === 'On Rest' ||
+    st === 'Manual Time' ||
+    st === 'Field Work'
+  ) {
+    return false
   }
-  isExecutingReload = true
-  hasPendingReload = false
-  loading.value = true
-  try {
-    const todayStr = getManilaDateString(new Date())
-    const [recentRes, punchesToday] = await Promise.all([
-      attendanceService.getLogs({ page: 1, pageSize: 6 }),
-      punchRepository.getPunchesByDate(todayStr)
-    ])
-    recentLogs.value = recentRes.logs
-    totalLogsToday.value = punchesToday.length
-    const set = new Set(
-      punchesToday.map(
-        l => l.linked_employee_bio_id || employeeRepository.resolveCanonicalBioIdSync(l.user_id) || l.user_id
-      )
-    )
-    uniqueUsersToday.value = set.size
-  } finally {
-    loading.value = false
-    isExecutingReload = false
-    if (hasPendingReload) {
-      hasPendingReload = false
-      executeLoadDashboard()
+  return (
+    st === 'Awaiting OUT' ||
+    st.startsWith('Single Punch') ||
+    st.includes('Missing IN') ||
+    st.includes('Ambiguous') ||
+    st === 'Incomplete / Review' ||
+    (!r.has_valid_out && r.valid_punches_count === 1)
+  )
+}
+
+function isPresentAttendanceRecord(r: DailyAttendanceRecord): boolean {
+  const st = (r.status || '').trim()
+  if (st === 'Leave' || st === 'On Leave' || r.is_on_rest || st === 'On Rest') {
+    return false
+  }
+  return !isPendingOrSinglePunchRecord(r)
+}
+
+function getCalendarGridBounds(year: number, month: number): { startDate: string; endDate: string; dates: string[] } {
+  const firstDayIndex = new Date(year, month - 1, 1).getDay()
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const daysInPrevMonth = new Date(year, month - 1, 0).getDate()
+  const dates: string[] = []
+
+  for (let i = firstDayIndex - 1; i >= 0; i--) {
+    const dNum = daysInPrevMonth - i
+    const prevM = month === 1 ? 12 : month - 1
+    const prevY = month === 1 ? year - 1 : year
+    dates.push(`${prevY}-${String(prevM).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`)
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    dates.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+  }
+
+  const remaining = 42 - dates.length
+  if (!(remaining < 7 && dates.length === 35)) {
+    for (let d = 1; d <= remaining; d++) {
+      const nextM = month === 12 ? 1 : month + 1
+      const nextY = month === 12 ? year + 1 : year
+      dates.push(`${nextY}-${String(nextM).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
     }
   }
-}
 
-function triggerCoalescedDashboard(immediate = false) {
-  if (reloadTimer) {
-    clearTimeout(reloadTimer)
-    reloadTimer = null
-  }
-  if (immediate) {
-    executeLoadDashboard()
-  } else {
-    reloadTimer = setTimeout(() => {
-      reloadTimer = null
-      executeLoadDashboard()
-    }, 150)
+  return {
+    startDate: dates[0],
+    endDate: dates[dates.length - 1],
+    dates
   }
 }
 
-function loadDashboard() {
-  triggerCoalescedDashboard(true)
+function buildApprovedLeavesMap(
+  leaves: LeaveRecord[]
+): Map<string, Array<{ startDate: string; endDate: string }>> {
+  const employeeLeavesMap = new Map<string, Array<{ startDate: string; endDate: string }>>()
+  for (const l of leaves) {
+    if (l.status !== 'Approved') continue
+    const keys = new Set<string>([
+      l.bioId,
+      normalizeBioIdKey(l.bioId),
+      ...Array.from(collectEmployeeIdKeys(l.bioId))
+    ].filter(Boolean))
+    for (const k of keys) {
+      if (!employeeLeavesMap.has(k)) {
+        employeeLeavesMap.set(k, [])
+      }
+      employeeLeavesMap.get(k)!.push({ startDate: l.startDate, endDate: l.endDate })
+    }
+  }
+  return employeeLeavesMap
 }
 
-function formatTime(dateStr: string) {
-  try {
-    return new Date(dateStr).toLocaleTimeString('en-US', {
-      timeZone: 'Asia/Manila',
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    })
-  } catch {
-    return ''
+function addIdToActivitySet(set: Set<string>, rawId?: string | null) {
+  if (!rawId) return
+  const trimmed = String(rawId).trim()
+  if (!trimmed) return
+  set.add(trimmed)
+  const norm = normalizeBioIdKey(trimmed)
+  if (norm) set.add(norm)
+  for (const k of collectEmployeeIdKeys(trimmed)) {
+    set.add(k)
   }
 }
 
-function formatDate(dateStr: string) {
-  try {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      timeZone: 'Asia/Manila',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    })
-  } catch {
-    return ''
+function computeAbsentEmployeesForDate(params: {
+  dateStr: string
+  isSunday: boolean
+  isNonWorkingHoliday: boolean
+  manilaNow: { hour: number; minute: number; dateStr: string }
+  canonicalEmployees: CanonicalEmployee[]
+  employeeLeavesMap: Map<string, Array<{ startDate: string; endDate: string }>>
+  wgMap: Map<string, WorkGroup>
+  attendedKeys: Set<string>
+}): AbsentEmployeeEntry[] {
+  const {
+    dateStr,
+    isSunday,
+    isNonWorkingHoliday,
+    manilaNow,
+    canonicalEmployees,
+    employeeLeavesMap,
+    wgMap,
+    attendedKeys
+  } = params
+
+  if (isSunday || isNonWorkingHoliday || !isAbsenceCutoffReached(dateStr, manilaNow)) {
+    return []
   }
+
+  const absents: AbsentEmployeeEntry[] = []
+  const seenCanonicalKeys = new Set<string>()
+
+  for (const ce of canonicalEmployees) {
+    if (seenCanonicalKeys.has(ce.canonicalKey)) continue
+
+    const eligibility = evaluateEmployeeEligibilityOnDate(ce, dateStr, manilaNow.dateStr, employeeLeavesMap)
+    if (!eligibility.eligible) continue
+
+    seenCanonicalKeys.add(ce.canonicalKey)
+
+    const attended =
+      attendedKeys.has(ce.canonicalKey) ||
+      Array.from(ce.aliasBioIds).some(id => attendedKeys.has(id)) ||
+      Array.from(ce.aliasCanonicalKeys).some(k => attendedKeys.has(k))
+
+    if (!attended) {
+      const emp = ce.primary
+      const primaryId = getEmployeePrimaryBioId(emp) || emp.biometric_user_id
+      const allBioIds = Array.from(new Set([...ce.aliasBioIds, ...collectEmployeeIdKeys(emp)].filter(Boolean)))
+      const wg = wgMap.get(emp.work_group_id || 'wg-group-c')
+      const sched = wg ? `${wg.standard_in} – ${wg.expected_out}` : '08:00 – 17:00'
+      absents.push({
+        bioId: primaryId,
+        allBioIds,
+        name: emp.full_name,
+        department: emp.department || '',
+        workGroupId: emp.work_group_id || 'wg-group-c',
+        workGroupName: wg?.name || 'Group C',
+        schedule: sched
+      })
+    }
+  }
+
+  absents.sort((a, b) => a.name.localeCompare(b.name))
+  return absents
 }
 
+// Calendar State
+const now = new Date()
+const currentYear = ref(now.getFullYear())
+const currentMonth = ref(now.getMonth() + 1) // 1-12
+const loadingCalendar = ref(false)
+const calendarError = ref<string | null>(null)
+let currentRequestId = 0
 let unSubLogs: (() => void) | null = null
-let unSubScan: (() => void) | null = null
+let unSubEmployees: (() => void) | null = null
 
-onMounted(() => {
-  executeLoadDashboard()
-  liveAttendanceService.connect()
-  unSubScan = liveAttendanceService.onScan((scan) => {
-    if (!recentLogs.value.some(l => l.id === scan.id)) {
-      recentLogs.value.unshift(scan)
-      if (recentLogs.value.length > 6) {
-        recentLogs.value.pop()
+const monthSummaries = ref<Map<string, DailySummaryRecord>>(new Map())
+const monthAbsents = ref<Map<string, AbsentEmployeeEntry[]>>(new Map())
+const holidays = ref<HolidayRecord[]>([])
+const workGroups = ref<WorkGroup[]>([])
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+]
+
+const currentMonthLabel = computed(() => {
+  return `${MONTH_NAMES[currentMonth.value - 1]} ${currentYear.value}`
+})
+
+async function loadCalendarData() {
+  const reqId = ++currentRequestId
+  const targetYear = currentYear.value
+  const targetMonth = currentMonth.value
+  const gridBounds = getCalendarGridBounds(targetYear, targetMonth)
+
+  loadingCalendar.value = true
+  calendarError.value = null
+
+  try {
+    const yearsInGrid = Array.from(
+      new Set(gridBounds.dates.map(d => parseInt(d.slice(0, 4), 10)).filter(Boolean))
+    )
+    const [summaries, dbHolidays, holidayServiceResults, wgList, employees, leaves, punchesInGrid, manualAdjustmentsInGrid] = await Promise.all([
+      attendanceRepository.getMonthSummaries(targetYear, targetMonth),
+      scheduleRepository.getHolidays(),
+      Promise.all(
+        yearsInGrid.map(yr =>
+          holidayService.getHolidays(yr).catch(() => ({ holidays: [] as any[], activeSource: 'local' as const, isFallback: false }))
+        )
+      ),
+      workGroupRepository.getAll(),
+      employeeRepository.getEmployees(),
+      scheduleRepository.getLeaves(),
+      db.biometricPunches.where('date').between(gridBounds.startDate, gridBounds.endDate, true, true).toArray(),
+      db.manualAdjustments.where('date').between(gridBounds.startDate, gridBounds.endDate, true, true).toArray().catch(() => [])
+    ])
+
+    // Discard stale response if a newer month was selected while awaiting
+    if (reqId !== currentRequestId) {
+      return
+    }
+
+    const { canonicalEmployees, lookupByAnyKey } = deduplicateEmployees(employees)
+    const wgMap = new Map<string, WorkGroup>()
+    for (const wg of wgList) {
+      wgMap.set(wg.id, wg)
+    }
+
+    // Merge holidays from db.holidays and holidayService (preserving non-working holiday rule)
+    const mergedHolidayMap = new Map<string, HolidayRecord>()
+    const nonWorkingHolidayDates = new Set<string>()
+    for (const h of dbHolidays) {
+      mergedHolidayMap.set(h.date, h)
+      if ((h as any).type !== 'Special Working') {
+        nonWorkingHolidayDates.add(h.date)
       }
     }
+    for (const res of holidayServiceResults) {
+      for (const h of res.holidays) {
+        if (!mergedHolidayMap.has(h.date)) {
+          mergedHolidayMap.set(h.date, {
+            id: h.id,
+            name: h.name,
+            date: h.date,
+            type: h.type,
+            isNationwide: h.scope === 'Nationwide'
+          })
+        }
+        if (h.type !== 'Special Working') {
+          nonWorkingHolidayDates.add(h.date)
+        }
+      }
+    }
+    const combinedHolidays = Array.from(mergedHolidayMap.values())
+
+    const activityBioKeysByDate = new Map<string, Set<string>>()
+    const addActivityId = (dateStr: string, rawId?: string | null) => {
+      if (!dateStr || !rawId) return
+      let set = activityBioKeysByDate.get(dateStr)
+      if (!set) {
+        set = new Set<string>()
+        activityBioKeysByDate.set(dateStr, set)
+      }
+      addIdToActivitySet(set, rawId)
+      const norm = normalizeBioIdKey(rawId)
+      const matchedCanonical = lookupByAnyKey.get(rawId) || (norm ? lookupByAnyKey.get(norm) : undefined)
+      if (matchedCanonical) {
+        set.add(matchedCanonical.canonicalKey)
+        for (const alias of matchedCanonical.aliasBioIds) set.add(alias)
+        for (const aliasNorm of matchedCanonical.aliasCanonicalKeys) set.add(aliasNorm)
+      }
+    }
+
+    for (const p of punchesInGrid) {
+      addActivityId(p.date, p.bioId)
+    }
+    for (const adj of manualAdjustmentsInGrid) {
+      if (adj.status === 'Approved') {
+        addActivityId(adj.date, adj.bioId)
+      }
+    }
+
+    const employeeLeavesMap = buildApprovedLeavesMap(leaves)
+    const manilaNow = getManilaCurrentTime()
+    const absentMap = new Map<string, AbsentEmployeeEntry[]>()
+
+    for (const dStr of gridBounds.dates) {
+      const [y, m, d] = dStr.split('-').map(Number)
+      const dow = new Date(y, m - 1, d).getDay()
+      const isSunday = dow === 0
+      const isNonWorkingHoliday = nonWorkingHolidayDates.has(dStr)
+      const absents = computeAbsentEmployeesForDate({
+        dateStr: dStr,
+        isSunday,
+        isNonWorkingHoliday,
+        manilaNow,
+        canonicalEmployees,
+        employeeLeavesMap,
+        wgMap,
+        attendedKeys: activityBioKeysByDate.get(dStr) || new Set<string>()
+      })
+      absentMap.set(dStr, absents)
+    }
+
+    monthSummaries.value = new Map(summaries)
+    monthAbsents.value = absentMap
+    holidays.value = combinedHolidays
+    workGroups.value = [...wgList]
+  } catch (err: any) {
+    if (reqId === currentRequestId) {
+      calendarError.value = err?.message || 'Failed to load attendance calendar data.'
+    }
+  } finally {
+    if (reqId === currentRequestId) {
+      loadingCalendar.value = false
+    }
+  }
+}
+
+function prevMonth() {
+  if (currentMonth.value === 1) {
+    currentMonth.value = 12
+    currentYear.value -= 1
+  } else {
+    currentMonth.value -= 1
+  }
+  loadCalendarData()
+}
+
+function nextMonth() {
+  if (currentMonth.value === 12) {
+    currentMonth.value = 1
+    currentYear.value += 1
+  } else {
+    currentMonth.value += 1
+  }
+  loadCalendarData()
+}
+
+function goToToday() {
+  const d = new Date()
+  currentYear.value = d.getFullYear()
+  currentMonth.value = d.getMonth() + 1
+  loadCalendarData()
+}
+
+interface CalendarDay {
+  dayNumber: number
+  dateStr: string
+  isCurrentMonth: boolean
+  isToday: boolean
+  isSunday: boolean
+  isWeekend: boolean
+  summary?: DailySummaryRecord
+  holiday?: HolidayRecord
+  presentCount: number
+  lateCount: number
+  pendingCount: number
+  absentCount: number
+  absentEmployees: AbsentEmployeeEntry[]
+  absentTooltip: string
+}
+
+function buildCalendarDay(
+  dStr: string,
+  dayNumber: number,
+  isCurrentMonth: boolean,
+  todayStr: string,
+  dow: number,
+  summary: DailySummaryRecord | undefined,
+  holiday: HolidayRecord | undefined
+): CalendarDay {
+  const absentEmployees = monthAbsents.value.get(dStr) || []
+  const absentCount = absentEmployees.length
+  const absentTooltip = absentCount > 0
+    ? `Absent (${absentCount}): ${absentEmployees.slice(0, 6).map(a => a.name).join('; ')}${absentCount > 6 ? ` +${absentCount - 6} more` : ''}`
+    : ''
+  const pendingCount = (summary?.singlePunchCount || 0) + (summary?.awaitingOutCount || 0)
+  const presentCount = summary?.completedPresentCount ?? Math.max(0, (summary?.presentCount || 0) - pendingCount)
+  const lateCount = summary?.completedLateCount ?? (summary?.lateCount || 0)
+
+  return {
+    dayNumber,
+    dateStr: dStr,
+    isCurrentMonth,
+    isToday: dStr === todayStr,
+    isSunday: dow === 0,
+    isWeekend: dow === 0 || dow === 6,
+    summary,
+    holiday,
+    presentCount,
+    lateCount,
+    pendingCount,
+    absentCount,
+    absentEmployees,
+    absentTooltip
+  }
+}
+
+function hasCellAttendanceEntries(cell: CalendarDay): boolean {
+  return cell.presentCount > 0 || cell.lateCount > 0 || cell.pendingCount > 0 || cell.absentCount > 0
+}
+
+const calendarGrid = computed(() => {
+  const year = currentYear.value
+  const month = currentMonth.value // 1-12
+  const firstDayIndex = new Date(year, month - 1, 1).getDay() // 0 = Sun
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const daysInPrevMonth = new Date(year, month - 1, 0).getDate()
+
+  const todayStr = getManilaDateString(new Date())
+  const holidayMap = new Map<string, HolidayRecord>()
+  for (const h of holidays.value) {
+    holidayMap.set(h.date, h)
+  }
+
+  const days: CalendarDay[] = []
+
+  // Leading days from previous month
+  for (let i = firstDayIndex - 1; i >= 0; i--) {
+    const dNum = daysInPrevMonth - i
+    const prevM = month === 1 ? 12 : month - 1
+    const prevY = month === 1 ? year - 1 : year
+    const dStr = `${prevY}-${String(prevM).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`
+    const dow = new Date(prevY, prevM - 1, dNum).getDay()
+    days.push(
+      buildCalendarDay(
+        dStr,
+        dNum,
+        false,
+        todayStr,
+        dow,
+        monthSummaries.value.get(dStr),
+        holidayMap.get(dStr)
+      )
+    )
+  }
+
+  // Current month days
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const dayOfWeek = new Date(year, month - 1, d).getDay()
+    days.push(
+      buildCalendarDay(
+        dStr,
+        d,
+        true,
+        todayStr,
+        dayOfWeek,
+        monthSummaries.value.get(dStr),
+        holidayMap.get(dStr)
+      )
+    )
+  }
+
+  // Trailing days
+  const remaining = 42 - days.length
+  if (remaining < 7 && days.length === 35) {
+    // 35 cells
+  } else {
+    for (let d = 1; d <= remaining; d++) {
+      const nextM = month === 12 ? 1 : month + 1
+      const nextY = month === 12 ? year + 1 : year
+      const dStr = `${nextY}-${String(nextM).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      const dow = new Date(nextY, nextM - 1, d).getDay()
+      days.push(
+        buildCalendarDay(
+          dStr,
+          d,
+          false,
+          todayStr,
+          dow,
+          monthSummaries.value.get(dStr),
+          holidayMap.get(dStr)
+        )
+      )
+    }
+  }
+
+  return days
+})
+
+// Monthly aggregated statistics
+const monthStats = computed(() => {
+  let totalPresent = 0
+  let totalLate = 0
+  let totalOnTime = 0
+  let totalAbsent = 0
+  let activeDays = 0
+
+  for (const [date, s] of monthSummaries.value.entries()) {
+    const m = parseInt(date.split('-')[1], 10)
+    const y = parseInt(date.split('-')[0], 10)
+    if (m === currentMonth.value && y === currentYear.value) {
+      const pending = (s.singlePunchCount || 0) + (s.awaitingOutCount || 0)
+      const dayPresent = s.completedPresentCount ?? Math.max(0, s.presentCount - pending)
+      const dayLate = s.completedLateCount ?? s.lateCount
+      const dayOnTime = s.completedOnTimeCount ?? s.onTimeCount
+      totalPresent += dayPresent
+      totalLate += dayLate
+      totalOnTime += dayOnTime
+      if (s.presentCount > 0) activeDays++
+    }
+  }
+
+  for (const [date, absents] of monthAbsents.value.entries()) {
+    const m = parseInt(date.split('-')[1], 10)
+    const y = parseInt(date.split('-')[0], 10)
+    if (m === currentMonth.value && y === currentYear.value) {
+      totalAbsent += absents.length
+    }
+  }
+
+  const punctualityRate = totalPresent > 0 ? Math.round((totalOnTime / totalPresent) * 100) : 100
+  return { totalPresent, totalLate, totalOnTime, totalAbsent, activeDays, punctualityRate }
+})
+
+// Daily Attendance Dialog state
+const showDayDialog = ref(false)
+const dialogLoading = ref(false)
+const selectedDayDate = ref('')
+const selectedDayHoliday = ref<HolidayRecord | null>(null)
+const selectedDayIsSunday = ref(false)
+const selectedDayRecords = ref<DailyAttendanceRecord[]>([])
+const selectedDayLeaves = ref<LeaveRecord[]>([])
+const selectedDayAbsents = ref<AbsentEmployeeEntry[]>([])
+const activeDetailTab = ref<DetailTab>('all')
+const dialogSearch = ref('')
+
+const selectedDayFormatted = computed(() => {
+  if (!selectedDayDate.value) return ''
+  try {
+    const [y, m, d] = selectedDayDate.value.split('-').map(Number)
+    const dateObj = new Date(y, m - 1, d)
+    return new Intl.DateTimeFormat('en-US', {
+      dateStyle: 'long',
+      timeZone: 'Asia/Manila'
+    }).format(dateObj)
+  } catch {
+    return selectedDayDate.value
+  }
+})
+
+const presentRecordsForDialog = computed(() => {
+  return selectedDayRecords.value.filter(isPresentAttendanceRecord)
+})
+
+const pendingRecordsForDialog = computed(() => {
+  return selectedDayRecords.value.filter(isPendingOrSinglePunchRecord)
+})
+
+const dialogStats = computed(() => {
+  const presentRecords = presentRecordsForDialog.value
+  const pendingRecords = pendingRecordsForDialog.value
+  const present = presentRecords.length
+  const late = presentRecords.filter(r => r.late_minutes > 0).length
+  const onTime = presentRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+  const awaitingOut = pendingRecords.filter(r => r.status === 'Awaiting OUT').length
+  const singlePunch = pendingRecords.length - awaitingOut
+  const onLeave = selectedDayLeaves.value.length
+  const absent = selectedDayAbsents.value.length
+  return {
+    present,
+    late,
+    onTime,
+    awaitingOut,
+    singlePunch,
+    onLeave,
+    absent
+  }
+})
+
+const filteredPresent = computed(() => {
+  let list = presentRecordsForDialog.value
+  if (dialogSearch.value.trim()) {
+    const q = dialogSearch.value.trim().toLowerCase()
+    list = list.filter(r =>
+      r.employee_name.toLowerCase().includes(q) ||
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q))) ||
+      (r.work_group_name && r.work_group_name.toLowerCase().includes(q))
+    )
+  }
+  return list
+})
+
+const filteredLate = computed(() => {
+  let list = presentRecordsForDialog.value.filter(r => r.late_minutes > 0)
+  if (dialogSearch.value.trim()) {
+    const q = dialogSearch.value.trim().toLowerCase()
+    list = list.filter(r =>
+      r.employee_name.toLowerCase().includes(q) ||
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q)))
+    )
+  }
+  return list
+})
+
+const filteredPendingOut = computed(() => {
+  let list = pendingRecordsForDialog.value
+  if (dialogSearch.value.trim()) {
+    const q = dialogSearch.value.trim().toLowerCase()
+    list = list.filter(r =>
+      r.employee_name.toLowerCase().includes(q) ||
+      r.biometric_user_id.toLowerCase().includes(q) ||
+      (r.primary_bio_id && r.primary_bio_id.toLowerCase().includes(q)) ||
+      (Array.isArray(r.source_bio_ids) && r.source_bio_ids.some(id => id.toLowerCase().includes(q)))
+    )
+  }
+  return list
+})
+
+const filteredLeaves = computed(() => {
+  let list = selectedDayLeaves.value
+  if (dialogSearch.value.trim()) {
+    const q = dialogSearch.value.trim().toLowerCase()
+    list = list.filter(l =>
+      l.employeeName.toLowerCase().includes(q) ||
+      l.bioId.toLowerCase().includes(q) ||
+      l.leaveType.toLowerCase().includes(q)
+    )
+  }
+  return list
+})
+
+const filteredAbsents = computed(() => {
+  let list = selectedDayAbsents.value
+  if (dialogSearch.value.trim()) {
+    const q = dialogSearch.value.trim().toLowerCase()
+    list = list.filter(a =>
+      a.name.toLowerCase().includes(q) ||
+      a.bioId.toLowerCase().includes(q) ||
+      (Array.isArray(a.allBioIds) && a.allBioIds.some(id => id.toLowerCase().includes(q))) ||
+      a.workGroupName.toLowerCase().includes(q)
+    )
+  }
+  return list
+})
+
+async function openDayDetails(cell: CalendarDay, initialTab: DetailTab = 'all') {
+  selectedDayDate.value = cell.dateStr
+  selectedDayHoliday.value = cell.holiday || null
+  selectedDayIsSunday.value = cell.isSunday
+  activeDetailTab.value = initialTab
+  dialogSearch.value = ''
+  showDayDialog.value = true
+  dialogLoading.value = true
+
+  try {
+    const [records, employees, leaves, workGroupsList, manualAdjustmentsOnDate] = await Promise.all([
+      attendanceRepository.getDailyAttendance(cell.dateStr),
+      employeeRepository.getEmployees(),
+      scheduleRepository.getLeaves(),
+      workGroupRepository.getAll(),
+      db.manualAdjustments.where('date').equals(cell.dateStr).toArray().catch(() => [])
+    ])
+
+    selectedDayRecords.value = records
+
+    const { canonicalEmployees, lookupByAnyKey } = deduplicateEmployees(employees)
+
+    // Leaves on this date (resolve bioId across canonical/linked Bio IDs)
+    const rawLeavesOnDate = leaves.filter(
+      l => l.startDate <= cell.dateStr && l.endDate >= cell.dateStr && l.status === 'Approved'
+    )
+    const leavesOnDate: typeof rawLeavesOnDate = []
+    const seenLeaveEmpKeys = new Set<string>()
+    for (const l of rawLeavesOnDate) {
+      const norm = normalizeBioIdKey(l.bioId)
+      const matchedCanonical = lookupByAnyKey.get(l.bioId) || (norm ? lookupByAnyKey.get(norm) : undefined)
+      const dedupeKey = matchedCanonical ? matchedCanonical.canonicalKey : (norm || l.bioId)
+      if (seenLeaveEmpKeys.has(dedupeKey)) continue
+      seenLeaveEmpKeys.add(dedupeKey)
+      leavesOnDate.push(
+        matchedCanonical
+          ? {
+              ...l,
+              bioId: getEmployeePrimaryBioId(matchedCanonical.primary) || matchedCanonical.primary.biometric_user_id,
+              employeeName: matchedCanonical.primary.full_name
+            }
+          : l
+      )
+    }
+    selectedDayLeaves.value = leavesOnDate
+
+    // Attended keys across all valid attendance records, linked Bio IDs, and approved manual adjustments
+    const attendedKeys = new Set<string>()
+    const registerAttendedId = (rawId?: string | null) => {
+      if (!rawId) return
+      addIdToActivitySet(attendedKeys, rawId)
+      const norm = normalizeBioIdKey(rawId)
+      const matchedCanonical = lookupByAnyKey.get(rawId) || (norm ? lookupByAnyKey.get(norm) : undefined)
+      if (matchedCanonical) {
+        attendedKeys.add(matchedCanonical.canonicalKey)
+        for (const alias of matchedCanonical.aliasBioIds) attendedKeys.add(alias)
+        for (const aliasNorm of matchedCanonical.aliasCanonicalKeys) attendedKeys.add(aliasNorm)
+      }
+    }
+
+    for (const r of records) {
+      if (!isValidAttendancePunchRecord(r)) continue
+      registerAttendedId(r.biometric_user_id)
+      if (r.primary_bio_id) registerAttendedId(r.primary_bio_id)
+      if (Array.isArray(r.source_bio_ids)) {
+        for (const sid of r.source_bio_ids) registerAttendedId(sid)
+      }
+    }
+    for (const adj of manualAdjustmentsOnDate) {
+      if (adj.status === 'Approved') {
+        registerAttendedId(adj.bioId)
+      }
+    }
+
+    const employeeLeavesMap = buildApprovedLeavesMap(leaves)
+    const wgMap = new Map<string, WorkGroup>()
+    for (const wg of workGroupsList) {
+      wgMap.set(wg.id, wg)
+    }
+
+    const manilaNow = getManilaCurrentTime()
+    const isNonWorkingHoliday = Boolean(cell.holiday && cell.holiday.type !== 'Special Working')
+    const absents = computeAbsentEmployeesForDate({
+      dateStr: cell.dateStr,
+      isSunday: cell.isSunday,
+      isNonWorkingHoliday,
+      manilaNow,
+      canonicalEmployees,
+      employeeLeavesMap,
+      wgMap,
+      attendedKeys
+    })
+    selectedDayAbsents.value = absents
+    monthAbsents.value.set(cell.dateStr, absents)
+
+    // Ensure the calendar cell immediately reflects this fresh calculation
+    const updatedSummary = await db.dailySummaries.get(cell.dateStr)
+    if (updatedSummary) {
+      monthSummaries.value.set(cell.dateStr, updatedSummary)
+      cell.summary = updatedSummary
+    }
+  } finally {
+    dialogLoading.value = false
+  }
+}
+
+function navigateToDailyAttendance(dateStr: string) {
+  showDayDialog.value = false
+  router.push({
+    path: '/attendance/daily',
+    query: { date: dateStr }
   })
+}
+
+onMounted(() => {
+  loadCalendarData()
+  // Automatically refresh when new biometric punches arrive or store sync completes
   unSubLogs = liveAttendanceService.onLogs(() => {
-    triggerCoalescedDashboard(false)
+    loadCalendarData()
+  })
+  unSubEmployees = employeeService.onEmployeesChanged(() => {
+    loadCalendarData()
   })
 })
 
 onUnmounted(() => {
-  if (reloadTimer) {
-    clearTimeout(reloadTimer)
-    reloadTimer = null
+  if (unSubLogs) {
+    unSubLogs()
+    unSubLogs = null
   }
-  if (unSubScan) unSubScan()
-  if (unSubLogs) unSubLogs()
+  if (unSubEmployees) {
+    unSubEmployees()
+    unSubEmployees = null
+  }
 })
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
+    <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight text-foreground">
-          Biometric Attendance Overview
+        <h1 class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+          <CalendarDays class="size-5 text-primary" />
+          <span>Attendance Calendar</span>
         </h1>
         <p class="text-xs text-muted-foreground mt-0.5">
-          Local Biometric Attendance Network • Location: <strong>DBB Cebu</strong>
+          Monthly biometric attendance calendar, daily employee presence, tardiness breakdown, and shift verification.
         </p>
-      </div>
-      <div class="flex items-center gap-2">
-        <Button variant="outline" size="sm" class="h-8 gap-1.5" @click="loadDashboard">
-          <RefreshCw :class="['size-3.5', loading ? 'animate-spin' : '']" />
-          <span class="text-xs">Refresh</span>
-        </Button>
-        <router-link to="/attendance/logs">
-          <Button size="sm" class="h-8 text-xs">
-            View All Scans
-          </Button>
-        </router-link>
       </div>
     </div>
 
-    <!-- Live Hardware & Real Activity Cards (NO FABRICATED NUMBERS) -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      <!-- Card 1: Real Biometric Hardware Status -->
-      <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
-        <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>HARDWARE DEVICE STATUS</span>
-          <Radio
-            class="size-4"
-            :class="[
-              deviceStatus.status === 'online' ? 'text-emerald-500 animate-pulse' : (deviceStatus.status === 'connecting' ? 'text-amber-500 animate-spin' : 'text-muted-foreground')
-            ]"
-          />
-        </div>
-        <div class="mt-3">
-          <div class="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <span
-              :class="[
-                'size-2 rounded-full',
-                deviceStatus.status === 'online' ? 'bg-emerald-500' : (deviceStatus.status === 'connecting' ? 'bg-amber-500' : 'bg-destructive')
-              ]"
-            />
-            <span>{{ deviceStatus.status === 'online' ? 'B-29b Online' : (deviceStatus.status === 'connecting' ? 'Connecting...' : 'Device Offline') }}</span>
-          </div>
-          <p class="text-[11px] font-mono text-muted-foreground mt-0.5">
-            {{ deviceStatus.ip }}:{{ deviceStatus.port }} • {{ deviceStatus.reason }}
-          </p>
-        </div>
-      </div>
-
-      <!-- Card 2: Real Scans Logged Today -->
-      <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
-        <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>SCANS LOGGED TODAY</span>
-          <Clock class="size-4" />
-        </div>
-        <div class="mt-3">
-          <div class="text-2xl font-bold tracking-tight text-foreground">
-            {{ totalLogsToday }}
-          </div>
-          <p class="text-[11px] text-muted-foreground mt-0.5">
-            {{ totalLogsToday === 0 ? 'No attendance records today' : `${totalLogsToday} real scan event(s) recorded` }}
-          </p>
-        </div>
-      </div>
-
-      <!-- Card 3: Unique Users Detected Today -->
-      <div class="rounded-xl border bg-card p-4 text-card-foreground shadow-xs flex flex-col justify-between">
-        <div class="flex items-center justify-between text-muted-foreground text-xs font-medium">
-          <span>ACTIVE USERS TODAY</span>
-          <Users class="size-4" />
-        </div>
-        <div class="mt-3">
-          <div class="text-2xl font-bold tracking-tight text-foreground">
-            {{ uniqueUsersToday }}
-          </div>
-          <p class="text-[11px] text-muted-foreground mt-0.5">
-            {{ uniqueUsersToday === 0 ? 'No active users recorded today' : `${uniqueUsersToday} distinct user(s) verified` }}
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Live Real-Time Activity Feed -->
-    <div class="rounded-xl border bg-card p-5 text-card-foreground shadow-xs space-y-4">
-      <div class="flex items-center justify-between border-b pb-3">
-        <div class="flex items-center gap-2">
-          <Fingerprint class="size-5 text-primary" />
-          <div>
-            <h2 class="font-semibold text-sm text-foreground">Recent Biometric Scans</h2>
-            <p class="text-xs text-muted-foreground">Live real-time feed from BISMAC BISBIO B-29b</p>
-          </div>
-        </div>
-        <router-link to="/attendance/logs">
-          <Button variant="ghost" size="sm" class="h-7 text-xs">
-            Open Attendance Logs
-          </Button>
-        </router-link>
-      </div>
-
-      <!-- Empty state when no real scans exist -->
-      <div v-if="recentLogs.length === 0" class="py-12 text-center text-muted-foreground space-y-2">
-        <Fingerprint class="size-8 mx-auto text-muted-foreground/40" />
-        <div class="text-sm font-medium text-foreground">No recent activity</div>
-        <p class="text-xs text-muted-foreground max-w-sm mx-auto">
-          No attendance records found. Place a finger on the B-29b sensor (192.168.1.201) while the Node.js agent is running to see live events.
-        </p>
-      </div>
-
-      <!-- Real Scans List -->
-      <div v-else class="divide-y text-xs">
-        <div
-          v-for="log in recentLogs.slice(0, 5)"
-          :key="log.id"
-          class="py-2.5 flex items-center justify-between"
-        >
-          <div class="flex items-center gap-3">
-            <div class="size-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-mono font-bold text-xs">
-              {{ log.user_id.slice(-2) }}
-            </div>
-            <div>
-              <div class="font-medium text-foreground font-mono">
-                User ID: {{ log.user_id }}
-                <span v-if="log.employee_name" class="font-sans text-muted-foreground font-normal"> • {{ log.employee_name }}</span>
-              </div>
-              <div class="text-[11px] text-muted-foreground">
-                {{ formatDate(log.attendance_time) }} • {{ formatTime(log.attendance_time) }}
-              </div>
-            </div>
-          </div>
-
+    <!-- MAIN ATTENDANCE CALENDAR -->
+    <div class="space-y-4">
+      <!-- Calendar Controls & Month Stats -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <!-- Month Navigator -->
+        <div class="rounded-xl border bg-card p-3.5 shadow-xs flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <Badge variant="outline" class="font-mono text-[10px]">
-              State: {{ log.state }}
-            </Badge>
-            <Badge :variant="log.is_duplicate ? 'warning' : 'success'" class="text-[10px]">
-              {{ log.is_duplicate ? 'Duplicate' : 'Verified' }}
-            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 w-8 p-0"
+              :disabled="loadingCalendar"
+              @click="prevMonth"
+            >
+              <ChevronLeft class="size-4" />
+            </Button>
+            <div class="font-bold text-sm text-foreground min-w-[140px] text-center">
+              {{ currentMonthLabel }}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 w-8 p-0"
+              :disabled="loadingCalendar"
+              @click="nextMonth"
+            >
+              <ChevronRight class="size-4" />
+            </Button>
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs px-2.5"
+            :disabled="loadingCalendar"
+            @click="goToToday"
+          >
+            Today
+          </Button>
+        </div>
+
+        <!-- Monthly Summary Highlights -->
+        <div class="rounded-xl border bg-card p-3.5 shadow-xs flex items-center justify-around md:col-span-2 text-xs">
+          <!-- Active Workdays -->
+          <div class="text-center flex-1">
+            <span class="text-[11px] text-muted-foreground">Active Workdays</span>
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div v-else class="text-base font-bold text-foreground font-mono mt-0.5">
+              {{ monthStats.activeDays }} days
+            </div>
+          </div>
+          <div class="h-8 w-px bg-border" />
+
+          <!-- Total Present Scans -->
+          <div class="text-center flex-1">
+            <span class="text-[11px] text-muted-foreground">Total Present Scans</span>
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div v-else class="text-base font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+              {{ monthStats.totalPresent.toLocaleString() }}
+            </div>
+          </div>
+          <div class="h-8 w-px bg-border" />
+
+          <!-- Total Late Entries -->
+          <div class="text-center flex-1">
+            <span class="text-[11px] text-muted-foreground">Total Late Entries</span>
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div v-else class="text-base font-bold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
+              {{ monthStats.totalLate.toLocaleString() }}
+            </div>
+          </div>
+          <div class="h-8 w-px bg-border" />
+
+          <!-- Punctuality Rate -->
+          <div class="text-center flex-1">
+            <span class="text-[11px] text-muted-foreground">Punctuality Rate</span>
+            <div v-if="loadingCalendar" class="mt-1 flex justify-center">
+              <Skeleton class="h-5 w-12" />
+            </div>
+            <div v-else class="text-base font-bold text-primary font-mono mt-0.5">
+              {{ monthStats.punctualityRate }}%
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Calendar Loading Error State -->
+      <div v-if="calendarError && !loadingCalendar" class="rounded-xl border border-destructive/20 bg-destructive/10 p-6 text-center space-y-3">
+        <AlertCircle class="size-8 mx-auto text-destructive" />
+        <div class="space-y-1">
+          <h3 class="text-sm font-semibold text-foreground">Failed to Load Calendar Data</h3>
+          <p class="text-xs text-muted-foreground max-w-md mx-auto">{{ calendarError }}</p>
+        </div>
+        <Button variant="outline" size="sm" class="h-8 text-xs gap-1.5" @click="loadCalendarData">
+          <RefreshCw class="size-3.5" />
+          <span>Retry</span>
+        </Button>
+      </div>
+
+      <!-- Month Calendar Grid Container -->
+      <div v-else class="rounded-xl border bg-card shadow-xs overflow-hidden">
+        <!-- Weekday Headers -->
+        <div class="grid grid-cols-7 border-b bg-muted/40 text-center text-xs font-semibold py-2">
+          <div class="text-rose-600 dark:text-rose-400">Sun</div>
+          <div>Mon</div>
+          <div>Tue</div>
+          <div>Wed</div>
+          <div>Thu</div>
+          <div>Fri</div>
+          <div class="text-sky-600 dark:text-sky-400">Sat</div>
+        </div>
+
+        <!-- Skeleton Loading Grid -->
+        <div v-if="loadingCalendar" class="grid grid-cols-7 divide-x divide-y border-b last:border-b-0">
+          <div
+            v-for="i in 35"
+            :key="`cal-skeleton-${i}`"
+            class="min-h-[110px] p-2 flex flex-col justify-between bg-card"
+          >
+            <!-- Day header skeleton -->
+            <div class="flex items-center justify-between">
+              <Skeleton class="size-6 rounded-full" />
+              <Skeleton v-if="i % 6 === 0" class="h-3.5 w-12 rounded" />
+            </div>
+
+            <!-- Attendance stats badges skeleton -->
+            <div class="space-y-1.5 my-2">
+              <Skeleton class="h-4 w-full rounded" />
+              <Skeleton v-if="i % 2 === 0" class="h-4 w-4/5 rounded" />
+              <Skeleton v-if="i % 4 === 0" class="h-3.5 w-3/5 rounded" />
+            </div>
+
+            <!-- Hint skeleton -->
+            <div class="flex justify-end pt-1">
+              <Skeleton class="h-2.5 w-14 rounded" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Real Calendar Day Cells -->
+        <div v-else class="grid grid-cols-7 divide-x divide-y border-b last:border-b-0">
+          <div
+            v-for="cell in calendarGrid"
+            :key="cell.dateStr"
+            :class="[
+              'min-h-[110px] p-2 flex flex-col justify-between transition-colors cursor-pointer group',
+              cell.isCurrentMonth ? 'bg-card hover:bg-muted/30' : 'bg-muted/10 opacity-50 hover:opacity-80',
+              cell.isToday ? 'ring-2 ring-primary ring-inset' : ''
+            ]"
+            @click="openDayDetails(cell)"
+          >
+            <!-- Day header -->
+            <div class="flex items-center justify-between">
+              <span
+                :class="[
+                  'text-xs font-bold size-6 flex items-center justify-center rounded-full',
+                  cell.isToday
+                    ? 'bg-primary text-primary-foreground'
+                    : (cell.isSunday ? 'text-muted-foreground' : 'text-foreground')
+                ]"
+              >
+                {{ cell.dayNumber }}
+              </span>
+
+              <!-- Holiday indicator -->
+              <span
+                v-if="cell.holiday"
+                class="px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[10px] font-medium truncate max-w-[90px]"
+                :title="cell.holiday.name"
+              >
+                {{ cell.holiday.name }}
+              </span>
+            </div>
+
+            <!-- Attendance stats badges -->
+            <div class="space-y-1 my-1">
+              <template v-if="hasCellAttendanceEntries(cell)">
+                <!-- Present -->
+                <div
+                  v-if="cell.presentCount > 0"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-medium font-mono hover:bg-emerald-500/20 transition-colors"
+                  @click.stop="openDayDetails(cell, 'present')"
+                >
+                  <span>Present:</span>
+                  <span class="font-bold">{{ cell.presentCount }}</span>
+                </div>
+
+                <!-- Late if any -->
+                <div
+                  v-if="cell.lateCount > 0"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-medium font-mono hover:bg-amber-500/20 transition-colors"
+                  @click.stop="openDayDetails(cell, 'late')"
+                >
+                  <span>Late:</span>
+                  <span class="font-bold">{{ cell.lateCount }}</span>
+                </div>
+
+                <!-- Single Punch / Awaiting OUT -->
+                <div
+                  v-if="cell.pendingCount > 0"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 font-medium font-mono hover:bg-sky-500/20 transition-colors"
+                  @click.stop="openDayDetails(cell, 'pending')"
+                >
+                  <span>Pending:</span>
+                  <span class="font-bold">{{ cell.pendingCount }}</span>
+                </div>
+
+                <!-- Absent if any -->
+                <div
+                  v-if="cell.absentCount > 0"
+                  class="flex items-center justify-between text-[11px] leading-tight px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300 font-medium font-mono hover:bg-rose-500/20 transition-colors"
+                  :title="cell.absentTooltip"
+                  @click.stop="openDayDetails(cell, 'absent')"
+                >
+                  <span>Absent:</span>
+                  <span class="font-bold">{{ cell.absentCount }}</span>
+                </div>
+              </template>
+
+              <template v-else-if="cell.isCurrentMonth && !cell.isSunday">
+                <div class="text-[10px] text-muted-foreground italic py-1 text-center">
+                  No records
+                </div>
+              </template>
+            </div>
+
+            <!-- Jump to Daily Attendance hint on hover -->
+            <div class="text-[10px] text-primary font-medium opacity-0 group-hover:opacity-100 flex items-center justify-end gap-0.5 transition-opacity">
+              <span>View Details</span>
+              <ArrowRight class="size-2.5" />
+            </div>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- SHADCN DIALOG: DAILY ATTENDANCE AUDIT & DETAILS -->
+    <Dialog v-model:open="showDayDialog">
+      <DialogContent class="sm:max-w-2xl max-h-[85vh] flex flex-col p-0 overflow-hidden">
+        <!-- Dialog Header -->
+        <DialogHeader class="p-4 sm:p-5 border-b bg-muted/20">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <DialogTitle class="text-base sm:text-lg flex items-center gap-2 font-bold text-foreground flex-wrap">
+                <CalendarDays class="size-5 text-primary" />
+                <span>{{ selectedDayFormatted }}</span>
+                <Badge v-if="selectedDayHoliday" variant="destructive" class="text-[11px] font-normal text-white">
+                  {{ selectedDayHoliday.name }} ({{ selectedDayHoliday.type }})
+                </Badge>
+                <Badge v-else-if="selectedDayIsSunday" variant="secondary" class="text-[11px] font-normal">
+                  Sunday / Rest Day
+                </Badge>
+              </DialogTitle>
+              <DialogDescription class="text-xs text-muted-foreground mt-1">
+                Biometric attendance verification, tardiness breakdown, leave, and absence audit • Philippine Standard Time
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <!-- Dialog Scrollable Body -->
+        <div class="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+          <!-- Loading State -->
+          <div v-if="dialogLoading" class="py-12 text-center text-xs text-muted-foreground space-y-2">
+            <div class="size-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+            <p>Querying attendance logs for {{ selectedDayDate }}...</p>
+          </div>
+
+          <template v-else>
+            <!-- Attendance Summary Header & Metric Cards -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <span>Attendance Summary</span>
+                </h3>
+                <span class="text-[11px] text-muted-foreground font-mono">
+                  Total Tracked: {{ dialogStats.present + dialogStats.singlePunch + dialogStats.awaitingOut + dialogStats.absent + dialogStats.onLeave }}
+                </span>
+              </div>
+
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                <!-- 1. Present -->
+                <div
+                  class="p-2.5 rounded-lg border bg-card flex flex-col justify-between cursor-pointer hover:border-emerald-500/50 transition-colors"
+                  :class="activeDetailTab === 'present' ? 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500/30' : ''"
+                  @click="activeDetailTab = (activeDetailTab === 'present' ? 'all' : 'present')"
+                >
+                  <span class="text-[11px] text-muted-foreground font-medium">Present</span>
+                  <div class="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 font-mono">
+                    {{ dialogStats.present }}
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">{{ dialogStats.onTime }} on time</span>
+                </div>
+
+                <!-- 2. Absent -->
+                <div
+                  class="p-2.5 rounded-lg border bg-card flex flex-col justify-between cursor-pointer hover:border-rose-500/50 transition-colors"
+                  :class="activeDetailTab === 'absent' ? 'border-rose-500 bg-rose-500/10 ring-1 ring-rose-500/30' : ''"
+                  @click="activeDetailTab = (activeDetailTab === 'absent' ? 'all' : 'absent')"
+                >
+                  <span class="text-[11px] text-muted-foreground font-medium">Absent</span>
+                  <div class="text-xl font-bold text-rose-600 dark:text-rose-400 mt-0.5 font-mono">
+                    {{ dialogStats.absent }}
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">No punches</span>
+                </div>
+
+                <!-- 3. On Leave -->
+                <div
+                  class="p-2.5 rounded-lg border bg-card flex flex-col justify-between cursor-pointer hover:border-sky-500/50 transition-colors"
+                  :class="activeDetailTab === 'leave' ? 'border-sky-500 bg-sky-500/10 ring-1 ring-sky-500/30' : ''"
+                  @click="activeDetailTab = (activeDetailTab === 'leave' ? 'all' : 'leave')"
+                >
+                  <span class="text-[11px] text-muted-foreground font-medium">On Leave</span>
+                  <div class="text-xl font-bold text-sky-600 dark:text-sky-400 mt-0.5 font-mono">
+                    {{ dialogStats.onLeave }}
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">Approved</span>
+                </div>
+
+                <!-- 4. Late -->
+                <div
+                  class="p-2.5 rounded-lg border bg-card flex flex-col justify-between cursor-pointer hover:border-amber-500/50 transition-colors"
+                  :class="activeDetailTab === 'late' ? 'border-amber-500 bg-amber-500/10 ring-1 ring-amber-500/30' : ''"
+                  @click="activeDetailTab = (activeDetailTab === 'late' ? 'all' : 'late')"
+                >
+                  <span class="text-[11px] text-muted-foreground font-medium">Late</span>
+                  <div class="text-xl font-bold text-amber-600 dark:text-amber-400 mt-0.5 font-mono">
+                    {{ dialogStats.late }}
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">Tardy entries</span>
+                </div>
+
+                <!-- 5. Single Punch -->
+                <div
+                  class="p-2.5 rounded-lg border bg-card flex flex-col justify-between col-span-2 sm:col-span-1 cursor-pointer hover:border-purple-500/50 transition-colors"
+                  :class="activeDetailTab === 'pending' ? 'border-purple-500 bg-purple-500/10 ring-1 ring-purple-500/30' : ''"
+                  @click="activeDetailTab = (activeDetailTab === 'pending' ? 'all' : 'pending')"
+                >
+                  <span class="text-[11px] text-muted-foreground font-medium">Single Punch</span>
+                  <div class="text-xl font-bold text-purple-600 dark:text-purple-400 mt-0.5 font-mono">
+                    {{ dialogStats.singlePunch + dialogStats.awaitingOut }}
+                  </div>
+                  <span class="text-[10px] text-muted-foreground">
+                    {{ dialogStats.awaitingOut > 0 ? `${dialogStats.awaitingOut} awaiting OUT` : 'No OUT recorded' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="relative w-full sm:w-[200px]">
+              <Search class="absolute left-2.5 top-2 size-3 text-muted-foreground" />
+              <Input
+                v-model="dialogSearch"
+                placeholder="Search name or BIO ID"
+                class="h-7 text-xs pl-7"
+              />
+            </div>
+
+            <!-- Toolbar & Filter Pills in Dialog -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
+              <div class="flex items-center gap-1.5 flex-wrap text-xs">
+                <button
+                  type="button"
+                  :class="[
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    activeDetailTab === 'all'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                  ]"
+                  @click="activeDetailTab = 'all'"
+                >
+                  All ({{ dialogStats.present + dialogStats.singlePunch + dialogStats.awaitingOut + dialogStats.onLeave + dialogStats.absent }})
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    activeDetailTab === 'present'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                  ]"
+                  @click="activeDetailTab = 'present'"
+                >
+                  Present ({{ dialogStats.present }})
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    activeDetailTab === 'absent'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                  ]"
+                  @click="activeDetailTab = 'absent'"
+                >
+                  Absent ({{ dialogStats.absent }})
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    activeDetailTab === 'leave'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                  ]"
+                  @click="activeDetailTab = 'leave'"
+                >
+                  On Leave ({{ dialogStats.onLeave }})
+                </button>
+                <button
+                  type="button"
+                  :class="[
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    activeDetailTab === 'late'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                  ]"
+                  @click="activeDetailTab = 'late'"
+                >
+                  Late ({{ dialogStats.late }})
+                </button>
+                <button
+                  v-if="dialogStats.singlePunch + dialogStats.awaitingOut > 0"
+                  type="button"
+                  :class="[
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+                    activeDetailTab === 'pending'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                  ]"
+                  @click="activeDetailTab = 'pending'"
+                >
+                  Single Punch ({{ dialogStats.singlePunch + dialogStats.awaitingOut }})
+                </button>
+              </div>              
+            </div>
+
+            <!-- Empty Date Banner when 0 punches recorded -->
+            <div
+              v-if="dialogStats.present + dialogStats.singlePunch + dialogStats.awaitingOut === 0 && (activeDetailTab === 'all' || (selectedDayAbsents.length === 0 && selectedDayLeaves.length === 0))"
+              class="p-4 rounded-xl border bg-muted/20 text-center space-y-1.5"
+            >
+              <CalendarDays class="size-7 mx-auto text-muted-foreground/60" />
+              <div class="font-semibold text-xs text-foreground">
+                No attendance punches recorded for this date.
+              </div>
+              <p class="text-[11px] text-muted-foreground max-w-sm mx-auto">
+                {{ selectedDayIsSunday ? 'Sunday / scheduled rest day for general employees.' : (selectedDayHoliday ? `${selectedDayHoliday.name} - official Philippine holiday.` : 'No biometric punch logs or device sync recorded on this day.') }}
+              </p>
+              <div class="flex items-center justify-center gap-2 text-[11px] font-mono text-muted-foreground pt-1">
+                <span>Present: 0</span>
+                <span>•</span>
+                <span>Late: 0</span>
+                <span>•</span>
+                <span>Single Punch: 0</span>
+                <span>•</span>
+                <span>Absent: {{ dialogStats.absent }}</span>
+              </div>
+            </div>
+
+            <!-- 1. PRESENT EMPLOYEES SECTION -->
+            <div
+              v-if="(activeDetailTab === 'all' || activeDetailTab === 'present') && filteredPresent.length > 0"
+              class="space-y-2"
+            >
+              <div class="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span class="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 class="size-3.5" />
+                  <span>Present Employees ({{ filteredPresent.length }})</span>
+                </span>
+                <span class="text-[11px] text-muted-foreground font-normal">Actual IN & OUT</span>
+              </div>
+
+              <div class="divide-y rounded-lg border bg-card text-xs">
+                <div
+                  v-for="record in filteredPresent"
+                  :key="record.id"
+                  class="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
+                >
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <div class="size-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[11px] shrink-0 font-mono">
+                      {{ record.biometric_user_id.slice(-2) }}
+                    </div>
+                    <div class="min-w-0">
+                      <div class="font-medium text-foreground truncate">
+                        {{ record.employee_name }}
+                      </div>
+                      <div class="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                        <span class="font-mono">ID: {{ record.biometric_user_id }}</span>
+                        <span>•</span>
+                        <span>{{ record.work_group_name || 'Group C' }}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-3 shrink-0 text-right">
+                    <div class="text-right">
+                      <div class="font-mono font-medium text-foreground">
+                        {{ record.actual_in }}
+                        <span v-if="record.actual_out"> → {{ record.actual_out }}</span>
+                      </div>
+                      <div class="text-[10px] text-muted-foreground">
+                        <span v-if="record.total_hours">{{ record.total_hours }}</span>
+                        <span v-else-if="record.is_awaiting_out">Awaiting shift end</span>
+                        <span v-else>Single punch</span>
+                      </div>
+                    </div>
+
+                    <Badge
+                      :variant="record.status_variant || (record.status === 'Regular Day' || record.status === 'On Time' ? 'success' : (record.late_minutes > 0 ? 'warning' : 'outline'))"
+                      class="text-[10px] shrink-0"
+                    >
+                      {{ record.status }}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. LATE EMPLOYEES SECTION -->
+            <div
+              v-if="(activeDetailTab === 'all' || activeDetailTab === 'late') && filteredLate.length > 0"
+              class="space-y-2"
+            >
+              <div class="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                  <Clock class="size-3.5" />
+                  <span>Late Employees ({{ filteredLate.length }})</span>
+                </span>
+                <span class="text-[11px] text-muted-foreground font-normal">Exceeded Grace Period</span>
+              </div>
+
+              <div class="divide-y rounded-lg border bg-card text-xs">
+                <div
+                  v-for="record in filteredLate"
+                  :key="`late-${record.id}`"
+                  class="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
+                >
+                  <div class="min-w-0">
+                    <div class="font-medium text-foreground truncate">
+                      {{ record.employee_name }}
+                    </div>
+                    <div class="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                      <span class="font-mono">ID: {{ record.biometric_user_id }}</span>
+                      <span>•</span>
+                      <span>{{ record.work_group_name }} (Std IN: {{ record.expected_in }})</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 shrink-0">
+                    <div class="font-mono text-right text-[11px]">
+                      <span class="text-muted-foreground">Actual: </span>
+                      <span class="font-medium text-foreground">{{ record.actual_in }}</span>
+                    </div>
+                    <Badge variant="warning" class="text-[10px] font-mono">
+                      +{{ record.late_minutes }} min late
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. EMPLOYEES ON LEAVE SECTION -->
+            <div
+              v-if="(activeDetailTab === 'all' || activeDetailTab === 'leave') && filteredLeaves.length > 0"
+              class="space-y-2"
+            >
+              <div class="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span class="flex items-center gap-1.5 text-sky-600 dark:text-sky-400">
+                  <CalendarDays class="size-3.5" />
+                  <span>Employees On Leave ({{ filteredLeaves.length }})</span>
+                </span>
+                <span class="text-[11px] text-muted-foreground font-normal">Authorized Absence</span>
+              </div>
+
+              <div class="divide-y rounded-lg border bg-card text-xs">
+                <div
+                  v-for="leave in filteredLeaves"
+                  :key="leave.id"
+                  class="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
+                >
+                  <div>
+                    <div class="font-medium text-foreground">
+                      {{ leave.employeeName }}
+                    </div>
+                    <div class="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                      <span class="font-mono">ID: {{ leave.bioId }}</span>
+                      <span v-if="leave.reason">• {{ leave.reason }}</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 shrink-0">
+                    <span class="font-medium text-sky-600 dark:text-sky-400 text-xs">
+                      {{ leave.leaveType }} Leave
+                    </span>
+                    <Badge variant="outline" class="text-[10px]">
+                      {{ leave.status }}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. ABSENT EMPLOYEES SECTION -->
+            <div
+              v-if="(activeDetailTab === 'all' || activeDetailTab === 'absent') && filteredAbsents.length > 0"
+              class="space-y-2"
+            >
+              <div class="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span class="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                  <Users class="size-3.5" />
+                  <span>Absent Employees ({{ filteredAbsents.length }})</span>
+                </span>
+                <span class="text-[11px] text-muted-foreground font-normal">Scheduled Without Punches</span>
+              </div>
+
+              <div class="divide-y rounded-lg border bg-card text-xs">
+                <div
+                  v-for="absent in filteredAbsents"
+                  :key="`absent-${absent.bioId}`"
+                  class="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
+                >
+                  <div>
+                    <div class="font-medium text-foreground">
+                      {{ absent.name }}
+                    </div>
+                    <div class="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                      <span class="font-mono">ID: {{ absent.bioId }}</span>
+                      <span>•</span>
+                      <span>{{ absent.workGroupName }} ({{ absent.schedule }})</span>
+                    </div>
+                  </div>
+
+                  <Badge variant="destructive" class="text-[10px] shrink-0 text-white">
+                    Absent
+                  </Badge>
+                </div>
+              </div>
+            </div>
+
+            <!-- 5. PENDING OUT / SINGLE PUNCH SECTION -->
+            <div
+              v-if="(activeDetailTab === 'all' || activeDetailTab === 'pending') && filteredPendingOut.length > 0"
+              class="space-y-2"
+            >
+              <div class="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span class="flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
+                  <Clock class="size-3.5" />
+                  <span>Single Punch / Awaiting OUT ({{ filteredPendingOut.length }})</span>
+                </span>
+                <span class="text-[11px] text-muted-foreground font-normal">Incomplete Shift Punches</span>
+              </div>
+
+              <div class="divide-y rounded-lg border bg-card text-xs">
+                <div
+                  v-for="record in filteredPendingOut"
+                  :key="`pending-${record.id}`"
+                  class="p-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors"
+                >
+                  <div>
+                    <div class="font-medium text-foreground">
+                      {{ record.employee_name }}
+                    </div>
+                    <div class="text-[10px] text-muted-foreground">
+                      <span class="font-mono">ID: {{ record.biometric_user_id }}</span>
+                      <span> • {{ record.work_group_name }}</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <span
+                      v-if="record.actual_in && !record.actual_in.startsWith('Missing') && record.actual_in !== '-'"
+                      class="text-[11px] font-mono text-muted-foreground"
+                    >
+                      IN: {{ record.actual_in }}
+                    </span>
+                    <span
+                      v-else-if="record.actual_out && record.actual_out !== '-'"
+                      class="text-[11px] font-mono text-muted-foreground"
+                    >
+                      OUT: {{ record.actual_out }}
+                    </span>
+                    <Badge variant="secondary" class="text-[10px]">
+                      {{ record.status }}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab-specific Empty States when filtered list is empty -->
+            <div
+              v-if="activeDetailTab === 'present' && filteredPresent.length === 0"
+              class="py-10 text-center text-xs text-muted-foreground border rounded-lg bg-card/50"
+            >
+              No present employees recorded for this date.
+            </div>
+            <div
+              v-if="activeDetailTab === 'late' && filteredLate.length === 0"
+              class="py-10 text-center text-xs text-muted-foreground border rounded-lg bg-card/50"
+            >
+              No late employees on this date (100% on time).
+            </div>
+            <div
+              v-if="activeDetailTab === 'leave' && filteredLeaves.length === 0"
+              class="py-10 text-center text-xs text-muted-foreground border rounded-lg bg-card/50"
+            >
+              No employees on leave on this date.
+            </div>
+            <div
+              v-if="activeDetailTab === 'absent' && filteredAbsents.length === 0"
+              class="py-10 text-center text-xs text-muted-foreground border rounded-lg bg-card/50"
+            >
+              No unexcused absences on this date.
+            </div>
+            <div
+              v-if="activeDetailTab === 'pending' && filteredPendingOut.length === 0"
+              class="py-10 text-center text-xs text-muted-foreground border rounded-lg bg-card/50"
+            >
+              No single punches or pending OUT records for this date.
+            </div>
+          </template>
+        </div>
+
+        <!-- Dialog Footer -->
+        <DialogFooter class="p-3 border-t bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 text-xs gap-1.5 w-full sm:w-auto"
+            @click="navigateToDailyAttendance(selectedDayDate)"
+          >
+            <ExternalLink class="size-3.5" />
+            <span>Open in Daily Attendance</span>
+          </Button>
+
+          <DialogClose as-child>
+            <Button variant="default" size="sm" class="h-8 text-xs w-full sm:w-auto">
+              Close
+            </Button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
