@@ -132,14 +132,19 @@ export interface DailyAttendanceRecordDB {
 export interface DailySummaryRecord {
   date: string // Primary key: YYYY-MM-DD
   presentCount: number
+  completedPresentCount?: number
   onTimeCount: number
+  completedOnTimeCount?: number
   lateCount: number
+  completedLateCount?: number
   singlePunchCount: number
   awaitingOutCount: number
+  absentCount?: number
   leaveCount: number
   onRestCount?: number
   holidayCount: number
   totalEmployees: number
+  summaryVersion?: number
   updatedAt: string
 }
 

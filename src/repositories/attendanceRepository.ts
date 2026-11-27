@@ -39,6 +39,28 @@ function matchesLocationFilter(empLocation: string, locationFilter?: string): bo
   )
 }
 
+function isSinglePunchOrPendingSummaryRecord(r: DailyAttendanceRecord): boolean {
+  const st = (r.status || '').trim()
+  if (
+    st === 'Leave' ||
+    st === 'On Leave' ||
+    r.is_on_rest ||
+    st === 'On Rest' ||
+    st === 'Manual Time' ||
+    st === 'Field Work'
+  ) {
+    return false
+  }
+  return (
+    st === 'Awaiting OUT' ||
+    st.startsWith('Single Punch') ||
+    st.includes('Missing IN') ||
+    st.includes('Ambiguous') ||
+    st === 'Incomplete / Review' ||
+    (!r.has_valid_out && r.valid_punches_count === 1)
+  )
+}
+
 export const attendanceRepository = {
   /**
    * Retrieves daily attendance records for a target date.
@@ -398,29 +420,39 @@ export const attendanceRepository = {
       r => r.employee_status !== 'resigned' || (r.resignation_date && r.resignation_date > dateStr)
     )
     const onRestRecords = activeRecords.filter(r => r.is_on_rest || r.status === 'On Rest')
-    const presentRecords = activeRecords.filter(
+    const nonLeaveNonRestRecords = activeRecords.filter(
       r => r.status !== 'Leave' && r.status !== 'On Leave' && !r.is_on_rest && r.status !== 'On Rest'
     )
-    const presentCount = presentRecords.length
-    const onTimeCount = presentRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
-    const lateCount = presentRecords.filter(r => r.late_minutes > 0).length
-    const singlePunchCount = presentRecords.filter(r => r.status.startsWith('Single Punch') || r.status.includes('Missing IN') || r.status.includes('Ambiguous')).length
-    const awaitingOutCount = presentRecords.filter(r => r.status === 'Awaiting OUT').length
+    const pendingRecords = nonLeaveNonRestRecords.filter(isSinglePunchOrPendingSummaryRecord)
+    const completedRecords = nonLeaveNonRestRecords.filter(r => !isSinglePunchOrPendingSummaryRecord(r))
+
+    const presentCount = nonLeaveNonRestRecords.length
+    const onTimeCount = nonLeaveNonRestRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+    const lateCount = nonLeaveNonRestRecords.filter(r => r.late_minutes > 0).length
+    const completedPresentCount = completedRecords.length
+    const completedOnTimeCount = completedRecords.filter(r => r.late_minutes === 0 && r.has_valid_out).length
+    const completedLateCount = completedRecords.filter(r => r.late_minutes > 0).length
+    const awaitingOutCount = pendingRecords.filter(r => r.status === 'Awaiting OUT').length
+    const singlePunchCount = pendingRecords.length - awaitingOutCount
     const leaveCount = activeRecords.filter(r => r.status === 'Leave' || r.status === 'On Leave').length
-    const holidayCount = presentRecords.filter(r => r.status === 'Holiday').length
+    const holidayCount = nonLeaveNonRestRecords.filter(r => r.status === 'Holiday').length
     const onRestCount = onRestRecords.length
 
     const summary: DailySummaryRecord = {
       date: dateStr,
       presentCount,
+      completedPresentCount,
       onTimeCount,
+      completedOnTimeCount,
       lateCount,
+      completedLateCount,
       singlePunchCount,
       awaitingOutCount,
       leaveCount,
       holidayCount,
       onRestCount,
       totalEmployees: (await employeeRepository.countActive()) || presentCount,
+      summaryVersion: 2,
       updatedAt: new Date().toISOString()
     }
 
@@ -504,11 +536,12 @@ export const attendanceRepository = {
         // Detect stale counts (both undercounts and pre-consolidation overcounts)
         // or where employee totals or punch imports changed after the summary was cached
         const distinctPunched = group.bioIds.size
+        const isStaleVersion = existing.summaryVersion !== 2
         const isStaleUnderCount = distinctPunched > 0 && existing.presentCount < distinctPunched
         const isStaleOverCount = existing.presentCount > distinctPunched && !datesWithApprovedManualAdj.has(d)
         const isStaleTotal = currentActiveCount > 0 && existing.totalEmployees !== currentActiveCount
         const isNewerPunch = group.latestImportTime && existing.updatedAt && group.latestImportTime > existing.updatedAt
-        if (isStaleUnderCount || isStaleOverCount || isStaleTotal || isNewerPunch) {
+        if (isStaleVersion || isStaleUnderCount || isStaleOverCount || isStaleTotal || isNewerPunch) {
           dateGroups.add(d)
         }
       }
